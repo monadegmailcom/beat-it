@@ -1,0 +1,128 @@
+digraph olog 
+{ 
+    node [shape = "box"]
+    layout=dot
+    subgraph cluster_ga {
+        label=<<b>game</b>>
+        ga_g [label="a game", xlabel=<W&#x2294;D&#x2294;U>]
+        ga_g -> ga_z [label="current player index"]
+        ga_w [label="a won game", xlabel=W]
+        ga_w -> ga_g [label=<i<sub>W</sub>>]
+        ga_w -> ga_z [label="winner"]
+        ga_d [label="a drawn game", xlabel=D]
+        ga_d -> ga_g [label=<i<sub>D</sub>>]
+        ga_u [label="an undecided game", xlabel=U]
+        ga_u -> ga_g [label=<i<sub>U</sub>>]
+        ga_z [label=<Z<sub>2</sub>>]
+    }
+    subgraph cluster_moves {
+        label=<<b>undecided game</b>>
+        st_z [label=<Z<sub>2</sub>>]
+        st_undecided [label="an undecided game"]
+        st_undecided -> st_game [label="is"]
+        st_undecided -> st_p [label=<next to make<br/>a move>]
+        st_undecided -> st_s [label="valid moves"]
+        st_undecided -> st_g_m_s [label=<player's move>]
+        st_s [label="a set of moves"]
+        st_g_m_s [label=<(g, m, s)<br/>where m &#x2208; s>]
+        st_g_m_s -> st_s [label="s"]
+        st_g_m_s -> st_m [label="m"]
+        st_g_m_s -> st_g2 [label="apply"]
+        st_g_m_s -> st_undecided [label="g"]
+        st_game [label="a game"]
+        st_game -> st_z2 [label=<current<br/>player index>]
+        st_g2 [label="a game"]
+        st_p [label="a player"]
+        st_p -> st_z2 [label="index"]   
+        st_p -> st_m [label="choose"]   
+        st_p -> st_undecided [label="game"] 
+        st_z2 [label=<Z<sub>2</sub>>]
+        st_z2 -> st_z [label="+1"]
+        st_g2 -> st_z [label=<current<br/>player index>]
+        st_m [label="a move"]
+        {rank=same; st_g_m_s; st_undecided}
+        //{rank=same; st_z; st_z2}
+        //{rank=same; st_m; st_s}
+        //{rank=min; st_game}
+    }    
+
+    subgraph cluster_mp {
+        label=<<b>minimax player</b>>
+        subgraph cluster_minimax {
+            label=<<b>algorihm</b>>
+            mm_i_g_s_n [label=<(i, g, f, n) where i is an index in &#x2124;<sub>2</sub>,<br/> g is a game, f is a score function<br/>and n is a natural number>, xlabel=<0&#x2294;P&#x2294;D&#x2294;W>]
+            mm_i_g_s_n -> mm_e [label="eval"]
+            mm_i_d_s_n [label=<(_, d, _, _) where<br/>d is a drawn game>, xlabel=D]
+            mm_i_d_s_n -> mm_i_g_s_n [label=<i<sub>D</sub>>]
+            mm_i_d_s_n -> mm_e [label=<0>]
+            mm_i_w_s_n [label=<(i, w, _, _) where<br/>w is a won game>, xlabel=W]
+            mm_i_w_s_n -> mm_i_g_s_n [label=<i<sub>W</sub>>]
+            mm_i_w_s_n -> mm_e [label=<max value( i )>]
+            mm_i_u_s_0 [label=<(i, u, f, 0) where<br/>u is an undecided game>, xlabel=0]
+            mm_i_u_s_0 -> mm_i_g_s_n [label=<i<sub>0</sub>>]
+            mm_i_u_s_0 -> mm_e [label=<f(u)>]
+            mm_i_u_s_pos [label=<(i, u, f, n) where u is an<br/>undecided game and n is positiv>, xlabel=P]
+            mm_i_u_s_pos -> mm_i_g_s_n [label=<i<sub>P</sub>>]
+            mm_i_u_s_pos -> mm_games [label=< apply( u, m, ms)<br/>&#x2200; m &#x2208; ms where<br/>ms = valid moves( u )>]
+            mm_games -> mm_evals [label=<cmp( i ), <br/>eval( i + 1, g, f, n - 1)<br/>&#x2200; g &#x2208; gs>]
+            mm_games [label=<(i, f, n, gs) where<br/>gs is a set of games>]
+            mm_evals [label=<(rel, ss) where rel is an order relation<br/> and ss is set of scores  >]
+            mm_evals -> mm_e [label=<max with respect to rel>]
+            mm_e [label=<&#x211d; ∪ {−∞, ∞}>]
+            {rank=min; mm_i_g_s_n} 
+            {rank=same; mm_i_d_s_n; mm_i_w_s_n; mm_i_u_s_0; mm_i_u_s_pos}
+        }
+
+        subgraph cluster_pl {
+        label=""
+        mg_mm [label="minimax player"]
+        mg_mm -> mg_pl [label="is"]
+        mg_mm -> mg_f [label="score function"]
+        mg_mm -> mg_n [label="depth"]
+        mg_mm -> mg_t [label="algo"]
+        mg_t [label=<(i, g, f, n, ms)>]
+        mg_t -> mg_z2 [label=i]
+        mg_t -> mg_un [label=g]
+        mg_t -> mg_f [label=f]
+        mg_t -> mg_n [label=n]
+        mg_t -> mg_ms [label=ms]
+        mg_t -> mg_m_sc [label=<cmp( i ),<br/>m &#x21a6; (m, eval(i,apply(g, m, ms),f,n)))<br/>&#x2200; m &#x2208; ms<br/>>]
+        mg_z2 [label=<Z<sub>2</sub>>]
+        mg_ms [label="a set of moves"]
+        mg_un [label="an undecided game"]
+        mg_pl -> mg_un [label=game]        
+        mg_pl -> mg_m [label="choose"]
+        mg_pl -> mg_z2 [label="index"]
+        mg_un -> mg_ms [label="valid moves"]
+        mg_m_sc [label=<(rel, ps) where ps is a set of<br/>pairs (m, score) of moves and scores>]
+        mg_m_sc -> mg_m [label=<argmax>]
+        mg_m [label="a move"]
+        mg_n [label=<&#x2115;>]
+        mg_pl [label="a player"]
+        mg_f [label=<a game &#x2192; &#x211d;<br/>>]
+        }
+        subgraph cluster_z {
+        label=""
+        mg_0 [label=<0>]
+        mg_0 -> mg_z [label=<i<sub>0</sub>>]
+        mg_0 -> mg_cmp [label=<&#x2264;>]
+        mg_0 -> mg_inf [label=<−∞>]
+        mg_1 [label=<1>]
+        mg_1 -> mg_z [label=<i<sub>1</sub>>]
+        mg_1 -> mg_cmp [label=<&#x2265;>]
+        mg_1 -> mg_inf [label=<∞>]
+        mg_z [label=<&#x2124;<sub>2</sub>>]
+        mg_z -> mg_cmp [label=<cmp>]
+        mg_z -> mg_inf [label=<max value>]
+        mg_cmp [label=<{&#x2264;, &#x2265;}>, group=1]
+        mg_inf [label=<{−∞, ∞}>, group=1]
+        {rank=min; mg_z}
+        }
+    }
+}
+
+/*
+        mm_l [label=<a game g' = apply( g, s, m)<br/>&#x2200; m &#x2208; s>]
+        mm_l -> mm_s [label="s"]
+        mm_l -> mm_g [label="g"]
+*/
