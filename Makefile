@@ -37,6 +37,7 @@ beat-it: $(OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(OBJS) $(LINK)
 
 test: obj/test.o test.cpp
+	$(eval OPT=$(DEBUG))
 	$(CC) $(FLAGS) -o $(ODIR)/test.o test.cpp
 	$(CC) -o $(ODIR)/test $(LINK) $(ODIR)/test.o
 
