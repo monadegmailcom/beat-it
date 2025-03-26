@@ -17,28 +17,64 @@ void toggle_player()
         assert( false );
 }
 
+struct TestGame : public UndecidedGame< char >
+{
+    TestGame( Player< char > const& player, Player< char > const& opponent )
+        : UndecidedGame( player, opponent ) {}
+    virtual std::vector< char > const& valid_moves() const override
+    {
+        static std::vector< char > moves;
+        return moves;
+    }
+    virtual std::unique_ptr< Game > apply_next_move() const override
+    {
+        return std::unique_ptr< Game >( new TestGame( opponent, player ) );
+    }
+};
+
+struct TestPlayer : public Player< char >
+{
+    TestPlayer( PlayerIndex index ) : Player( index ) {}
+    vector< char >::const_iterator choose( 
+        vector< char > const& valid_moves ) override
+    {
+        return valid_moves.begin();
+    }
+};
+
+
 void build_game()
 {
     cout << __func__ << endl;
     
-    Game game( Player1 );
-    
-    if( game.current_player_index() != Player1 )
-        assert( !"initial player index not returned" );
-
-    UndecidedGame undecided_game( Player2 );
-    if (undecided_game.current_player_index() != Player2)
-        assert( !"initial player index not passed on" );
+    TestPlayer player1( Player1 );
+    TestPlayer player2( Player2 );
 
     DrawnGame drawn_game( Player1 );
     if (drawn_game.current_player_index() != Player1)
-        assert( !"initial player index not passed on" );
+        assert( !"invalid current player index" );
 
     WonGame won_game( Player2 );
     if (won_game.current_player_index() != Player2)
         assert( !"initial player index not passed on" );
     if (won_game.winner() != Player2)
         assert( !"winner not returned" );
+}
+
+void build_undecided_game()
+{
+    cout << __func__ << endl;
+
+    TestPlayer player1( Player1 );
+    TestPlayer player2( Player2 );
+
+    TestGame undecided_game( player2, player1 );
+
+    if (undecided_game.current_player_index() != Player2)
+        assert( !"invalid current player index" );
+    if (undecided_game.next_to_make_a_move().get_index() 
+        != undecided_game.current_player_index())
+        assert( !"game index and player index do not match" );
 }
 
 } // namespace test {

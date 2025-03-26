@@ -27,19 +27,23 @@ OPT=$(RELEASE)
 
 FLAGS=-std=c++20 -Wall $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
-SOURCES=main.cpp
+SOURCES=game.cpp
 ODIR=obj
 OBJS=$(patsubst %.cpp,$(ODIR)/%.o,$(SOURCES))
 DEPS=$(patsubst %.cpp,$(ODIR)/%.d,$(SOURCES))
 #$(info DEPS=$(DEPS))
 
-beat-it: $(OBJS)
-	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(OBJS) $(LINK)
+MAIN_OBJS=$(OBJS) $(ODIR)/main.o
+TEST_OBJS=$(OBJS) $(ODIR)/test.o
 
-test: obj/test.o test.cpp
+beat-it: $(MAIN_OBJS)
+	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(MAIN_OBJS) $(LINK)
+
+test: $(TEST_OBJS)
 	$(eval OPT=$(DEBUG))
-	$(CC) $(FLAGS) -o $(ODIR)/test.o test.cpp
-	$(CC) -o $(ODIR)/test $(LINK) $(ODIR)/test.o
+	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/test $(TEST_OBJS) $(LINK)
+#	$(CC) $(FLAGS) -o $(ODIR)/test.o test.cpp
+#	$(CC) -o $(ODIR)/test $(LINK) $(ODIR)/test.o
 
 $(ODIR)/%.o: %.cpp | $(ODIR)
 	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
@@ -55,4 +59,4 @@ $(ODIR):
 -include $(DEPS)
 
 clean:
-	rm -f $(ODIR)/*.o $(ODIR)/beat-it $(ODIR)/test $(DEPS)
+	rm -f $(ODIR)/*.o $(ODIR)/beat-it $(ODIR)/test obj/*.d
