@@ -37,7 +37,8 @@ endif
 $(info OPT=$(OPT))
 FLAGS=-std=c++20 -Wall $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
-SOURCES=game.cpp minimax.cpp
+# Automatically reference all local .cpp files except main.cpp and test.cpp
+SOURCES=$(filter-out main.cpp test.cpp, $(wildcard *.cpp))
 ODIR=obj
 OBJS=$(patsubst %.cpp,$(ODIR)/%.o,$(SOURCES))
 DEPS=$(patsubst %.cpp,$(ODIR)/%.d,$(SOURCES))
