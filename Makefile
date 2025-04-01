@@ -23,11 +23,21 @@ RELEASE=-O3 -DNDEBUG
 
 # don't forget to clean if you change OPT
 #OPT=$(DEBUG)
-OPT=$(RELEASE)
+#OPT=$(RELEASE)
 
+# Set OPT based on the target
+ifeq ($(MAKECMDGOALS), test)
+    OPT=$(DEBUG)
+endif
+
+ifeq ($(MAKECMDGOALS), beat-it)
+    OPT=$(RELEASE)
+endif
+
+$(info OPT=$(OPT))
 FLAGS=-std=c++20 -Wall $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
-SOURCES=game.cpp
+SOURCES=game.cpp minimax.cpp
 ODIR=obj
 OBJS=$(patsubst %.cpp,$(ODIR)/%.o,$(SOURCES))
 DEPS=$(patsubst %.cpp,$(ODIR)/%.d,$(SOURCES))
@@ -40,7 +50,6 @@ beat-it: $(MAIN_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(MAIN_OBJS) $(LINK)
 
 test: $(TEST_OBJS)
-	$(eval OPT=$(DEBUG))
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/test $(TEST_OBJS) $(LINK)
 #	$(CC) $(FLAGS) -o $(ODIR)/test.o test.cpp
 #	$(CC) -o $(ODIR)/test $(LINK) $(ODIR)/test.o

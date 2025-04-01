@@ -50,10 +50,13 @@ public:
     {
         return player.get_index();
     }
-    virtual std::vector< MoveT > const& valid_moves() const = 0;
+    std::vector< MoveT > const& valid_moves() const { return moves; }
+
     // promise: player index of the returned game must be the opponent's index
-    virtual std::unique_ptr< Game > apply_next_move() const = 0;
+    // require: move has to be a valid move
+    virtual std::unique_ptr< Game > apply( MoveT const& ) const = 0;
 protected:
+    std::vector< MoveT > moves;
     Player< MoveT > const& player;
     Player< MoveT > const& opponent;
 };
