@@ -21,18 +21,25 @@ struct TestGame : public UndecidedGame< char >
 {
     TestGame( Player< char > const& player, Player< char > const& opponent, 
               char state = ' ')
-        : UndecidedGame( player, opponent ), state( state )
+        : UndecidedGame( player ), state( state ), opponent( opponent )
     {
         moves.push_back( 'a' );
         moves.push_back( 'b' );
     }
 
-    virtual std::unique_ptr< Game > apply( char const& move ) const override
+    virtual std::unique_ptr< Game > apply( vector< char >::const_iterator itr ) const override
     {
-        return std::unique_ptr< Game >( new TestGame( opponent, player, move ) );
+        return std::unique_ptr< Game >( new TestGame( opponent, player, *itr ) );
+    }
+
+    virtual vector< char > const& valid_moves() const override
+    {
+        return moves;
     }
 
     char state;
+    vector< char > moves;
+    Player< char > const& opponent;
 };
 
 struct TestPlayer : public Player< char >

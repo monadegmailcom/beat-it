@@ -26,9 +26,10 @@ double eval( Game const& game, ScoreFunction< MoveT > score,
         dynamic_cast< UndecidedGame< MoveT > const& >( game );
     double best_score = max_value( toggle( index ));
     const auto compare = cmp( index );
-    for (auto const& move : undecided_game.valid_moves())
+    for (auto itr = undecided_game.valid_moves().begin();
+         itr != undecided_game.valid_moves().end(); ++itr)
     {
-        auto next_game = undecided_game.apply( move );
+        auto next_game = undecided_game.apply( itr );
         auto next_score = eval( *next_game, score, depth - 1 );
         if (compare( next_score, best_score ))
             best_score = next_score;

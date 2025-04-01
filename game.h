@@ -39,26 +39,20 @@ template< typename MoveT >
 class UndecidedGame : public Game
 {
 public: 
-    UndecidedGame( Player< MoveT > const& player, Player< MoveT > const& opponent )
-    : player( player ), opponent( opponent )
-    {
-        if (player.get_index() == opponent.get_index())
-            throw std::invalid_argument( "players must have different indices" );
-    }
+    UndecidedGame( Player< MoveT > const& player )
+    : player( player ) {}
     Player< MoveT > const& next_to_make_a_move() const { return player; }
     PlayerIndex current_player_index() const override
     {
         return player.get_index();
     }
-    std::vector< MoveT > const& valid_moves() const { return moves; }
+    virtual std::vector< MoveT > const& valid_moves() const = 0;
 
-    // promise: player index of the returned game must be the opponent's index
-    // require: move has to be a valid move
-    virtual std::unique_ptr< Game > apply( MoveT const& ) const = 0;
+    // require: move iterator has to be in valid_moves()
+    // require: returned game's player has toggled index
+    virtual std::unique_ptr< Game > apply( std::vector< MoveT >::const_iterator) const = 0;
 protected:
-    std::vector< MoveT > moves;
     Player< MoveT > const& player;
-    Player< MoveT > const& opponent;
 };
 
 class DrawnGame : public Game
