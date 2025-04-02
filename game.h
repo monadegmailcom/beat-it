@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cstdint>
 #include <memory>
 #include <vector>
@@ -39,8 +41,7 @@ template< typename MoveT >
 class UndecidedGame : public Game
 {
 public: 
-    UndecidedGame( Player< MoveT > const& player )
-    : player( player ) {}
+    UndecidedGame( Player< MoveT > const& player ) : player( player ) {}
     Player< MoveT > const& next_to_make_a_move() const { return player; }
     PlayerIndex current_player_index() const override
     {

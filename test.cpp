@@ -3,6 +3,7 @@
 #include <cassert>
 
 #include "minimax.h"
+#include "nim.h"
 
 using namespace std;
 
@@ -127,6 +128,65 @@ void eval_undecided_game()
 
 }
 
+
+struct TestNimPlayer : public Player< nim::Move >
+{
+    TestNimPlayer( PlayerIndex index ) : Player( index ) {}
+    vector< nim::Move >::const_iterator choose( 
+        vector< nim::Move > const& ) override
+    {
+        return next_move;
+    }
+    vector< nim::Move >::const_iterator next_move;
+};
+
+void nim_game()
+{
+    cout << __func__ << endl;
+
+    TestNimPlayer player1( Player1 );
+    TestNimPlayer player2( Player2 );
+
+    nim::Game game( player1, player2, { 1, 2 } );
+    auto heap_itr = game.get_heaps().begin();
+    auto moves = vector{ nim::Move{ heap_itr, 1 }, nim::Move{ heap_itr + 1, 1 }, 
+                                  nim::Move{ heap_itr + 1, 2 } };
+    assert (game.valid_moves() == moves);
+    player1.next_move = game.valid_moves().begin() + 1;
+    auto next_game = game.apply( player1.next_move );    
+    assert( next_game->current_player_index() == Player2 );
+    auto nim = dynamic_cast< nim::Game* >( next_game.get() );
+    assert (nim);
+    heap_itr = nim->get_heaps().begin();
+    moves = vector{ nim::Move{ heap_itr, 1 }, 
+                    nim::Move{ heap_itr + 1, 1 }};
+    assert( nim->valid_moves() == moves);
+    player2.next_move = nim->valid_moves().begin();
+    next_game = nim->apply( player2.next_move );
+    assert( next_game->current_player_index() == Player1 );
+    nim = dynamic_cast< nim::Game* >( next_game.get() );
+    assert (nim);
+    heap_itr = nim->get_heaps().begin();
+    moves = vector{ nim::Move{ heap_itr, 1 }};
+    assert( nim->valid_moves() == moves);
+    
+    player1.next_move = nim->valid_moves().begin();
+    next_game = nim->apply( player1.next_move );
+    assert( next_game->current_player_index() == Player2 );
+    auto won_game = dynamic_cast< WonGame* >( next_game.get() );
+    assert (won_game);
+    assert (won_game->winner() == Player2);
+/*
+    minimax::ScoreFunction< nim::Move > score = []( UndecidedGame< nim::Move > const& game )
+    {
+        return 0.0;
+    };
+
+    if (minimax::eval( game, score, 0 ) != 0.0)
+        assert( !"wrong score for nim game" );
+    */
+}
+
 } // namespace test {
 
 int main()
@@ -141,6 +201,7 @@ int main()
         test::eval_won_game();
         test::eval_drawn_game();
         test::eval_undecided_game();
+        test::nim_game();
 
         cout << "\neverything ok" << endl;    
         return 0;

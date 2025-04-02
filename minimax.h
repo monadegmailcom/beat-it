@@ -1,6 +1,6 @@
-#include <functional>
-
 #include "game.h"
+
+#include <functional>
 
 namespace minimax
 {

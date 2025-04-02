@@ -37,15 +37,15 @@ endif
 $(info OPT=$(OPT))
 FLAGS=-std=c++20 -Wall $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
-# Automatically reference all local .cpp files except main.cpp and test.cpp
-SOURCES=$(filter-out main.cpp test.cpp, $(wildcard *.cpp))
+# Automatically reference all local .cpp files
+SOURCES=$(wildcard *.cpp)
 ODIR=obj
 OBJS=$(patsubst %.cpp,$(ODIR)/%.o,$(SOURCES))
 DEPS=$(patsubst %.cpp,$(ODIR)/%.d,$(SOURCES))
-#$(info DEPS=$(DEPS))
+$(info DEPS=$(DEPS))
 
-MAIN_OBJS=$(OBJS) $(ODIR)/main.o
-TEST_OBJS=$(OBJS) $(ODIR)/test.o
+MAIN_OBJS=$(filter-out $(ODIR)/test.o, $(OBJS))
+TEST_OBJS=$(filter-out $(ODIR)/main.o, $(OBJS))
 
 beat-it: $(MAIN_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(MAIN_OBJS) $(LINK)
