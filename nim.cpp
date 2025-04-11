@@ -1,6 +1,7 @@
 #include "nim.h"
 
 #include <algorithm>
+#include <iostream>
 
 using namespace std;
 
@@ -8,27 +9,26 @@ namespace nim {
 
 bool operator==( Move const& lhs, Move const& rhs )
 {
-    return lhs.heap_itr == rhs.heap_itr && lhs.count == rhs.count;
+    return lhs.heap_index == rhs.heap_index && lhs.count == rhs.count;
 }
 
-Game::Game( Player< Move > const& player, Player< Move > const& opponent, vector< size_t > _heaps )   
-: UndecidedGame( player ), opponent( opponent ), heaps( _heaps ) 
+Game::Game( PlayerIndex player_index, vector< size_t > _heaps )   
+: UndecidedGame( player_index ), heaps( _heaps )
 {
     if (heaps.empty())
         throw std::invalid_argument( "at least one heap" );
     if (any_of( heaps.begin(), heaps.end(), []( size_t count ) { return count == 0; }))
         throw std::invalid_argument( "heaps must not be empty" );
 
-    for (auto itr = heaps.begin(); itr != heaps.end(); ++itr)
-        for (size_t count = 1; count <= *itr; ++count)
-            moves.push_back( Move{ itr, count } );
-    }
+    for (size_t i = 0; i < heaps.size(); ++i)
+        for (size_t count = 1; count <= heaps[i]; ++count)
+            moves.push_back( Move{ i, count } );
+}
 
 unique_ptr< ::Game > Game::apply( vector< Move >::const_iterator move_itr) const
 {
     vector< size_t > new_heaps( heaps );
-    auto heap_itr = new_heaps.begin();
-    advance( heap_itr, distance( heaps.begin(), move_itr->heap_itr ));
+    auto heap_itr = new_heaps.begin() + move_itr->heap_index;
     if (*heap_itr < move_itr->count)
         throw std::invalid_argument( 
             "invalid move, heap size (" + to_string(*heap_itr) 
@@ -38,11 +38,57 @@ unique_ptr< ::Game > Game::apply( vector< Move >::const_iterator move_itr) const
         new_heaps.erase( heap_itr );
     ::Game* game = nullptr;
     if (new_heaps.empty())
-        game = new WonGame( toggle( player.get_index() ));
+        game = new WonGame( toggle( player_index ));
     else
-        game = new Game( opponent, player, new_heaps );
+        game = new Game( toggle( player_index ), new_heaps );
 
     return unique_ptr< ::Game >( game );
 }
 
+namespace console {
+
+vector< Move >::const_iterator HumanPlayer::choose( 
+    UndecidedGame< Move > const& game )
+{
+    auto nim_game = dynamic_cast< nim::Game const* >( &game );
+    if (!nim_game)
+        throw std::invalid_argument( "invalid game type" );
+
+    cout << "player " << game.current_player_index() << endl
+         << "heaps: " << endl;
+    unsigned index = 0;
+    for (auto const& heap : nim_game->get_heaps())
+        cout << ++index << ". " << heap << endl;
+
+    while (true)
+    {
+        cout << "heap index? (1-" << index << "): ";
+        size_t heap_index;
+        std::cin >> heap_index;
+        if (heap_index < 1 || heap_index > index)
+        {
+            cout << "invalid heap index" << endl;
+            continue;
+        }        
+        cout << "count? (1-" << nim_game->get_heaps()[heap_index - 1] << "): ";
+        size_t count;
+        std::cin >> count;
+        if (count < 1 || count > nim_game->get_heaps()[heap_index - 1])
+        {
+            cout << "invalid count" << endl;
+            continue;
+        }        
+        auto move_itr = find_if( game.valid_moves().begin(), game.valid_moves().end(),
+                                  [heap_index, count]( Move const& move )
+                                  { return move == Move{ heap_index - 1, count }; } );
+        if (move_itr == game.valid_moves().end())
+        {
+            cout << "invalid move" << endl;
+            continue;
+        }
+        return move_itr;
+    }
+}
+
+} // namespace console {
 } // namespace nim {

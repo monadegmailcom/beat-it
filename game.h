@@ -22,9 +22,11 @@ public:
     Player( PlayerIndex index ) : index( index ) {}
     virtual ~Player() {}
     PlayerIndex get_index() const { return index; }
-    // promise: returns iterator to move if valid_moves is not empty
+    void set_index( PlayerIndex index ) { this->index = index; }
+
+    // require: move iterator has to be in game.valid_moves()
     virtual std::vector< MoveT >::const_iterator choose( 
-        std::vector< MoveT > const& valid_moves ) = 0;
+        UndecidedGame< MoveT > const& game ) = 0;
 private:
     PlayerIndex index;
 };
@@ -32,50 +34,38 @@ private:
 class Game
 {
 public:
+    Game( PlayerIndex player_index ) : player_index( player_index ) {}
     virtual ~Game() {}
     
-    virtual PlayerIndex current_player_index() const = 0;
+    PlayerIndex current_player_index() const { return player_index; }
+protected:
+    PlayerIndex player_index;
 };
 
 template< typename MoveT >
 class UndecidedGame : public Game
 {
 public: 
-    UndecidedGame( Player< MoveT > const& player ) : player( player ) {}
-    Player< MoveT > const& next_to_make_a_move() const { return player; }
-    PlayerIndex current_player_index() const override
-    {
-        return player.get_index();
-    }
+    UndecidedGame( PlayerIndex player_index ) : Game( player_index ) {}
+    virtual ~UndecidedGame() {}
     virtual std::vector< MoveT > const& valid_moves() const = 0;
 
     // require: move iterator has to be in valid_moves()
-    // require: returned game's player has toggled index
     virtual std::unique_ptr< Game > apply( std::vector< MoveT >::const_iterator) const = 0;
-protected:
-    Player< MoveT > const& player;
 };
 
 class DrawnGame : public Game
 {
 public:
-    DrawnGame( PlayerIndex current_player_index ) 
-        : player_index( current_player_index ) {}
-    PlayerIndex current_player_index() const override { return player_index; }
-private:
-    PlayerIndex player_index;
+    DrawnGame( PlayerIndex player_index ) : Game( player_index ) {}
 };
 
 class WonGame : public Game
 {
 public:
-    WonGame( PlayerIndex winner ) : winner_index( winner ) {}
-    PlayerIndex current_player_index() const override { return winner_index; }
-
+    WonGame( PlayerIndex winner ) : Game( winner ) {}
     PlayerIndex winner() const
     {
-        return winner_index;
+        return player_index;
     }
-private:
-    PlayerIndex winner_index;
 };

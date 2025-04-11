@@ -14,9 +14,10 @@ PROJECT_ROOT=$(shell pwd)
 UNIVERSAL_FLAGS=
 
 INCLUDE=-isystem$(BOOST_PATH)/include/ \
-		-isystem$(GRAPHVIZ_PATH)/include 
-LINK=-L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
-	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
+#		-isystem$(GRAPHVIZ_PATH)/include 
+LINK=
+# -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
+#	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
 DEBUG=-g
 RELEASE=-O3 -DNDEBUG
@@ -35,7 +36,7 @@ ifeq ($(MAKECMDGOALS), beat-it)
 endif
 
 $(info OPT=$(OPT))
-FLAGS=-std=c++20 -Wall $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
+FLAGS=-std=c++20 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
 # Automatically reference all local .cpp files
 SOURCES=$(wildcard *.cpp)

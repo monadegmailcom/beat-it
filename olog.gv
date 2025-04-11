@@ -20,9 +20,7 @@ digraph olog
         st_z [label=<Z<sub>2</sub>>]
         st_undecided [label="an undecided game"]
         st_undecided -> st_game [label="is"]
-        st_undecided -> st_p [label=<next to make<br/>a move>]
         st_undecided -> st_s [label="valid moves"]
-        st_undecided -> st_g_m_s [label=<player's move>]
         st_s [label="a set of moves"]
         st_g_m_s [label=<(g, m, s)<br/>where m &#x2208; s>]
         st_g_m_s -> st_s [label="s"]
@@ -34,12 +32,16 @@ digraph olog
         st_g2 [label="a game"]
         st_p [label="a player"]
         st_p -> st_z2 [label="index"]   
-        st_p -> st_m [label="choose"]   
+        st_p -> st_m_s [label="choose"]   
+        st_p -> st_undecided [label="game"]
+        st_m_s [label=<(m, s)<br/>where m &#x2208; s>]
+        st_m_s -> st_s [label="s"]
+        st_m_s -> st_m [label="m"]
         st_z2 [label=<Z<sub>2</sub>>]
         st_z2 -> st_z [label="+1"]
         st_g2 -> st_z [label=<current<br/>player index>]
         st_m [label="a move"]
-        {rank=same; st_g_m_s; st_undecided}
+        //{rank=same; st_g_m_s; st_undecided}
         //{rank=same; st_z; st_z2}
         //{rank=same; st_m; st_s}
         //{rank=min; st_game}
@@ -80,26 +82,27 @@ digraph olog
         mg_mm -> mg_n [label="depth"]
         mg_mm -> mg_t [label="algo"]
         mg_t [label=<(g, f, n, ms)>]
-        mg_t -> mg_z2 [label=i]
         mg_t -> mg_un [label=g]
         mg_t -> mg_f [label=f]
         mg_t -> mg_n [label=n]
         mg_t -> mg_ms [label=ms]
         mg_t -> mg_m_sc [label=<cmp( curent player index( g )),<br/>m &#x21a6; (m, eval(i,apply(g, m, ms),f,n)))<br/>&#x2200; m &#x2208; ms<br/>>]
-        mg_z2 [label=<Z<sub>2</sub>>]
         mg_ms [label="a set of moves"]
         mg_un [label="an undecided game"]
-        mg_un -> mg_pl [label="next to make a move"]
-        mg_pl -> mg_m [label="choose"]
-        mg_pl -> mg_z2 [label="index"]
+        mg_pl -> mg_m_s [label="choose"]
+        mg_pl -> mg_un [label="game"]
         mg_un -> mg_ms [label="valid moves"]
         mg_m_sc [label=<(rel, ps) where ps is a set of<br/>pairs (m, score) of moves and scores>]
         mg_m_sc -> mg_m [label=<argmax>]
         mg_m [label="a move"]
+        mg_m_s [label=<(m, s)<br/>where m &#x2208; s>]
+        mg_m_s -> mg_ms [label="s"]
+        mg_m_s -> mg_m [label="m"]
         mg_n [label=<&#x2115;>]
         mg_pl [label="a player"]
         mg_f [label=<a game &#x2192; &#x211d;<br/>>]
         }
+
         subgraph cluster_z {
         label=""
         mg_0 [label=<0>]
