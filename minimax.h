@@ -14,7 +14,9 @@ double max_value( PlayerIndex );
 std::function< bool (double, double) > cmp( PlayerIndex );
 
 template< typename MoveT >
-double eval( Game const& game, ScoreFunction< MoveT > score, unsigned depth, std::mt19937& g )
+double eval( 
+    Game const& game, ScoreFunction< MoveT > score, unsigned depth, std::mt19937& g, 
+    std::vector< size_t >& move_indices )
 {
     const PlayerIndex index = game.current_player_index();
     if (dynamic_cast< DrawnGame const* >( &game ))
@@ -29,17 +31,19 @@ double eval( Game const& game, ScoreFunction< MoveT > score, unsigned depth, std
     const auto compare = cmp( index );
 
     // shuffle order of moves to avoid the same order every time
-    std::vector< size_t > move_indices( undecided_game.valid_moves().size());
-    std::generate( move_indices.begin(), move_indices.end(), [n = 0]() mutable { return n++; });
-    std::shuffle( move_indices.begin(), move_indices.end(), g );
+    const size_t prev_size = move_indices.size();
+    move_indices.resize( prev_size + undecided_game.valid_moves().size());
+    std::generate( move_indices.begin() + prev_size, move_indices.end(), [n = 0]() mutable { return n++; });
+    std::shuffle( move_indices.begin() + prev_size, move_indices.end(), g );
 
-    for (auto move_index : move_indices)
+    for (size_t i = prev_size, size = move_indices.size(); i != size; ++i)
     {
-        auto next_game = undecided_game.apply( move_index );
-        auto next_score = eval( *next_game, score, depth - 1, g );
+        auto next_game = undecided_game.apply( move_indices[i]);
+        auto next_score = eval( *next_game, score, depth - 1, g, move_indices );
         if (compare( next_score, best_score ))
             best_score = next_score;
     }
+    move_indices.resize( prev_size );
     return best_score;
 }
 
@@ -50,9 +54,11 @@ public:
     Player( unsigned depth, std::mt19937& g ) : depth( depth ), g( g ) {}
     virtual ~Player() {}
     virtual double score( UndecidedGame< MoveT > const& ) = 0;
+    std::vector< size_t > const& get_move_indices() const { return move_indices; }
 protected:
     unsigned depth;
     std::mt19937& g;
+    std::vector< size_t > move_indices;
 
     size_t choose( UndecidedGame< MoveT > const& game ) override
     {
@@ -63,14 +69,15 @@ protected:
         size_t best_move_index = 0;
 
         // shuffle order of moves to avoid the same order every time
-        std::vector< size_t > move_indices( game.valid_moves().size());
+        move_indices.resize( game.valid_moves().size());
         std::generate( move_indices.begin(), move_indices.end(), [n = 0]() mutable { return n++; });
         std::shuffle( move_indices.begin(), move_indices.end(), g );
 
-        for (auto move_index : move_indices)
+        for (size_t i = 0, size = move_indices.size(); i != size; ++i)
         {
+            const size_t move_index = move_indices[i];
             auto next_game = game.apply( move_index );
-            const double score = eval( *next_game, score_function, depth, g );
+            const double score = eval( *next_game, score_function, depth, g, move_indices );
             if (compare( score, best_score ))
             {
                 best_score = score;

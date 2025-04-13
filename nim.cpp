@@ -12,18 +12,19 @@ bool operator==( Move const& lhs, Move const& rhs )
     return lhs.heap_index == rhs.heap_index && lhs.count == rhs.count;
 }
 
-Game::Game( PlayerIndex player_index, vector< size_t >&& _heaps, vector< Move >& move_stack )
-    : UndecidedGame( player_index ), heaps( _heaps ), move_stack( move_stack ), 
-      moves_begin_index( move_stack.size())
+Game::Game( PlayerIndex player_index, size_t heap_count, vector< size_t >& heap_stack, vector< Move >& move_stack )
+    : UndecidedGame( player_index ), heap_stack( heap_stack ), 
+      heap_begin_index( heap_stack.size() - heap_count ), heap_count( heap_count ), 
+      move_stack( move_stack ), moves_begin_index( move_stack.size())
     
 {
-    if (heaps.empty())
+    if (!heap_count)
         throw std::invalid_argument( "at least one heap" );
-    if (any_of( heaps.begin(), heaps.end(), []( size_t count ) { return count == 0; }))
-        throw std::invalid_argument( "heaps must not be empty" );
+    if (heap_count > heap_stack.size())
+        throw std::invalid_argument( "heaps count exceeds heap stack size" );
 
-    for (size_t i = 0; i < heaps.size(); ++i)
-        for (size_t count = 1; count <= heaps[i]; ++count)
+    for (size_t i = 0; i < heap_count; ++i)
+        for (size_t count = 1; count <= heap_stack[heap_begin_index + i]; ++count)
             move_stack.push_back( Move{ i, count } );
     moves_count = move_stack.size() - moves_begin_index;
 }
@@ -31,27 +32,51 @@ Game::Game( PlayerIndex player_index, vector< size_t >&& _heaps, vector< Move >&
 Game::~Game()
 {
     move_stack.erase( move_stack.begin() + moves_begin_index, move_stack.end());
+    heap_stack.erase( heap_stack.begin() + heap_begin_index, heap_stack.end());
 }
 
 unique_ptr< ::Game > Game::apply( size_t index ) const
 {
-    vector< size_t > new_heaps( heaps );
+    size_t new_heap_count = 0;
     Move const& move = move_stack[moves_begin_index + index];
-    auto heap_itr = new_heaps.begin() + move.heap_index;
-    if (*heap_itr < move.count)
-        throw std::invalid_argument( 
-            "invalid move, heap size (" + to_string(*heap_itr) 
-            + ") < move count (" + to_string(move.count) + ")" );
-    *heap_itr -= move.count;
-    if (*heap_itr == 0)
-        new_heaps.erase( heap_itr );
-    ::Game* game = nullptr;
-    if (new_heaps.empty())
-        game = new WonGame( toggle( player_index ));
+    for (auto i = 0; i != heap_count; ++i)
+    {
+        const size_t heap_size = heap_stack[heap_begin_index + i];
+        
+        if (i != move.heap_index)
+        {
+            heap_stack.push_back( heap_size );
+            ++new_heap_count;
+        }
+        else if (move.count < heap_size)
+        {
+            heap_stack.push_back( heap_size - move.count );
+            ++new_heap_count;
+        } 
+        else if (heap_size < move.count)
+            throw std::invalid_argument( 
+                "invalid move, heap size (" + to_string(heap_size) 
+                + ") < move count (" + to_string(move.count) + ")" );            
+    }
+    unique_ptr< ::Game > game;
+    if (!new_heap_count)
+        game.reset( new WonGame( toggle( player_index )));
     else
-        game = new Game( toggle( player_index ), std::move( new_heaps ), move_stack);
+        game.reset( new Game( toggle( player_index ), new_heap_count, heap_stack, move_stack));
 
-    return unique_ptr< ::Game >( game );
+    return game;
+}
+
+Game::MoveRange Game::valid_moves() const
+{
+    const auto begin = move_stack.cbegin() + moves_begin_index;
+    return std::ranges::subrange( begin, begin + moves_count );
+}
+
+Game::HeapRange Game::get_heaps() const
+{
+    const auto begin = heap_stack.cbegin() + heap_begin_index;
+    return std::ranges::subrange( begin, begin + heap_count );
 }
 
 namespace console {

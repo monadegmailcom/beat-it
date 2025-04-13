@@ -83,9 +83,10 @@ void eval_won_game()
     mt19937 g;
     minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
         { return 0.0; };
-    if (minimax::eval< char >( WonGame( Player2 ), score, 0, g ) != INFINITY)
+    vector< size_t > move_indices;
+    if (minimax::eval< char >( WonGame( Player2 ), score, 0, g, move_indices ) != INFINITY)
         assert( !"wrong score for won game" );
-    if (minimax::eval< char >( WonGame( Player1 ), score, 0, g ) != -INFINITY)
+    if (minimax::eval< char >( WonGame( Player1 ), score, 0, g, move_indices ) != -INFINITY)
         assert( !"wrong score for won game" );
 }
 
@@ -96,7 +97,8 @@ void eval_drawn_game()
     
     minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
         { return 0.0; };
-    if (minimax::eval< char >( DrawnGame( Player1 ), score, 0, g ) != 0.0)
+    vector< size_t > move_indices;
+    if (minimax::eval< char >( DrawnGame( Player1 ), score, 0, g, move_indices ) != 0.0)
         assert( !"wrong score for drawn game" );
 }
 
@@ -109,8 +111,8 @@ void eval_undecided_game()
     minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
         { return 42.0; };
     mt19937 g;
-
-    if (minimax::eval( undecided_game, score, 0, g ) != 42.0)
+    vector< size_t > move_indices;
+    if (minimax::eval( undecided_game, score, 0, g, move_indices ) != 42.0)
         assert( !"wrong score for undecided game" );
 
 }
@@ -134,13 +136,15 @@ void nim_game()
     TestNimPlayer player1;
     TestNimPlayer player2;
     mt19937 g( seed );
-    vector< nim::Move > moves_heap;
-    nim::Game game( Player1, { 1, 2 }, moves_heap );
-    auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, 
-                         nim::Move{ 1, 2 } };
+    vector< nim::Move > moves_stack;
+    vector< size_t > heap_stack{ 1, 2 };
+    nim::Game game( Player1, heap_stack.size(), heap_stack, moves_stack );
+    auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, nim::Move{ 1, 2 } };
     assert (std::is_permutation(moves.begin(), moves.end(), game.valid_moves().begin()));
-    player1.next_move_index = find( game.valid_moves().begin(), game.valid_moves().end(),
-                                    nim::Move{ 1, 1 }) - game.valid_moves().begin();    
+    player1.next_move_index = find( 
+        game.valid_moves().begin(), game.valid_moves().end(), 
+        nim::Move{ 1, 1 }) 
+        - game.valid_moves().begin();    
     auto next_game = game.apply( player1.next_move_index );    
     assert( next_game->current_player_index() == Player2 );
     auto nim = dynamic_cast< nim::Game* >( next_game.get() );
@@ -240,9 +244,9 @@ void play_nim()
     cout << __func__ << endl;
 
     mt19937 g( seed );
-    vector< nim::Move > moves;
-    
-    nim::Game game( Player1, vector< size_t >{ 1, 2, 3, 4, 5 }, moves );
+    vector< nim::Move > move_stack;
+    vector< size_t > heap_stack{ 1, 2, 3, 4, 5 };
+    nim::Game game( Player1, heap_stack.size(), heap_stack, move_stack );
 
     MinimaxNimPlayer fst_player( 2, g );
     MinimaxNimPlayer snd_player( 3, g );
@@ -252,8 +256,14 @@ void play_nim()
     cout << "fst player wins: " << match.fst_player_wins << endl;
     cout << "snd player wins: " << match.snd_player_wins << endl;
     cout << "draws: " << match.draws << endl;
-    cout << "moves size: " << moves.size() << endl;
-    cout << "moves capacity: " << moves.capacity() << endl;
+    cout << "move stack size: " << move_stack.size() << endl;
+    cout << "move stack capacity: " << move_stack.capacity() << endl;
+    cout << "heap stack size: " << heap_stack.size() << endl;
+    cout << "heap stack capacity: " << heap_stack.capacity() << endl;
+    cout << "fst player move indices size: " << fst_player.get_move_indices().size() << endl;
+    cout << "fst player move indices capacity: " << fst_player.get_move_indices().capacity() << endl;
+    cout << "snd player move indices size: " << snd_player.get_move_indices().size() << endl;
+    cout << "snd player move indices capacity: " << snd_player.get_move_indices().capacity() << endl;
 }
 
 } // namespace test {

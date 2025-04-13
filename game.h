@@ -41,9 +41,11 @@ template< typename MoveT >
 class UndecidedGame : public Game
 {
 public: 
+    using MoveRange = std::ranges::subrange< typename std::vector< MoveT >::const_iterator >;
+
     UndecidedGame( PlayerIndex player_index ) : Game( player_index ) {}
     virtual ~UndecidedGame() {}
-    virtual std::ranges::subrange< typename std::vector< MoveT >::const_iterator > valid_moves() const = 0;
+    virtual MoveRange valid_moves() const = 0;
 
     // require: move index in valid_moves()
     virtual std::unique_ptr< Game > apply( size_t index ) const = 0;
