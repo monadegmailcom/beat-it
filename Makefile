@@ -7,6 +7,7 @@ HOMEBREW=/opt/homebrew/Cellar
 
 BOOST_PATH=$(HOMEBREW)/boost/1.85.0
 GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
+GPERF_PATH=$(HOMEBREW)/gperftools/2.16
 
 PROJECT_ROOT=$(shell pwd)
 
@@ -15,11 +16,11 @@ UNIVERSAL_FLAGS=
 
 INCLUDE=-isystem$(BOOST_PATH)/include/ \
 #		-isystem$(GRAPHVIZ_PATH)/include 
-LINK=
+LINK=-L$(GPERF_PATH)/lib -lprofiler
 # -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
 #	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
-DEBUG=-g
+DEBUG=-g -O3
 RELEASE=-O3 -DNDEBUG
 
 # don't forget to clean if you change OPT

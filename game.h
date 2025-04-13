@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <ranges>
 
 enum PlayerIndex
 {
@@ -11,25 +12,6 @@ enum PlayerIndex
 };
 
 PlayerIndex toggle( PlayerIndex );
-
-template< typename MoveT >
-class UndecidedGame;
-
-template< typename MoveT >
-class Player 
-{
-public:
-    Player( PlayerIndex index ) : index( index ) {}
-    virtual ~Player() {}
-    PlayerIndex get_index() const { return index; }
-    void set_index( PlayerIndex index ) { this->index = index; }
-
-    // require: move iterator has to be in game.valid_moves()
-    virtual std::vector< MoveT >::const_iterator choose( 
-        UndecidedGame< MoveT > const& game ) = 0;
-private:
-    PlayerIndex index;
-};
 
 class Game
 {
@@ -42,18 +24,6 @@ protected:
     PlayerIndex player_index;
 };
 
-template< typename MoveT >
-class UndecidedGame : public Game
-{
-public: 
-    UndecidedGame( PlayerIndex player_index ) : Game( player_index ) {}
-    virtual ~UndecidedGame() {}
-    virtual std::vector< MoveT > const& valid_moves() const = 0;
-
-    // require: move iterator has to be in valid_moves()
-    virtual std::unique_ptr< Game > apply( std::vector< MoveT >::const_iterator) const = 0;
-};
-
 class DrawnGame : public Game
 {
 public:
@@ -64,8 +34,27 @@ class WonGame : public Game
 {
 public:
     WonGame( PlayerIndex winner ) : Game( winner ) {}
-    PlayerIndex winner() const
-    {
-        return player_index;
-    }
+    PlayerIndex winner() const { return player_index; }
+};
+
+template< typename MoveT >
+class UndecidedGame : public Game
+{
+public: 
+    UndecidedGame( PlayerIndex player_index ) : Game( player_index ) {}
+    virtual ~UndecidedGame() {}
+    virtual std::ranges::subrange< typename std::vector< MoveT >::const_iterator > valid_moves() const = 0;
+
+    // require: move index in valid_moves()
+    virtual std::unique_ptr< Game > apply( size_t index ) const = 0;
+};
+
+template< typename MoveT >
+class Player 
+{
+public:
+    virtual ~Player() {}
+    // promise: return index of move in game.valid_moves()
+    virtual size_t choose( 
+        UndecidedGame< MoveT > const& ) = 0;
 };

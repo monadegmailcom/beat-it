@@ -15,17 +15,22 @@ class Game : public UndecidedGame< Move >
 {
 public:
     // require: at least one heap and heaps are not empty
-    Game( PlayerIndex player_index, std::vector< size_t > heaps );
+    // promise: heaps argument is moved
+    Game( PlayerIndex player_index, std::vector< size_t >&& heaps, std::vector< Move >& move_stack );
+    ~Game() override;
     std::vector< size_t > const& get_heaps() const { return heaps; }
-    std::vector< Move > const& valid_moves() const override
+    std::ranges::subrange< typename std::vector< Move >::const_iterator > valid_moves() const override
     {
-        return moves;
+        const auto begin = move_stack.cbegin() + moves_begin_index;
+        return std::ranges::subrange( begin, begin + moves_count );
     }
-    std::unique_ptr< ::Game > apply( std::vector< Move >::const_iterator) const override;
+    std::unique_ptr< ::Game > apply( size_t ) const override;
 private:
     std::vector< size_t > heaps;
 
-    std::vector< Move > moves;
+    std::vector< Move >& move_stack;
+    size_t moves_begin_index;
+    size_t moves_count = 0;
 };
 
 namespace console {
@@ -33,9 +38,7 @@ namespace console {
 class HumanPlayer : public Player< Move >
 {
 public:
-    HumanPlayer( PlayerIndex index ) : Player( index ) {}
-    std::vector< Move >::const_iterator choose( 
-        UndecidedGame< Move > const& game ) override;
+    size_t choose( UndecidedGame< Move > const& game ) override;
 };
 
 } // namespace console {

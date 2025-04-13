@@ -28,18 +28,14 @@ double eval( Game const& game, ScoreFunction< MoveT > score, unsigned depth, std
     double best_score = max_value( toggle( index ));
     const auto compare = cmp( index );
 
-    // shuffle iterators to the moves to avoid the same order every time
-    std::vector< typename std::vector< MoveT >::const_iterator > moves( 
-        undecided_game.valid_moves().size());
-    auto dest = moves.begin();
-    for (auto itr = undecided_game.valid_moves().begin();
-            itr != undecided_game.valid_moves().end(); ++itr, ++dest)
-        *dest = itr;
-    std::shuffle( moves.begin(), moves.end(), g );
+    // shuffle order of moves to avoid the same order every time
+    std::vector< size_t > move_indices( undecided_game.valid_moves().size());
+    std::generate( move_indices.begin(), move_indices.end(), [n = 0]() mutable { return n++; });
+    std::shuffle( move_indices.begin(), move_indices.end(), g );
 
-    for (auto move_itr : moves)
+    for (auto move_index : move_indices)
     {
-        auto next_game = undecided_game.apply( move_itr );
+        auto next_game = undecided_game.apply( move_index );
         auto next_score = eval( *next_game, score, depth - 1, g );
         if (compare( next_score, best_score ))
             best_score = next_score;
@@ -51,42 +47,38 @@ template< typename MoveT >
 class Player : public ::Player< MoveT >
 {   
 public:
-    Player( PlayerIndex index, unsigned depth, std::mt19937& g ) 
-        : ::Player< MoveT >( index ), depth( depth ), g( g ) {}
+    Player( unsigned depth, std::mt19937& g ) : depth( depth ), g( g ) {}
     virtual ~Player() {}
     virtual double score( UndecidedGame< MoveT > const& ) = 0;
 protected:
     unsigned depth;
     std::mt19937& g;
 
-    std::vector< MoveT >::const_iterator choose( 
-        UndecidedGame< MoveT > const& game ) override
+    size_t choose( UndecidedGame< MoveT > const& game ) override
     {
-        const auto compare = cmp( this->get_index());
+        const auto compare = cmp( game.current_player_index());
+        double best_score = max_value( toggle( game.current_player_index()));
         const ScoreFunction< MoveT > score_function = [this](UndecidedGame< MoveT > const& game)
             { return this->score( game ); };
-        double best_score = max_value( toggle( this->get_index()));
-        auto best_move = game.valid_moves().begin();
+        size_t best_move_index = 0;
 
-        // shuffle iterators to the moves to avoid the same order every time
-        std::vector< typename std::vector< MoveT >::const_iterator > moves( game.valid_moves().size());
-        auto dest = moves.begin();
-        for (auto itr = game.valid_moves().begin();
-             itr != game.valid_moves().end(); ++itr, ++dest)
-            *dest = itr;
-        std::shuffle( moves.begin(), moves.end(), g );
+        // shuffle order of moves to avoid the same order every time
+        std::vector< size_t > move_indices( game.valid_moves().size());
+        std::generate( move_indices.begin(), move_indices.end(), [n = 0]() mutable { return n++; });
+        std::shuffle( move_indices.begin(), move_indices.end(), g );
 
-        for (auto move_itr : moves)
+        for (auto move_index : move_indices)
         {
-            const double score = eval( *game.apply( move_itr ), score_function, depth, g );
+            auto next_game = game.apply( move_index );
+            const double score = eval( *next_game, score_function, depth, g );
             if (compare( score, best_score ))
             {
                 best_score = score;
-                best_move = move_itr;
+                best_move_index = move_index;
             }
         }
             
-        return best_move;
+        return best_move_index;
     }
 };
 

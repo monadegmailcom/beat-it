@@ -1,6 +1,7 @@
 #include <iostream>
 #include <exception>
 #include <cassert>
+#include <algorithm>
 
 #include "minimax.h"
 #include "nim.h"
@@ -28,13 +29,13 @@ struct TestGame : public UndecidedGame< char >
         moves.push_back( 'b' );
     }
     
-    std::vector< char > const& valid_moves() const override
+    ranges::subrange< typename vector< char >::const_iterator > valid_moves() const override
     {
-        return moves;
+        return ranges::subrange( moves.cbegin(), moves.cend());
     }
-    virtual std::unique_ptr< Game > apply( vector< char >::const_iterator itr ) const override
+    virtual std::unique_ptr< Game > apply( size_t index ) const override
     {
-        return std::unique_ptr< Game >( new TestGame( player_index, *itr ) );
+        return std::unique_ptr< Game >( new TestGame( player_index, *(moves.begin() + index)));
     }
 
     char state;
@@ -43,11 +44,9 @@ struct TestGame : public UndecidedGame< char >
 
 struct TestPlayer : public Player< char >
 {
-    TestPlayer( PlayerIndex index ) : Player( index ) {}
-    vector< char >::const_iterator choose( 
-        UndecidedGame< char > const& game ) override
+    size_t choose( UndecidedGame< char > const& ) override
     {
-        return game.valid_moves().begin();
+        return 0;
     }
 };
 
@@ -74,7 +73,7 @@ void build_undecided_game()
 
     if (undecided_game.current_player_index() != Player2)
         assert( !"invalid current player index" );
-    if (undecided_game.valid_moves() != vector{'a', 'b'})
+    if (!ranges::equal( undecided_game.valid_moves(), vector{'a', 'b'}))
         assert( !"invalid valid moves" );
 }
 
@@ -118,13 +117,11 @@ void eval_undecided_game()
 
 struct TestNimPlayer : public Player< nim::Move >
 {
-    TestNimPlayer( PlayerIndex index ) : Player( index ) {}
-    vector< nim::Move >::const_iterator choose( 
-        UndecidedGame< nim::Move > const& ) override
+    size_t choose( UndecidedGame< nim::Move > const& game ) override
     {
-        return next_move;
+        return next_move_index;
     }
-    vector< nim::Move >::const_iterator next_move;
+    size_t next_move_index;
 };
 
 random_device rd;
@@ -134,51 +131,44 @@ void nim_game()
 {
     cout << __func__ << endl;
 
-    TestNimPlayer player1( Player1 );
-    TestNimPlayer player2( Player2 );
+    TestNimPlayer player1;
+    TestNimPlayer player2;
     mt19937 g( seed );
-    nim::Game game( Player1, { 1, 2 } );
+    vector< nim::Move > moves_heap;
+    nim::Game game( Player1, { 1, 2 }, moves_heap );
     auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, 
                          nim::Move{ 1, 2 } };
     assert (std::is_permutation(moves.begin(), moves.end(), game.valid_moves().begin()));
-    player1.next_move = find( game.valid_moves().begin(), game.valid_moves().end(),
-                              nim::Move{ 1, 1 });    
-    auto next_game = game.apply( player1.next_move );    
+    player1.next_move_index = find( game.valid_moves().begin(), game.valid_moves().end(),
+                                    nim::Move{ 1, 1 }) - game.valid_moves().begin();    
+    auto next_game = game.apply( player1.next_move_index );    
     assert( next_game->current_player_index() == Player2 );
     auto nim = dynamic_cast< nim::Game* >( next_game.get() );
     assert (nim);
-    moves = vector{ nim::Move{ 0, 1 }, 
-                    nim::Move{ 1, 1 }};
+    moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }};
     assert (std::is_permutation(moves.begin(), moves.end(), nim->valid_moves().begin()));
-    player2.next_move = find( nim->valid_moves().begin(),
-                              nim->valid_moves().end(),
-                              nim::Move{ 1, 1 });
-    next_game = nim->apply( player2.next_move );
-    assert( next_game->current_player_index() == Player1 );
-    nim = dynamic_cast< nim::Game* >( next_game.get() );
+    player2.next_move_index = find( nim->valid_moves().begin(),
+                                    nim->valid_moves().end(),
+                                    nim::Move{ 1, 1 }) - nim->valid_moves().begin();
+    auto next_game2 = nim->apply( player2.next_move_index );
+    assert( next_game2->current_player_index() == Player1 );
+    nim = dynamic_cast< nim::Game* >( next_game2.get() );
     assert (nim);
     moves = vector{ nim::Move{ 0, 1 }};
-    assert( nim->valid_moves() == moves);
+    assert( ranges::equal( nim->valid_moves(), moves));
     
-    player1.next_move = nim->valid_moves().begin();
-    next_game = nim->apply( player1.next_move );
-    assert( next_game->current_player_index() == Player2 );
-    auto won_game = dynamic_cast< WonGame* >( next_game.get() );
+    player1.next_move_index = 0;
+    auto next_game3 = nim->apply( player1.next_move_index );
+    assert( next_game3->current_player_index() == Player2 );
+    auto won_game = dynamic_cast< WonGame* >( next_game3.get() );
     assert (won_game);
     assert (won_game->winner() == Player2);
 }
 
-void print( nim::Game const& game )
-{
-    for( auto const& heap : game.get_heaps() )
-        cout << heap << " ";
-    cout << endl;
-}
-
 struct NimPlayer : public minimax::Player< nim::Move >
 {
-    NimPlayer( PlayerIndex index, unsigned depth, mt19937& g) 
-        : minimax::Player< nim::Move >( index, depth, g ) {}
+    NimPlayer( unsigned depth, mt19937& g) 
+        : minimax::Player< nim::Move >( depth, g ) {}
     double score( UndecidedGame< nim::Move > const& game ) override
     {
         // don't care about the score
@@ -188,9 +178,6 @@ struct NimPlayer : public minimax::Player< nim::Move >
 
 struct MultiMatch : public ::Match< nim::Move >
 {
-    MultiMatch( Player< nim::Move >& player1, Player< nim::Move >& player2 ) 
-        : ::Match< nim::Move >(), player1( player1 ), player2( player2 ) {}
-
     void report( Game const& game, nim::Move const& move ) override
     {
         /*
@@ -206,44 +193,67 @@ struct MultiMatch : public ::Match< nim::Move >
     }
     void won( WonGame const& won_game ) override
     {
-        if (won_game.winner() == player1.get_index())
-            ++player1_wins;
+        if (won_game.winner() == fst_player_index)
+            ++fst_player_wins;
         else
-            ++player2_wins;
+            ++snd_player_wins;
         //cout << "won player " << won_game.winner() << endl;
     }
-    Player< nim::Move >& player1;
-    Player< nim::Move >& player2;
+    void play_match( Game const& game, Player< nim::Move >& fst_player, Player< nim::Move >& snd_player, 
+                     size_t rounds )
+    {
+        draws = 0;
+        fst_player_wins = 0;
+        snd_player_wins = 0;
+        
+        Player< nim::Move >* player = &fst_player;
+        Player< nim::Move >* opponent = &snd_player;
+        
+        fst_player_index = game.current_player_index();
+        snd_player_index = toggle( fst_player_index );
+
+        for (size_t rounds = 100; rounds > 0; --rounds)
+        {
+            play( game, *player, *opponent );
+            swap( player, opponent );
+            swap( fst_player_index, snd_player_index );
+        }
+    }
+
     size_t draws = 0;
-    size_t player1_wins = 0;
-    size_t player2_wins = 0;
+    size_t fst_player_wins = 0;
+    size_t snd_player_wins = 0;
+    PlayerIndex fst_player_index;
+    PlayerIndex snd_player_index;
 };
 
 class MinimaxNimPlayer : public ::minimax::Player< nim::Move >
 {
 public:
-    MinimaxNimPlayer( PlayerIndex index, unsigned depth, mt19937& g ) 
-        : ::minimax::Player< nim::Move >( index, depth, g ) {}
+    MinimaxNimPlayer( unsigned depth, mt19937& g ) 
+        : ::minimax::Player< nim::Move >( depth, g ) {}
     double score( UndecidedGame< nim::Move > const& ) override { return 0; }
 };
 
 void play_nim()
 {
-    mt19937 g( seed );
-    nim::Game game( Player1, { 1, 2, 3, 4, 5 } );
+    cout << __func__ << endl;
 
-    MinimaxNimPlayer player1( Player1, 2, g );
-    MinimaxNimPlayer player2( Player2, 3, g );
-    MultiMatch match( player1, player2 );
-    for (size_t rounds = 100; rounds > 0; --rounds)
-    {
-        match.play( game, player1, player2 );
-        player1.set_index( toggle( player1.get_index()));
-        player2.set_index( toggle( player2.get_index()));
-    }
-    cout << "player 1 wins: " << match.player1_wins << endl;
-    cout << "player 2 wins: " << match.player2_wins << endl;
+    mt19937 g( seed );
+    vector< nim::Move > moves;
+    
+    nim::Game game( Player1, vector< size_t >{ 1, 2, 3, 4, 5 }, moves );
+
+    MinimaxNimPlayer fst_player( 2, g );
+    MinimaxNimPlayer snd_player( 3, g );
+    MultiMatch match;
+    match.play_match( game, fst_player, snd_player, 100 );
+
+    cout << "fst player wins: " << match.fst_player_wins << endl;
+    cout << "snd player wins: " << match.snd_player_wins << endl;
     cout << "draws: " << match.draws << endl;
+    cout << "moves size: " << moves.size() << endl;
+    cout << "moves capacity: " << moves.capacity() << endl;
 }
 
 } // namespace test {

@@ -12,8 +12,10 @@ bool operator==( Move const& lhs, Move const& rhs )
     return lhs.heap_index == rhs.heap_index && lhs.count == rhs.count;
 }
 
-Game::Game( PlayerIndex player_index, vector< size_t > _heaps )   
-: UndecidedGame( player_index ), heaps( _heaps )
+Game::Game( PlayerIndex player_index, vector< size_t >&& _heaps, vector< Move >& move_stack )
+    : UndecidedGame( player_index ), heaps( _heaps ), move_stack( move_stack ), 
+      moves_begin_index( move_stack.size())
+    
 {
     if (heaps.empty())
         throw std::invalid_argument( "at least one heap" );
@@ -22,33 +24,39 @@ Game::Game( PlayerIndex player_index, vector< size_t > _heaps )
 
     for (size_t i = 0; i < heaps.size(); ++i)
         for (size_t count = 1; count <= heaps[i]; ++count)
-            moves.push_back( Move{ i, count } );
+            move_stack.push_back( Move{ i, count } );
+    moves_count = move_stack.size() - moves_begin_index;
 }
 
-unique_ptr< ::Game > Game::apply( vector< Move >::const_iterator move_itr) const
+Game::~Game()
+{
+    move_stack.erase( move_stack.begin() + moves_begin_index, move_stack.end());
+}
+
+unique_ptr< ::Game > Game::apply( size_t index ) const
 {
     vector< size_t > new_heaps( heaps );
-    auto heap_itr = new_heaps.begin() + move_itr->heap_index;
-    if (*heap_itr < move_itr->count)
+    Move const& move = move_stack[moves_begin_index + index];
+    auto heap_itr = new_heaps.begin() + move.heap_index;
+    if (*heap_itr < move.count)
         throw std::invalid_argument( 
             "invalid move, heap size (" + to_string(*heap_itr) 
-            + ") < move count (" + to_string(move_itr->count) + ")" );
-    *heap_itr -= move_itr->count;
+            + ") < move count (" + to_string(move.count) + ")" );
+    *heap_itr -= move.count;
     if (*heap_itr == 0)
         new_heaps.erase( heap_itr );
     ::Game* game = nullptr;
     if (new_heaps.empty())
         game = new WonGame( toggle( player_index ));
     else
-        game = new Game( toggle( player_index ), new_heaps );
+        game = new Game( toggle( player_index ), std::move( new_heaps ), move_stack);
 
     return unique_ptr< ::Game >( game );
 }
 
 namespace console {
 
-vector< Move >::const_iterator HumanPlayer::choose( 
-    UndecidedGame< Move > const& game )
+size_t HumanPlayer::choose( UndecidedGame< Move > const& game )
 {
     auto nim_game = dynamic_cast< nim::Game const* >( &game );
     if (!nim_game)
@@ -86,7 +94,7 @@ vector< Move >::const_iterator HumanPlayer::choose(
             cout << "invalid move" << endl;
             continue;
         }
-        return move_itr;
+        return move_itr - game.valid_moves().begin();
     }
 }
 
