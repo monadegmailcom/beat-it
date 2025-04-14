@@ -44,7 +44,7 @@ struct TestGame : public UndecidedGame< char >
 
 struct TestPlayer : public Player< char >
 {
-    size_t choose( UndecidedGame< char > const& ) override
+    size_t choose( Game< char > const& ) override
     {
         return 0;
     }
@@ -54,11 +54,11 @@ void build_game()
 {
     cout << __func__ << endl;
     
-    DrawnGame drawn_game( Player1 );
+    DrawnGame< char > drawn_game( Player1 );
     if (drawn_game.current_player_index() != Player1)
         assert( !"invalid current player index" );
 
-    WonGame won_game( Player2 );
+    WonGame< char > won_game( Player2 );
     if (won_game.current_player_index() != Player2)
         assert( !"initial player index not passed on" );
     if (won_game.winner() != Player2)
@@ -81,12 +81,11 @@ void eval_won_game()
 {
     cout << __func__ << endl;
     mt19937 g;
-    minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
+    minimax::ScoreFunction< char > score = []( Game< char > const& ) 
         { return 0.0; };
-    vector< size_t > move_indices;
-    if (minimax::eval< char >( WonGame( Player2 ), score, 0, g, move_indices ) != INFINITY)
+    if (minimax::eval< char >( WonGame< char >( Player2 ), score, 0 ) != INFINITY)
         assert( !"wrong score for won game" );
-    if (minimax::eval< char >( WonGame( Player1 ), score, 0, g, move_indices ) != -INFINITY)
+    if (minimax::eval< char >( WonGame< char >( Player1 ), score, 0 ) != -INFINITY)
         assert( !"wrong score for won game" );
 }
 
@@ -95,10 +94,9 @@ void eval_drawn_game()
     cout << __func__ << endl;
     mt19937 g;
     
-    minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
+    minimax::ScoreFunction< char > score = []( Game< char > const& ) 
         { return 0.0; };
-    vector< size_t > move_indices;
-    if (minimax::eval< char >( DrawnGame( Player1 ), score, 0, g, move_indices ) != 0.0)
+    if (minimax::eval< char >( DrawnGame< char >( Player1 ), score, 0 ) != 0.0)
         assert( !"wrong score for drawn game" );
 }
 
@@ -108,18 +106,17 @@ void eval_undecided_game()
 
     TestGame undecided_game( Player2 );
 
-    minimax::ScoreFunction< char > score = []( UndecidedGame< char > const& ) 
+    minimax::ScoreFunction< char > score = []( Game< char > const& ) 
         { return 42.0; };
     mt19937 g;
-    vector< size_t > move_indices;
-    if (minimax::eval( undecided_game, score, 0, g, move_indices ) != 42.0)
+    if (minimax::eval( undecided_game, score, 0 ) != 42.0)
         assert( !"wrong score for undecided game" );
 
 }
 
 struct TestNimPlayer : public Player< nim::Move >
 {
-    size_t choose( UndecidedGame< nim::Move > const& game ) override
+    size_t choose( Game< nim::Move > const& game ) override
     {
         return next_move_index;
     }
@@ -138,7 +135,7 @@ void nim_game()
     mt19937 g( seed );
     vector< nim::Move > moves_stack;
     vector< size_t > heap_stack{ 1, 2 };
-    nim::Game game( Player1, heap_stack.size(), heap_stack, moves_stack );
+    nim::Game game( Player1, heap_stack.size(), heap_stack, moves_stack, g );
     auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, nim::Move{ 1, 2 } };
     assert (std::is_permutation(moves.begin(), moves.end(), game.valid_moves().begin()));
     player1.next_move_index = find( 
@@ -164,16 +161,15 @@ void nim_game()
     player1.next_move_index = 0;
     auto next_game3 = nim->apply( player1.next_move_index );
     assert( next_game3->current_player_index() == Player2 );
-    auto won_game = dynamic_cast< WonGame* >( next_game3.get() );
+    auto won_game = dynamic_cast< WonGame< nim::Move >* >( next_game3.get() );
     assert (won_game);
     assert (won_game->winner() == Player2);
 }
 
 struct NimPlayer : public minimax::Player< nim::Move >
 {
-    NimPlayer( unsigned depth, mt19937& g) 
-        : minimax::Player< nim::Move >( depth, g ) {}
-    double score( UndecidedGame< nim::Move > const& game ) override
+    NimPlayer( unsigned depth ) : minimax::Player< nim::Move >( depth ) {}
+    double score( Game< nim::Move > const& game ) override
     {
         // don't care about the score
         return 0.0;
@@ -182,7 +178,7 @@ struct NimPlayer : public minimax::Player< nim::Move >
 
 struct MultiMatch : public ::Match< nim::Move >
 {
-    void report( Game const& game, nim::Move const& move ) override
+    void report( Game< nim::Move > const& game, nim::Move const& move ) override
     {
         /*
         cout << "player " << toggle( game.current_player_index())
@@ -190,20 +186,20 @@ struct MultiMatch : public ::Match< nim::Move >
              << ", count = " << move.count << endl;
         */
     }
-    void drawn( DrawnGame const& ) override
+    void drawn( Game< nim::Move > const& ) override
     {
         ++draws;
         //cout << "drawn" << endl;
     }
-    void won( WonGame const& won_game ) override
+    void won( Game< nim::Move > const& won_game ) override
     {
-        if (won_game.winner() == fst_player_index)
+        if (won_game.current_player_index() == fst_player_index)
             ++fst_player_wins;
         else
             ++snd_player_wins;
         //cout << "won player " << won_game.winner() << endl;
     }
-    void play_match( Game const& game, Player< nim::Move >& fst_player, Player< nim::Move >& snd_player, 
+    void play_match( Game< nim::Move > const& game, Player< nim::Move >& fst_player, Player< nim::Move >& snd_player, 
                      size_t rounds )
     {
         draws = 0;
@@ -234,9 +230,9 @@ struct MultiMatch : public ::Match< nim::Move >
 class MinimaxNimPlayer : public ::minimax::Player< nim::Move >
 {
 public:
-    MinimaxNimPlayer( unsigned depth, mt19937& g ) 
-        : ::minimax::Player< nim::Move >( depth, g ) {}
-    double score( UndecidedGame< nim::Move > const& ) override { return 0; }
+    MinimaxNimPlayer( unsigned depth ) 
+        : ::minimax::Player< nim::Move >( depth ) {}
+    double score( Game< nim::Move > const& ) override { return 0; }
 };
 
 void play_nim()
@@ -246,10 +242,10 @@ void play_nim()
     mt19937 g( seed );
     vector< nim::Move > move_stack;
     vector< size_t > heap_stack{ 1, 2, 3, 4, 5 };
-    nim::Game game( Player1, heap_stack.size(), heap_stack, move_stack );
+    nim::Game game( Player1, heap_stack.size(), heap_stack, move_stack, g );
 
-    MinimaxNimPlayer fst_player( 2, g );
-    MinimaxNimPlayer snd_player( 3, g );
+    MinimaxNimPlayer fst_player( 2  );
+    MinimaxNimPlayer snd_player( 3 );
     MultiMatch match;
     match.play_match( game, fst_player, snd_player, 100 );
 
@@ -260,10 +256,6 @@ void play_nim()
     cout << "move stack capacity: " << move_stack.capacity() << endl;
     cout << "heap stack size: " << heap_stack.size() << endl;
     cout << "heap stack capacity: " << heap_stack.capacity() << endl;
-    cout << "fst player move indices size: " << fst_player.get_move_indices().size() << endl;
-    cout << "fst player move indices capacity: " << fst_player.get_move_indices().capacity() << endl;
-    cout << "snd player move indices size: " << snd_player.get_move_indices().size() << endl;
-    cout << "snd player move indices capacity: " << snd_player.get_move_indices().capacity() << endl;
 }
 
 } // namespace test {
