@@ -1,7 +1,5 @@
 #include "game.h"
 
-#include <random>
-
 namespace nim {
 
 struct Move
@@ -15,25 +13,20 @@ bool operator==( Move const& lhs, Move const& rhs );
 using HeapRange = std::ranges::subrange< typename std::vector< size_t >::const_iterator >;
 
 // the nim game, the player who takes the last object looses
-class Game : public UndecidedGame< Move >
+class Game : public ::Game< Move >
 {
 public:
     // require: at least one heap and heaps are not empty
     // promise: heaps argument is moved
-    Game( PlayerIndex, size_t heap_count, std::vector< size_t >& heap_stack, 
-          std::vector< Move >& move_stack, std::mt19937& g );
+    Game( PlayerIndex, size_t heap_begin_index, std::vector< size_t >& heap_stack );
     ~Game() override;
     HeapRange get_heaps() const;
-    MoveRange< Move > valid_moves() const override;
-    std::unique_ptr< ::Game< Move > > apply( size_t ) const override;
+    void append_valid_moves( std::vector< Move >& move_stack ) const override;
+    std::unique_ptr< ::Game< Move > > apply( Move const& ) const override;
+    GameResult result() const override;
 private:
     std::vector< size_t >& heap_stack;
     size_t heap_begin_index;
-    size_t heap_count = 0;
-    std::vector< Move >& move_stack;
-    size_t moves_begin_index;
-    size_t moves_count = 0;
-    std::mt19937& g;
 };
 
 namespace console {
@@ -41,7 +34,7 @@ namespace console {
 class HumanPlayer : public Player< Move >
 {
 public:
-    size_t choose( ::Game< Move > const& game ) override;
+    Move choose( ::Game< Move > const& game ) override;
 };
 
 } // namespace console {
