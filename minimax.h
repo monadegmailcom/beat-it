@@ -16,7 +16,7 @@ std::function< bool (double, double) > cmp( PlayerIndex );
 template< typename MoveT, typename StateT >
 double eval( 
     Game< MoveT, StateT > game, ScoreFunction< MoveT, StateT > score, unsigned depth, 
-    std::vector< MoveT >& move_stack, std::mt19937& g, size_t& calls )
+    std::vector< MoveT >& move_stack, double alpha, double beta, std::mt19937& g, size_t& calls )
 {
     ++calls;
 
@@ -29,9 +29,21 @@ double eval(
         return max_value( Player2 );
     else if (depth == 0)
         return score( game );
-
+        
     double best_score = max_value( toggle( index ));
     const auto compare = cmp( index );
+    double* palpha = nullptr;
+    double* pbeta = nullptr;
+    if (index == Player1) // minimizing player
+    {
+        palpha = &beta;
+        pbeta = &alpha;
+    }
+    else // maximizing player
+    {
+        palpha = &alpha;
+        pbeta = &beta;
+    }
 
     const size_t prev_move_stack_size = move_stack.size();
     game.append_valid_moves( move_stack );
@@ -41,9 +53,13 @@ double eval(
     for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
     {
         auto next_score = eval( 
-            game.apply( move_stack[index] ), score, depth - 1, move_stack, g, calls );
+            game.apply( move_stack[index] ), score, depth - 1, move_stack, alpha, beta, g, calls );
         if (compare( next_score, best_score ))
             best_score = next_score;
+        if (!compare( *pbeta, best_score ))
+            break;
+        if (compare( best_score, *palpha ))
+            *palpha = best_score;
     }
 
     move_stack.erase( move_stack.begin() + prev_move_stack_size, move_stack.end());
@@ -85,7 +101,8 @@ protected:
         for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
         {
             const double score = eval( 
-                game.apply( move_stack[index] ), score_function, depth, move_stack, g, eval_calls );
+                game.apply( move_stack[index] ), score_function, depth, move_stack, 
+                -INFINITY, INFINITY, g, eval_calls );
             if (compare( score, best_score ))
             {
                 best_score = score;

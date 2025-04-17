@@ -68,9 +68,9 @@ void eval_won_game()
     minimax::ScoreFunction< char, GameResult > score = []( Game< char, GameResult > const& ) 
         { return 0.0; };
     size_t calls = 0;
-    if (minimax::eval< char >( TestGame( Player2, GameResult::Player2Win ), score, 0, move_stack, g, calls ) != INFINITY)
+    if (minimax::eval< char >( TestGame( Player2, GameResult::Player2Win ), score, 0, move_stack, 0, 1, g, calls ) != INFINITY)
         assert( !"wrong score for won game" );
-    if (minimax::eval< char >( TestGame( Player2, GameResult::Player1Win ), score, 0, move_stack, g, calls ) != -INFINITY)
+    if (minimax::eval< char >( TestGame( Player2, GameResult::Player1Win ), score, 0, move_stack, 0, 1, g, calls ) != -INFINITY)
         assert( !"wrong score for won game" );
 }
 
@@ -83,7 +83,7 @@ void eval_drawn_game()
     minimax::ScoreFunction< char, GameResult > score = []( TestGame const& ) 
         { return 0.0; };
     size_t calls = 0;
-    if (minimax::eval< char >( TestGame( Player2, GameResult::Draw ), score, 0, move_stack, g, calls ) != 0.0)
+    if (minimax::eval< char >( TestGame( Player2, GameResult::Draw ), score, 0, move_stack, 0, 1, g, calls ) != 0.0)
         assert( !"wrong score for drawn game" );
 }
 
@@ -99,7 +99,7 @@ void eval_undecided_game()
     vector< char > move_stack;
     size_t calls = 0;
 
-    if (minimax::eval( undecided_game, score, 0, move_stack, g, calls ) != 42.0)
+    if (minimax::eval( undecided_game, score, 0, move_stack, 0, 1, g, calls ) != 42.0)
         assert( !"wrong score for undecided game" );
 
 }
