@@ -1,4 +1,4 @@
-#include "game.h"
+#include "player.h"
 
 #include <functional>
 #include <algorithm>
@@ -7,17 +7,19 @@
 namespace minimax
 {
 
-template< typename MoveT >
-using ScoreFunction = std::function< double (Game< MoveT > const&) >;  
+template< typename MoveT, typename StateT >
+using ScoreFunction = std::function< double (Game< MoveT, StateT > const&) >;  
 
 double max_value( PlayerIndex );
 std::function< bool (double, double) > cmp( PlayerIndex );
 
-template< typename MoveT >
+template< typename MoveT, typename StateT >
 double eval( 
-    Game< MoveT > const& game, ScoreFunction< MoveT > score, unsigned depth, 
-    std::vector< MoveT >& move_stack, std::mt19937& g )
+    Game< MoveT, StateT > game, ScoreFunction< MoveT, StateT > score, unsigned depth, 
+    std::vector< MoveT >& move_stack, std::mt19937& g, size_t& calls )
 {
+    ++calls;
+
     const PlayerIndex index = game.current_player_index();
     if (game.result() == GameResult::Draw)
         return 0.0;
@@ -38,7 +40,8 @@ double eval(
 
     for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
     {
-        auto next_score = eval( *game.apply( move_stack[index] ), score, depth - 1, move_stack, g );
+        auto next_score = eval( 
+            game.apply( move_stack[index] ), score, depth - 1, move_stack, g, calls );
         if (compare( next_score, best_score ))
             best_score = next_score;
     }
@@ -48,19 +51,22 @@ double eval(
     return best_score;
 }
 
-template< typename MoveT >
-class Player : public ::Player< MoveT >
+template< typename MoveT, typename StateT >
+class Player : public ::Player< MoveT, StateT >
 {   
 public:
     Player( unsigned depth, std::mt19937& g ) : depth( depth ), g( g ) {}
     virtual ~Player() {}
-    virtual double score( Game< MoveT > const& ) = 0;
+    virtual double score( Game< MoveT, StateT > const& ) { return 0.0; };
+    std::vector< MoveT > const& get_move_stack() { return move_stack; }
+    size_t get_eval_calls() const { return eval_calls; }
 protected:
     unsigned depth;
     std::mt19937& g;
     std::vector< MoveT > move_stack;
+    size_t eval_calls = 0;
 
-    MoveT choose( Game< MoveT > const& game ) override
+    MoveT choose( Game< MoveT, StateT > const& game ) override
     {
         const size_t prev_move_stack_size = move_stack.size();
         game.append_valid_moves( move_stack );
@@ -73,13 +79,13 @@ protected:
         const auto compare = cmp( game.current_player_index());
         double best_score = max_value( toggle( game.current_player_index()));
         size_t best_move_index = 0;
-        const ScoreFunction< MoveT > score_function = [this](Game< MoveT > const& game)
-            { return this->score( game ); };
+        const ScoreFunction< MoveT, StateT > score_function = 
+            [this](Game< MoveT, StateT > const& game) { return this->score( game ); };
 
         for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
         {
             const double score = eval( 
-                *game.apply( move_stack[index] ), score_function, depth, move_stack, g );
+                game.apply( move_stack[index] ), score_function, depth, move_stack, g, eval_calls );
             if (compare( score, best_score ))
             {
                 best_score = score;

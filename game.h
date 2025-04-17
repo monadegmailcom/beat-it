@@ -1,9 +1,7 @@
 #pragma once
 
 #include <cstdint>
-#include <memory>
 #include <vector>
-#include <ranges>
 
 enum PlayerIndex
 {
@@ -21,30 +19,33 @@ enum GameResult
     Undecided
 };
 
-template< typename MoveT >
+// for each game specialize game state
+template< typename MoveT, typename StateT >
+struct GameState
+{
+    static void append_valid_moves( std::vector< MoveT >& move_stack, StateT const& );
+    static StateT apply( MoveT const&, PlayerIndex, StateT const& );
+    static GameResult result( PlayerIndex player_index, StateT const& state );
+};
+
+template< typename MoveT, typename StateT >
 class Game
 {
 public:
-    Game( PlayerIndex player_index ) : player_index( player_index ) {}
-    virtual ~Game() = default;
+    Game( PlayerIndex player_index, StateT const& state ) 
+        : player_index( player_index ), state( state ) {}
     
     PlayerIndex current_player_index() const { return player_index; }
-    virtual GameResult result() const = 0;
+    GameResult result() const { return GameState< MoveT, StateT >::result( player_index, state ); }
 
     // promise: append valid moves to the move_stack
-    virtual void append_valid_moves( std::vector< MoveT >& move_stack ) const = 0;
+    void append_valid_moves( std::vector< MoveT >& move_stack ) const
+    { GameState< MoveT, StateT >::append_valid_moves( move_stack, state ); }
     // require: move has to be a valid move
-    virtual std::unique_ptr< Game > apply( MoveT const& ) const = 0;
-protected:
+    Game apply( MoveT const& move ) const
+    { return Game( toggle( player_index ), GameState< MoveT, StateT >::apply( move, player_index, state )); }
+    StateT const& get_state() const { return state; }
+private:
     PlayerIndex player_index;
-};
-
-template< typename MoveT >
-class Player 
-{
-public:
-    virtual ~Player() = default;
-    // promise: return a valid move of game
-    // require: game is not finished and has at least one valid move
-    virtual MoveT choose( Game< MoveT > const& ) = 0;
+    StateT state;
 };
