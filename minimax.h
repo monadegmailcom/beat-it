@@ -73,7 +73,7 @@ class Player : public ::Player< MoveT, StateT >
 public:
     Player( unsigned depth, std::mt19937& g ) : depth( depth ), g( g ) {}
     virtual ~Player() {}
-    virtual double score( Game< MoveT, StateT > const& ) { return 0.0; };
+    virtual double score( Game< MoveT, StateT > const& ) const { return 0.0; };
     std::vector< MoveT > const& get_move_stack() { return move_stack; }
     size_t get_eval_calls() const { return eval_calls; }
 protected:

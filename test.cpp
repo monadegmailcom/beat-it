@@ -1,10 +1,9 @@
 #include <iostream>
 #include <exception>
 #include <cassert>
-#include <algorithm>
 
 #include "nim.h"
-#include "minimax.h"
+#include "tic_tac_toe.h"
 #include "match.h"
 
 using namespace std;
@@ -12,7 +11,8 @@ using namespace std;
 template<>
 struct GameState< char, GameResult >
 {
-    static void append_valid_moves( std::vector< char >& move_stack, GameResult const& state )
+    static void append_valid_moves( 
+        vector< char >& move_stack, PlayerIndex, GameResult const& state )
     {
         move_stack.push_back( 'a' );
         move_stack.push_back( 'b' );
@@ -148,57 +148,6 @@ void nim_game()
     assert (next_game3.result() == GameResult::Player2Win);
 }
 
-template< typename MoveT, typename StateT >
-struct MultiMatch : public ::Match< MoveT, StateT >
-{
-    void report( Game< MoveT, StateT > const&, MoveT const& ) override
-    {}
-    void draw( Game< MoveT, StateT > const& ) override
-    {
-        ++draws;
-    }
-    void player1_win( Game< MoveT, StateT > const& ) override
-    {
-        if (fst_player_index == Player1)
-            ++fst_player_wins;
-        else
-            ++snd_player_wins;
-    }
-    void player2_win( Game< MoveT, StateT > const& ) override
-    {
-        if (fst_player_index == Player2)
-            ++fst_player_wins;
-        else
-            ++snd_player_wins;
-    }
-    void play_match( Game< MoveT, StateT > const& game, Player< MoveT, StateT >& fst_player, 
-                     Player< MoveT, StateT >& snd_player, size_t rounds )
-    {
-        draws = 0;
-        fst_player_wins = 0;
-        snd_player_wins = 0;
-        
-        Player< MoveT, StateT >* player = &fst_player;
-        Player< MoveT, StateT >* opponent = &snd_player;
-        
-        fst_player_index = game.current_player_index();
-        snd_player_index = toggle( fst_player_index );
-
-        for (size_t rounds = 100; rounds > 0; --rounds)
-        {
-            this->play( game, *player, *opponent );
-            swap( player, opponent );
-            swap( fst_player_index, snd_player_index );
-        }
-    }
-
-    size_t draws = 0;
-    size_t fst_player_wins = 0;
-    size_t snd_player_wins = 0;
-    PlayerIndex fst_player_index;
-    PlayerIndex snd_player_index;
-};
-
 void play_nim()
 {
     cout << __func__ << endl;
@@ -210,6 +159,74 @@ void play_nim()
     minimax::Player< nim::Move, nim::State< HEAPS > > fst_player( 2, g );
     minimax::Player< nim::Move, nim::State< HEAPS > > snd_player( 3, g );
     MultiMatch< nim::Move, nim::State< HEAPS > > match;
+    match.play_match( game, fst_player, snd_player, 100 );
+
+    cout 
+        << "fst player wins: " << match.fst_player_wins << '\n'
+        << "snd player wins: " << match.snd_player_wins << '\n'
+        << "draws: " << match.draws << '\n'
+        << "fst player move stack size: " << fst_player.get_move_stack().size() << '\n'
+        << "fst player move stack capacity: " << fst_player.get_move_stack().capacity() << '\n'
+        << "snd player move stack size: " << snd_player.get_move_stack().size() << '\n'
+        << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
+        << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
+        << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
+}
+
+struct TicTacToeMatch : public Match< tic_tac_toe::Move, tic_tac_toe::State >
+{
+    void report( tic_tac_toe::Game const& game, tic_tac_toe::Move const& move ) override
+    {
+        cout << "player " << game.current_player_index() << " move: " << (int)move << endl;
+    }
+    void draw( tic_tac_toe::Game const& game ) override
+    {
+        cout << "draw\n" << game << endl;
+    }
+    void player1_win( tic_tac_toe::Game const& game ) override
+    {
+        cout << "player 1 win\n" << game << endl;;
+    }
+    void player2_win( tic_tac_toe::Game const& game ) override
+    {
+        cout << "player 2 win\n" << game << endl;;
+    }
+};
+
+void tic_tac_toe_human()
+{
+    cout << __func__ << endl;
+
+    tic_tac_toe::State initial_state;
+    fill( initial_state.begin(), initial_state.end(), tic_tac_toe::Symbol::Empty );
+    tic_tac_toe::Game game( Player1, initial_state );
+
+    tic_tac_toe::console::HumanPlayer human;
+
+    mt19937 g( seed );
+    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > player( 5, g );
+
+    TicTacToeMatch match;
+    match.play( game, human, player );
+    cout << '\n'
+        << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
+        << "player eval calls: " << player.get_eval_calls() << endl;
+
+}
+
+void tic_tac_toe_match()
+{
+    cout << __func__ << endl;
+
+    mt19937 g( seed );
+    tic_tac_toe::State initial_state;
+    fill( initial_state.begin(), initial_state.end(), tic_tac_toe::Symbol::Empty );
+
+    tic_tac_toe::Game game( Player1, initial_state );
+
+    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > fst_player( 0, g );
+    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > snd_player( 4, g );
+    MultiMatch< tic_tac_toe::Move, tic_tac_toe::State > match;
     match.play_match( game, fst_player, snd_player, 100 );
 
     cout 
@@ -239,8 +256,9 @@ int main()
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-        test::play_nim();
-
+        //test::play_nim();
+        //test::tic_tac_toe_human();
+        test::tic_tac_toe_match();
         cout << "\neverything ok" << endl;    
         return 0;
     }

@@ -47,7 +47,8 @@ Move choose( PlayerIndex, std::vector< size_t > const& heaps, std::vector< nim::
 template< size_t N >
 struct GameState< nim::Move, nim::State< N > >
 {
-    static void append_valid_moves( std::vector< nim::Move >& move_stack, nim::State< N > const& state )
+    static void append_valid_moves( 
+        std::vector< nim::Move >& move_stack, PlayerIndex, nim::State< N > const& state )
     {
         for (size_t heap = 0; heap != state.size(); ++heap)
             for (size_t count = 1; count <= state[heap]; ++count)

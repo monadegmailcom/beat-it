@@ -13,9 +13,9 @@ PlayerIndex toggle( PlayerIndex );
 
 enum GameResult
 {
+    Draw = 0,
     Player1Win,
     Player2Win,
-    Draw,
     Undecided
 };
 
@@ -23,9 +23,9 @@ enum GameResult
 template< typename MoveT, typename StateT >
 struct GameState
 {
-    static void append_valid_moves( std::vector< MoveT >& move_stack, StateT const& );
+    static void append_valid_moves( std::vector< MoveT >& move_stack, PlayerIndex, StateT const& );
     static StateT apply( MoveT const&, PlayerIndex, StateT const& );
-    static GameResult result( PlayerIndex player_index, StateT const& state );
+    static GameResult result( PlayerIndex, StateT const& state );
 };
 
 template< typename MoveT, typename StateT >
@@ -40,7 +40,7 @@ public:
 
     // promise: append valid moves to the move_stack
     void append_valid_moves( std::vector< MoveT >& move_stack ) const
-    { GameState< MoveT, StateT >::append_valid_moves( move_stack, state ); }
+    { GameState< MoveT, StateT >::append_valid_moves( move_stack, player_index, state ); }
     // require: move has to be a valid move
     Game apply( MoveT const& move ) const
     { return Game( toggle( player_index ), GameState< MoveT, StateT >::apply( move, player_index, state )); }
