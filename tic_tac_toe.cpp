@@ -7,6 +7,29 @@ using namespace std;
 namespace tic_tac_toe
 {   
 
+double minimax::Player::score( Game const& game ) const 
+{
+    const uint8_t scores[9] = 
+        { 3, 2, 3, 
+          2, 4, 2, 
+          3, 2, 3 };
+
+    double score = 0.0;
+    State const& state = game.get_state();
+    for (size_t i = 0; i != 9; ++i)
+    {
+        const Symbol s = state[i];
+        if (s == Symbol::Empty)
+            continue;
+        else if (s == Symbol::Player1)
+            score -= scores[i];
+        else
+            score += scores[i];
+    }
+    return score;
+}
+
+
 GameResult symbol_to_winner( Symbol symbol )
 {
     if (symbol == Symbol::Player1)

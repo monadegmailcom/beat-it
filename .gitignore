@@ -1,5 +1,6 @@
 *~
 obj/
+gui/
 .vscode/
 .DS_Store
 .swp

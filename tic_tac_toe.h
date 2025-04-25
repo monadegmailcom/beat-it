@@ -10,7 +10,8 @@ enum Symbol : char
 {
     Empty = ' ',
     Player1 = 'X',
-    Player2 = 'O'
+    Player2 = 'O',
+    Undecided = 'U'
 };
 
 using Move = uint8_t;
@@ -21,6 +22,23 @@ using Player = ::Player< Move, State >;
 GameResult symbol_to_winner( Symbol );
 
 Symbol player_index_to_symbol( PlayerIndex );
+
+const Move no_move = 9;
+const State empty_state = { 
+    Symbol::Empty, Symbol::Empty, Symbol::Empty,
+    Symbol::Empty, Symbol::Empty, Symbol::Empty,
+    Symbol::Empty, Symbol::Empty, Symbol::Empty };
+    
+namespace minimax {
+
+class Player : public ::minimax::Player< Move, State >
+{
+public:
+    Player( unsigned depth, std::mt19937& g ) : ::minimax::Player< Move, State >( depth, g ) {}
+    double score( Game const& game ) const override;
+};
+
+} // namespace minimax {
 
 namespace console
 {

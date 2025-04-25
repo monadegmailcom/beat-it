@@ -3,7 +3,7 @@
 #include <cassert>
 
 #include "nim.h"
-#include "tic_tac_toe.h"
+#include "ultimate_ttt.h"
 #include "match.h"
 
 using namespace std;
@@ -211,7 +211,6 @@ void tic_tac_toe_human()
     cout << '\n'
         << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
         << "player eval calls: " << player.get_eval_calls() << endl;
-
 }
 
 void tic_tac_toe_match()
@@ -219,10 +218,8 @@ void tic_tac_toe_match()
     cout << __func__ << endl;
 
     mt19937 g( seed );
-    tic_tac_toe::State initial_state;
-    fill( initial_state.begin(), initial_state.end(), tic_tac_toe::Symbol::Empty );
 
-    tic_tac_toe::Game game( Player1, initial_state );
+    tic_tac_toe::Game game( Player1, tic_tac_toe::empty_state );
 
     minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > fst_player( 0, g );
     minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > snd_player( 4, g );
@@ -239,6 +236,12 @@ void tic_tac_toe_match()
         << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
         << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
         << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
+}
+
+void uttt_human()
+{
+    cout << __func__ << endl;
+    ultimate_ttt::Game game( Player1, ultimate_ttt::empty_state );
 }
 
 } // namespace test {
