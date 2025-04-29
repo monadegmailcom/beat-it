@@ -1,4 +1,4 @@
-#include "minimax.h"
+#include "../minimax.h"
 
 #include <array>
 #include <iostream>

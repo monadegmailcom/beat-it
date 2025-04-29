@@ -2,8 +2,8 @@
 #include <exception>
 #include <cassert>
 
-#include "nim.h"
-#include "ultimate_ttt.h"
+#include "games/nim.h"
+#include "games/ultimate_ttt.h"
 #include "match.h"
 
 using namespace std;
