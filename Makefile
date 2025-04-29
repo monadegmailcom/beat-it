@@ -6,8 +6,8 @@ CC=g++
 HOMEBREW=/opt/homebrew/Cellar
 
 BOOST_PATH=$(HOMEBREW)/boost/1.85.0
-GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
-GPERF_PATH=$(HOMEBREW)/gperftools/2.16
+#GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
+#GPERF_PATH=$(HOMEBREW)/gperftools/2.16
 
 PROJECT_ROOT=$(shell pwd)
 
@@ -16,7 +16,8 @@ UNIVERSAL_FLAGS=
 
 INCLUDE=-isystem$(BOOST_PATH)/include/ \
 #		-isystem$(GRAPHVIZ_PATH)/include 
-LINK=-L$(GPERF_PATH)/lib -lprofiler
+LINK=
+#-L$(GPERF_PATH)/lib -lprofiler
 # -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
 #	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
@@ -52,19 +53,12 @@ beat-it: $(MAIN_OBJS)
 
 test: $(TEST_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/test $(TEST_OBJS) $(LINK)
-#	$(CC) $(FLAGS) -o $(ODIR)/test.o test.cpp
-#	$(CC) -o $(ODIR)/test $(LINK) $(ODIR)/test.o
 
 $(ODIR)/%.o: %.cpp | $(ODIR)
 	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
-#$(ODIR)/gui/%.o: gui/%.cpp | $(ODIR)/gui
-#	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
 
 $(ODIR):
 	mkdir -p $(ODIR)/games
-
-#$(ODIR)/gui:
-#	mkdir -p $(ODIR)/gui
 
 -include $(DEPS)
 
