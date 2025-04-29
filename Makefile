@@ -24,8 +24,6 @@ DEBUG=-g -O3
 RELEASE=-O3 -DNDEBUG
 
 # don't forget to clean if you change OPT
-#OPT=$(DEBUG)
-#OPT=$(RELEASE)
 
 # Set OPT based on the target
 ifeq ($(MAKECMDGOALS), test)
@@ -40,7 +38,7 @@ $(info OPT=$(OPT))
 FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
 # Automatically reference all local .cpp files
-SOURCES=$(wildcard *.cpp)
+SOURCES=$(wildcard *.cpp) $(wildcard games/*.cpp)
 ODIR=obj
 OBJS=$(patsubst %.cpp,$(ODIR)/%.o,$(SOURCES))
 DEPS=$(patsubst %.cpp,$(ODIR)/%.d,$(SOURCES))
@@ -63,7 +61,7 @@ $(ODIR)/%.o: %.cpp | $(ODIR)
 #	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
 
 $(ODIR):
-	mkdir -p $(ODIR)
+	mkdir -p $(ODIR)/games
 
 #$(ODIR)/gui:
 #	mkdir -p $(ODIR)/gui
