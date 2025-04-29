@@ -69,6 +69,7 @@ struct MultiMatch : public ::Match< MoveT, StateT >
         for (; rounds > 0; --rounds)
         {
             this->play( game, *player, *opponent );
+            std::swap( player, opponent );
             std::swap( fst_player_index, snd_player_index );
         }
     }

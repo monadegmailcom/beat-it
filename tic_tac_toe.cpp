@@ -105,19 +105,16 @@ GameResult GameState< ttt::Move, ttt::State >::result(
     // check for wins
     for (const auto& win : ttt::wins)
     {
-        ttt::Symbol symbol = state[win[0]];
-        if (symbol == ttt::Symbol::Player1 && symbol == state[win[1]] 
-            && symbol == state[win[2]])
-            return GameResult::Player1Win;
-        if (symbol == ttt::Symbol::Player2 && symbol == state[win[1]] 
-            && symbol == state[win[2]])
-            return GameResult::Player2Win;
+        const ttt::Symbol symbol0 = state[win[0]];
+        if (symbol0 != ttt::Symbol::Empty && symbol0 == state[win[1]] && symbol0 == state[win[2]])
+            return (symbol0 == ttt::Symbol::Player1) ? GameResult::Player1Win
+                                                     : GameResult::Player2Win;
     }
 
     // check for undecided
-    for (auto symbol : state)
-        if (symbol == ttt::Symbol::Empty)
-            return GameResult::Undecided;
+    if (std::any_of(state.begin(), state.end(), 
+        [](ttt::Symbol symbol) { return symbol == ttt::Symbol::Empty; }))
+        return GameResult::Undecided;
 
     // otherwise its a draw
     return GameResult::Draw;

@@ -301,8 +301,8 @@ void uttt_match()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    minimax::Player< uttt::Move, uttt::State > fst_player( 0, g );
-    //minimax::Player< uttt::Move, uttt::State > snd_player( 4, g );
+    uttt::minimax::Player fst_player( 9.0, 1, g );
+    //minimax::Player< uttt::Move, uttt::State > snd_player( 0, g );
     uttt::minimax::Player snd_player( 9.0, 4, g );
     MultiMatch< uttt::Move, uttt::State > match;
     match.play_match( game, fst_player, snd_player, 100 );
@@ -334,11 +334,11 @@ int main()
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-        test::nim_match();
+        //test::nim_match();
         //test::ttt_human();
         //test::tic_tac_toe_match();
         //test::uttt_human();
-        //test::uttt_match();
+        test::uttt_match();
 
         cout << "\neverything ok" << endl;    
         return 0;
