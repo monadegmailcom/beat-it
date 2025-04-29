@@ -37,7 +37,7 @@ ifeq ($(MAKECMDGOALS), beat-it)
 endif
 
 $(info OPT=$(OPT))
-FLAGS=-std=c++20 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
+FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
 
 # Automatically reference all local .cpp files
 SOURCES=$(wildcard *.cpp)

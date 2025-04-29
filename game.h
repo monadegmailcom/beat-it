@@ -11,12 +11,12 @@ enum PlayerIndex
 
 PlayerIndex toggle( PlayerIndex );
 
-enum GameResult
+enum GameResult : char
 {
-    Draw = 0,
+    Undecided = 0,
     Player1Win,
     Player2Win,
-    Undecided
+    Draw
 };
 
 // for each game specialize game state

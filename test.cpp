@@ -148,7 +148,7 @@ void nim_game()
     assert (next_game3.result() == GameResult::Player2Win);
 }
 
-void play_nim()
+void nim_match()
 {
     cout << __func__ << endl;
 
@@ -173,40 +173,47 @@ void play_nim()
         << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
 }
 
-struct TicTacToeMatch : public Match< tic_tac_toe::Move, tic_tac_toe::State >
+struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
 {
-    void report( tic_tac_toe::Game const& game, tic_tac_toe::Move const& move ) override
+    TicTacToeMatch( minimax::Player< ttt::Move, ttt::State > const& minimax_player)
+        : minimax_player( minimax_player ) {}
+
+    minimax::Player< ttt::Move, ttt::State > const& minimax_player;
+
+    void report( ttt::Game const& game, ttt::Move const& move ) override
     {
-        cout << "player " << game.current_player_index() << " move: " << (int)move << endl;
+        cout 
+            << "player " << game.current_player_index() << " (" 
+            << (int)move << ")\n"
+            << "board before move:\n" << game << '\n'
+            << "score: " << minimax_player.score( game ) << endl;
     }
-    void draw( tic_tac_toe::Game const& game ) override
+    void draw( ttt::Game const& game ) override
     {
         cout << "draw\n" << game << endl;
     }
-    void player1_win( tic_tac_toe::Game const& game ) override
+    void player1_win( ttt::Game const& game ) override
     {
         cout << "player 1 win\n" << game << endl;;
     }
-    void player2_win( tic_tac_toe::Game const& game ) override
+    void player2_win( ttt::Game const& game ) override
     {
         cout << "player 2 win\n" << game << endl;;
     }
 };
 
-void tic_tac_toe_human()
+void ttt_human()
 {
     cout << __func__ << endl;
 
-    tic_tac_toe::State initial_state;
-    fill( initial_state.begin(), initial_state.end(), tic_tac_toe::Symbol::Empty );
-    tic_tac_toe::Game game( Player1, initial_state );
+    ttt::Game game( Player1, ttt::empty_state );
 
-    tic_tac_toe::console::HumanPlayer human;
+    ttt::console::HumanPlayer human;
 
     mt19937 g( seed );
-    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > player( 5, g );
+    ttt::minimax::Player player( 0, g );
 
-    TicTacToeMatch match;
+    TicTacToeMatch match( player);
     match.play( game, human, player );
     cout << '\n'
         << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
@@ -219,11 +226,11 @@ void tic_tac_toe_match()
 
     mt19937 g( seed );
 
-    tic_tac_toe::Game game( Player1, tic_tac_toe::empty_state );
+    ttt::Game game( Player1, ttt::empty_state );
 
-    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > fst_player( 0, g );
-    minimax::Player< tic_tac_toe::Move, tic_tac_toe::State > snd_player( 4, g );
-    MultiMatch< tic_tac_toe::Move, tic_tac_toe::State > match;
+    minimax::Player< ttt::Move, ttt::State > fst_player( 0, g );
+    minimax::Player< ttt::Move, ttt::State > snd_player( 5, g );
+    MultiMatch< ttt::Move, ttt::State > match;
     match.play_match( game, fst_player, snd_player, 100 );
 
     cout 
@@ -238,10 +245,78 @@ void tic_tac_toe_match()
         << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
 }
 
+struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
+{
+    UltimateTicTacToeMatch( minimax::Player< uttt::Move, uttt::State > const& minimax_player)
+        : minimax_player( minimax_player ) {}
+
+    minimax::Player< uttt::Move, uttt::State > const& minimax_player;
+
+    void report( uttt::Game const& game, uttt::Move const& move ) override
+    {
+        cout 
+            << "player " << game.current_player_index() << " (" 
+            << (int)move.big_move << "," << (int)move.small_move << ")\n"
+            << "board before move:\n" << game << '\n'
+            << "score: " << minimax_player.score( game ) << '\n'
+            << "best score: " << minimax_player.get_best_score() << endl;
+    }
+    void draw( uttt::Game const& game ) override
+    {
+        cout << "draw\n" << game << endl;
+    }
+    void player1_win( uttt::Game const& game ) override
+    {
+        cout << "player 1 win\n" << game << endl;;
+    }
+    void player2_win( uttt::Game const& game ) override
+    {
+        cout << "player 2 win\n" << game << endl;;
+    }
+};
+
+
 void uttt_human()
 {
     cout << __func__ << endl;
-    ultimate_ttt::Game game( Player1, ultimate_ttt::empty_state );
+    uttt::Game game( Player1, uttt::empty_state );
+
+    uttt::console::HumanPlayer human;
+
+    mt19937 g( seed );
+    uttt::minimax::Player player( 9.0, 5, g );
+
+    UltimateTicTacToeMatch match( player );
+    match.play( game, human, player );
+    cout << '\n'
+        << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
+        << "player eval calls: " << player.get_eval_calls() << endl;
+}
+
+void uttt_match()
+{
+    cout << __func__ << endl;
+
+    mt19937 g( seed );
+
+    uttt::Game game( Player1, uttt::empty_state );
+
+    minimax::Player< uttt::Move, uttt::State > fst_player( 0, g );
+    //minimax::Player< uttt::Move, uttt::State > snd_player( 4, g );
+    uttt::minimax::Player snd_player( 9.0, 4, g );
+    MultiMatch< uttt::Move, uttt::State > match;
+    match.play_match( game, fst_player, snd_player, 100 );
+
+    cout 
+        << "fst player wins: " << match.fst_player_wins << '\n'
+        << "snd player wins: " << match.snd_player_wins << '\n'
+        << "draws: " << match.draws << '\n'
+        << "fst player move stack size: " << fst_player.get_move_stack().size() << '\n'
+        << "fst player move stack capacity: " << fst_player.get_move_stack().capacity() << '\n'
+        << "snd player move stack size: " << snd_player.get_move_stack().size() << '\n'
+        << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
+        << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
+        << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
 }
 
 } // namespace test {
@@ -259,9 +334,12 @@ int main()
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-        //test::play_nim();
-        //test::tic_tac_toe_human();
-        test::tic_tac_toe_match();
+        test::nim_match();
+        //test::ttt_human();
+        //test::tic_tac_toe_match();
+        //test::uttt_human();
+        //test::uttt_match();
+
         cout << "\neverything ok" << endl;    
         return 0;
     }
