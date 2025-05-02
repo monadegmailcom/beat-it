@@ -13,7 +13,8 @@ const State empty_state =
       { GameResult::Undecided, GameResult::Undecided, GameResult::Undecided,
         GameResult::Undecided, GameResult::Undecided, GameResult::Undecided,
         GameResult::Undecided, GameResult::Undecided, GameResult::Undecided },
-      ttt::no_move };
+      ttt::no_move,
+      GameResult::Undecided };
 
 namespace console {
 
@@ -88,20 +89,21 @@ double Player::score( Game const& game ) const
     {
         uint8_t player1_points = 0;
         uint8_t player2_points = 0;
-        uint8_t draw_points = 0;
         for (auto const& index : win)
         {
-            if (state.big_state[index] == GameResult::Player1Win)
+            const GameResult result = state.big_state[index];
+            if (result == GameResult::Draw)
+                goto continue_outer_loop;
+            if (result == GameResult::Player1Win)
                 ++player1_points;
-            else if (state.big_state[index] == GameResult::Player2Win)
+            else if (result == GameResult::Player2Win)
                 ++player2_points;
-            else if (state.big_state[index] == GameResult::Draw)
-                ++draw_points;
         }
-        if (player1_points == 0 && draw_points == 0)
+        if (player1_points == 0)
             score += player2_points;
-        else if (player2_points == 0 && draw_points == 0)
+        else if (player2_points == 0)
             score -= player1_points;
+        continue_outer_loop:
     }
 
     score *= weight;
@@ -150,13 +152,17 @@ uttt::State GameState< uttt::Move, uttt::State >::apply(
     new_state.next_big_move = (new_state.big_state[move.small_move] == GameResult::Undecided)
         ? move.small_move 
         : ttt::no_move;
-
+    if (new_state.big_state[move.big_move] != state.big_state[move.big_move])
+        new_state.game_result_cache.reset();
     return new_state;
 }
 
 GameResult GameState< uttt::Move, uttt::State >::result( 
     PlayerIndex, uttt::State const& state )
 {
+    if (state.game_result_cache)
+        return *state.game_result_cache;
+
     // check for wins
     for (const auto& win : ttt::wins)
     {
@@ -165,17 +171,25 @@ GameResult GameState< uttt::Move, uttt::State >::result(
             && symbol != GameResult::Draw 
             && symbol == state.big_state[win[1]] 
             && symbol == state.big_state[win[2]])
-            return (symbol == GameResult::Player1Win) 
-                ? GameResult::Player1Win
-                : GameResult::Player2Win;
+        {
+            state.game_result_cache =
+                (symbol == GameResult::Player1Win) 
+                    ? GameResult::Player1Win
+                    : GameResult::Player2Win;
+            return *state.game_result_cache;
+        }
     }
 
     // check for undecided
     if (std::any_of(state.big_state.begin(), state.big_state.end(), 
         [](GameResult symbol) { return symbol == GameResult::Undecided; }))
-        return GameResult::Undecided;
+    {
+        state.game_result_cache = GameResult::Undecided;
+        return GameResult::Undecided;    
+    }
 
     // otherwise its a draw
+    state.game_result_cache = GameResult::Draw;
     return GameResult::Draw;
 }
 

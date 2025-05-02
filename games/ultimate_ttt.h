@@ -17,6 +17,7 @@ struct State
     std::array< ttt::State, 9 > small_states;
     std::array< GameResult, 9 > big_state;
     ttt::Move next_big_move = ttt::no_move;
+    mutable std::optional< GameResult > game_result_cache;
 };
 
 using Game = ::Game< Move, State >;

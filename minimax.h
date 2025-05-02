@@ -48,8 +48,6 @@ double eval(
 
     const size_t prev_move_stack_size = move_stack.size();
     game.append_valid_moves( move_stack );
-    // shuffle order of moves to avoid the same order every time
-    //std::shuffle( move_stack.begin() + prev_move_stack_size, move_stack.end(), g );
 
     for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
     {
