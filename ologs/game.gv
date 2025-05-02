@@ -1,0 +1,93 @@
+digraph game 
+{ 
+    node [shape = "box"]
+    layout=dot
+        subgraph cluster_gr {
+        label=<<b>game result</b>>
+        gr2 [label="game result", xlabel=<&#x2211;>]
+        d [label="Draw", xlabel=D]
+        w1 [label="Player 1 Win", xlabel=W1]
+        w1 -> gr2 [label=<i>]
+        w2 [label="Player 2 Win", xlabel=W2]
+        w2 -> gr2 [label=<i>]
+        d -> gr2 [label=<i>]
+        u [label="Undecided", xlabel=U]
+        u -> gr2 [label=<i>]
+    }
+
+    subgraph cluster_ga {
+        label=<<b>game</b>>
+        ga_gr [label="game result"]
+        ga_g [label="game"]
+        ga_g -> ga_gr [label="result"]
+        ga_g -> ga_z [label="player index"]
+        ga_g -> ga_sm [label="valid moves"]
+        ga_z [label=<Z<sub>2</sub>>]
+        ga_z -> ga_z2 [label="+1"]
+        ga_z2 [label=<Z<sub>2</sub>>]
+        ga_sm [label="set of moves"]
+        ga_gms [label=<g, m &#x2208; s>]
+        ga_gms -> ga_g [label="g"]
+        ga_gms -> ga_g2 [label="apply"]
+        ga_gms -> ga_m [label="m"]
+        ga_gms -> ga_sm [label="s"]
+        ga_g2 [label="game"]
+        ga_g2 -> ga_z2 [label="player index"]
+        ga_m [label="move"]
+    }
+    subgraph cluster_game_properties {
+        label=<<b>game properties</b>>
+        gp_g [label="game"]
+        gp_g -> prop [label="prop"]
+        gp_g -> gp_gr [label="result"]
+        gp_gr [label="game result"]
+        prop [label=<r = U &#x21d4; s &#x2260; &#x2205;>]
+        prop -> gp_gr [label="r"]
+        prop -> gp_sm [label="s"]
+        gp_sm [label="set of moves"]
+    }
+
+    subgraph cluster_pl {
+        label=<<b>player</b>>
+        pl_p [label="player"]
+        pl_pg [label=<p, result(g) = U>]
+        pl_pg -> pl_g [label="g"]
+        pl_pg -> pl_p [label="p"]
+        pl_pg -> pl_ms [label="choose"]
+        pl_gr [label="game result"]
+        pl_g [label="game"]
+        pl_g -> pl_sm [label="valid moves"]
+        pl_g -> pl_gr [label="result"]
+        pl_m [label="move"]
+        pl_ms [label=<m &#x2208; s>]
+        pl_sm [label="set of moves"]
+        pl_ms -> pl_sm [label="s"]
+        pl_ms -> pl_m [label="m"]
+    }
+    subgraph cluster_match {
+        label=<<b>match</b>>
+        ma_dp12 [label=<result(g) &#x2260; U, (p, o)>]
+        ma_dp12 -> ma_gpp [label="g, p, o"]
+        ma_dp12 -> ma_g [label="g"]
+        ma_g [label="game"]
+        ma_g -> ma_gr [label="result"]
+        ma_gpp [label=<game &times; player &times; player>, xlabel=<&#x2211;>]
+        ma_gpp -> ma_gr [label="play"]
+        ma_up12 [label=<result(g) = U, (p, o)>]
+        ma_up12 -> ma_step1 [label=<&#x2245;>]
+        ma_up12 -> ma_gpp [label="g, p, o"]
+        ma_step1 [label=<(g, p, o), (p, result(g) = U)>]
+        ma_step1 -> ma_step2 [label="id, choose"]
+        ma_step2 [label=<(g, p, o), m &#x2208; s>]
+        ma_step2 -> ma_step3 [label="&#x2245;"]
+        ma_step3 [label=<(p, o), (g, m &#x2208; s)>]
+        ma_step3 -> ma_step4 [label="id, apply"]
+        ma_step4 [label=<(p, o), g'>]
+        ma_step4 -> ma_step5 [label=<&#x2245;>]
+        ma_step5 [label=<g', o, p>]
+        ma_step5 -> ma_gr [label="play"]
+        ma_gr [label="game result"]
+        //{rank=min;ma_gp12}
+        {rank=same;ma_dp12; ma_up12}
+    }
+}

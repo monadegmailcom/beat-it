@@ -5,29 +5,23 @@ class Match
 {
 public:
     virtual ~Match() {}
-    void play( 
+    GameResult play( 
         Game< MoveT, StateT > game, Player< MoveT, StateT >& player, 
         Player< MoveT, StateT >& opponent )
     {
         const GameResult result = game.result();
-        if (result == GameResult::Draw)
-            draw( game );
-        else if (result == GameResult::Player1Win)
-            player1_win( game );
-        else if (result == GameResult::Player2Win)
-            player2_win( game );
+        if (result != GameResult::Undecided)
+            return result;
         else
         {
             const MoveT move = player.choose( game );
-            report( game, move );
-            play( game.apply( move ), opponent, player );
+            const Game next_game = game.apply( move );
+            report( next_game, move );
+            return play( next_game, opponent, player );
         }
     }
 protected:
     virtual void report( Game< MoveT, StateT > const& game, MoveT const& move ) = 0;
-    virtual void player1_win( Game< MoveT, StateT > const& ) = 0;
-    virtual void player2_win( Game< MoveT, StateT > const& ) = 0;
-    virtual void draw( Game< MoveT, StateT > const& ) = 0;
 };
 
 template< typename MoveT, typename StateT >
@@ -35,24 +29,7 @@ struct MultiMatch : public ::Match< MoveT, StateT >
 {
     void report( Game< MoveT, StateT > const&, MoveT const& ) override
     {}
-    void draw( Game< MoveT, StateT > const& ) override
-    {
-        ++draws;
-    }
-    void player1_win( Game< MoveT, StateT > const& ) override
-    {
-        if (fst_player_index == Player1)
-            ++fst_player_wins;
-        else
-            ++snd_player_wins;
-    }
-    void player2_win( Game< MoveT, StateT > const& ) override
-    {
-        if (fst_player_index == Player2)
-            ++fst_player_wins;
-        else
-            ++snd_player_wins;
-    }
+
     void play_match( Game< MoveT, StateT > const& game, Player< MoveT, StateT >& fst_player, 
                      Player< MoveT, StateT >& snd_player, size_t rounds )
     {
@@ -68,7 +45,17 @@ struct MultiMatch : public ::Match< MoveT, StateT >
 
         for (; rounds > 0; --rounds)
         {
-            this->play( game, *player, *opponent );
+            const GameResult game_result = this->play( game, *player, *opponent );
+            if (game_result == GameResult::Draw)
+                ++draws;
+            else if (game_result == GameResult::Player1Win)
+                fst_player_index == Player1
+                    ? ++fst_player_wins
+                    : ++snd_player_wins;
+            else if (game_result == GameResult::Player2Win)
+                 fst_player_index == Player2
+                    ? ++fst_player_wins
+                    : ++snd_player_wins;
             std::swap( player, opponent );
             std::swap( fst_player_index, snd_player_index );
         }

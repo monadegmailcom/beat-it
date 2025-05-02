@@ -161,18 +161,19 @@ GameResult GameState< uttt::Move, uttt::State >::result(
     for (const auto& win : ttt::wins)
     {
         const GameResult symbol = state.big_state[win[0]];
-        if (symbol == GameResult::Player1Win && symbol == state.big_state[win[1]] 
+        if (   symbol != GameResult::Undecided 
+            && symbol != GameResult::Draw 
+            && symbol == state.big_state[win[1]] 
             && symbol == state.big_state[win[2]])
-            return GameResult::Player1Win;
-        if (symbol == GameResult::Player2Win && symbol == state.big_state[win[1]] 
-            && symbol == state.big_state[win[2]])
-            return GameResult::Player2Win;
+            return (symbol == GameResult::Player1Win) 
+                ? GameResult::Player1Win
+                : GameResult::Player2Win;
     }
 
     // check for undecided
-    for (auto game_result : state.big_state)
-        if (game_result == GameResult::Undecided)
-            return GameResult::Undecided;
+    if (std::any_of(state.big_state.begin(), state.big_state.end(), 
+        [](GameResult symbol) { return symbol == GameResult::Undecided; }))
+        return GameResult::Undecided;
 
     // otherwise its a draw
     return GameResult::Draw;

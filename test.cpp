@@ -185,20 +185,8 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
         cout 
             << "player " << game.current_player_index() << " (" 
             << (int)move << ")\n"
-            << "board before move:\n" << game << '\n'
+            << "resulting board:\n" << game << '\n'
             << "score: " << minimax_player.score( game ) << endl;
-    }
-    void draw( ttt::Game const& game ) override
-    {
-        cout << "draw\n" << game << endl;
-    }
-    void player1_win( ttt::Game const& game ) override
-    {
-        cout << "player 1 win\n" << game << endl;;
-    }
-    void player2_win( ttt::Game const& game ) override
-    {
-        cout << "player 2 win\n" << game << endl;;
     }
 };
 
@@ -214,7 +202,12 @@ void ttt_human()
     ttt::minimax::Player player( 0, g );
 
     TicTacToeMatch match( player);
-    match.play( game, human, player );
+    if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
+        cout << "player 1 wins\n";
+    else if (result == GameResult::Player2Win)
+        cout << "player 2 wins\n";
+    else
+        cout << "draw\n";
     cout << '\n'
         << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
         << "player eval calls: " << player.get_eval_calls() << endl;
@@ -257,21 +250,9 @@ struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
         cout 
             << "player " << game.current_player_index() << " (" 
             << (int)move.big_move << "," << (int)move.small_move << ")\n"
-            << "board before move:\n" << game << '\n'
+            << "resulting board:\n" << game << '\n'
             << "score: " << minimax_player.score( game ) << '\n'
             << "best score: " << minimax_player.get_best_score() << endl;
-    }
-    void draw( uttt::Game const& game ) override
-    {
-        cout << "draw\n" << game << endl;
-    }
-    void player1_win( uttt::Game const& game ) override
-    {
-        cout << "player 1 win\n" << game << endl;;
-    }
-    void player2_win( uttt::Game const& game ) override
-    {
-        cout << "player 2 win\n" << game << endl;;
     }
 };
 
@@ -287,7 +268,12 @@ void uttt_human()
     uttt::minimax::Player player( 9.0, 5, g );
 
     UltimateTicTacToeMatch match( player );
-    match.play( game, human, player );
+    if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
+        cout << "player 1 wins\n";
+    else if (result == GameResult::Player2Win)
+        cout << "player 2 wins\n";
+    else
+        cout << "draw\n";
     cout << '\n'
         << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
         << "player eval calls: " << player.get_eval_calls() << endl;
