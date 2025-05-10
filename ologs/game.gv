@@ -2,17 +2,17 @@ digraph game
 { 
     node [shape = "box"]
     layout=dot
-        subgraph cluster_gr {
+        subgraph cluster_gameresult {
         label=<<b>game result</b>>
-        gr2 [label="game result", xlabel=<&#x2211;>]
-        d [label="Draw", xlabel=D]
-        w1 [label="Player 1 Win", xlabel=W1]
-        w1 -> gr2 [label=<i>]
-        w2 [label="Player 2 Win", xlabel=W2]
-        w2 -> gr2 [label=<i>]
-        d -> gr2 [label=<i>]
-        u [label="Undecided", xlabel=U]
-        u -> gr2 [label=<i>]
+        gr_gr [label="game result"]
+        gr_d [label="D (draw)"]
+        gr_d -> gr_gr [label=<i<sub>1</sub>>]
+        gr_w1 [label="W1 (player 1 win)"]
+        gr_w1 -> gr_gr [label=<i<sub>2</sub>>]
+        gr_w2 [label="W2 (player 2 win)"]
+        gr_w2 -> gr_gr [label=<i<sub>3</sub>>]
+        gr_u [label="U (undecided)"]
+        gr_u -> gr_gr [label=<i<sub>4</sub>>]
     }
 
     subgraph cluster_ga {
@@ -25,28 +25,18 @@ digraph game
         ga_z [label=<Z<sub>2</sub>>]
         ga_z -> ga_z2 [label="+1"]
         ga_z2 [label=<Z<sub>2</sub>>]
-        ga_sm [label="set of moves"]
-        ga_gms [label=<g, m &#x2208; s>]
+        ga_sm [label=<[move]>]
+        ga_gms [label=<g, m &#x2208; valid moves( g ) >]
         ga_gms -> ga_g [label="g"]
         ga_gms -> ga_g2 [label="apply"]
         ga_gms -> ga_m [label="m"]
-        ga_gms -> ga_sm [label="s"]
         ga_g2 [label="game"]
         ga_g2 -> ga_z2 [label="player index"]
         ga_m [label="move"]
+        ga_gr2 [label="result( g ) = U"]
+        ga_gr2 -> ga_gms
     }
-    subgraph cluster_game_properties {
-        label=<<b>game properties</b>>
-        gp_g [label="game"]
-        gp_g -> prop [label="prop"]
-        gp_g -> gp_gr [label="result"]
-        gp_gr [label="game result"]
-        prop [label=<r = U &#x21d4; s &#x2260; &#x2205;>]
-        prop -> gp_gr [label="r"]
-        prop -> gp_sm [label="s"]
-        gp_sm [label="set of moves"]
-    }
-
+    
     subgraph cluster_pl {
         label=<<b>player</b>>
         pl_p [label="player"]
@@ -78,9 +68,9 @@ digraph game
         ma_up12 -> ma_gpp [label="g, p, o"]
         ma_step1 [label=<(g, p, o), (p, result(g) = U)>]
         ma_step1 -> ma_step2 [label="id, choose"]
-        ma_step2 [label=<(g, p, o), m &#x2208; s>]
+        ma_step2 [label=<(g, p, o), m &#x2208; valid moves( g )>]
         ma_step2 -> ma_step3 [label="&#x2245;"]
-        ma_step3 [label=<(p, o), (g, m &#x2208; s)>]
+        ma_step3 [label=<(p, o), (g, m &#x2208; valid moves( g ))>]
         ma_step3 -> ma_step4 [label="id, apply"]
         ma_step4 [label=<(p, o), g'>]
         ma_step4 -> ma_step5 [label=<&#x2245;>]

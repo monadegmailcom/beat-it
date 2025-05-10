@@ -1,0 +1,68 @@
+digraph primitives {
+    node [shape = "box"]
+    layout=dot
+subgraph cluster_fold {
+    label=<<b>fold</b>>
+    subgraph cluster_fo2 {
+        label=<>
+        fo_AB [label=<A, B>]
+        fo_AB -> fo_A [label=<f>]
+        fo_A [label=<A>]
+    }
+    fo_AlB [label=<A, [B]>, penwidth=2]
+    fo_AlB -> fo_A2 [label=<<b>fold f</b>>, penwidth=2]
+    fo_A2 [label=<A>, penwidth=2]
+    fo_al [label=<a, []>]
+    fo_al -> fo_AlB [label=<i<sub>1</sub>>]
+    fo_al -> fo_A2 [label=a]
+    fo_ablb [label=<a, b:bs>]
+    fo_ablb -> fo_AlB [label=<i<sub>2</sub>>]
+    fo_ablb -> fo_ablb2
+    fo_ablb2 [label=<(a, b), bs>]
+    fo_ablb2 -> fo_AlB2 [label=<f, id>]
+    fo_AlB2 [label=<A, [B]>]
+    fo_AlB2 -> fo_A2 [label=fold]
+    {rank=same; fo_al; fo_ablb}
+}
+
+subgraph cluster_map {
+    label=<<b>map</b>>
+    subgraph cluster_ma2 {
+        label=<>
+        ma_A [label=<A>]
+        ma_B [label=<B>]
+        ma_A -> ma_B [label=<f>]
+    }
+    ma_lA [label=<[A]>, penwidth=2]
+    ma_lB [label=<[B]>, penwidth=2]
+    ma_lA -> ma_lB [label=<<b>map f</b>>, penwidth=2]
+    ma_l [label=<[]>]
+    ma_l -> ma_lA [label=<i<sub>1</sub>>]
+    ma_ala [label=<a:as>]
+    ma_ala -> ma_lA [label=<i<sub>2</sub>>]
+    ma_ala -> ma_BlB [label=<f, map>]
+    ma_BlB [label=<B, [B]>]
+    ma_BlB -> ma_lB[label=<(:)>]
+}
+
+subgraph cluster_if_then_else {
+    label=<<b>if_then_else</b>>
+    subgraph cluster_if2 {
+        label=<>
+        if2_AP [label=<A, Prop>]
+        if2_AP -> if2_B [label=<f>]
+        if2_ANP [label=<A, !Prop>]
+        if2_ANP -> if2_B  [label=<g>]
+        if2_B [label=<B>]
+    }
+    if_A [label=<A>, penwidth=2]
+    if_B [label=<B>, penwidth=2]
+    if_A -> if_B [label=<<b>if_then_else<br/>(prop, f, g)</b>>, penwidth=2]
+    if_AP [label=<A, Prop>]
+    if_AP -> if_A [label=<i<sub>1</sub>>]
+    if_AP -> if_B [label=<f>]
+    if_ANP [label=<A, !Prop>]
+    if_ANP -> if_A [label=<i<sub>2</sub>>]
+    if_ANP -> if_B [label=<g>]
+}
+}

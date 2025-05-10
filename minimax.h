@@ -20,7 +20,6 @@ double eval(
 {
     ++calls;
 
-    const PlayerIndex index = game.current_player_index();
     const GameResult result = game.result();
     if (result == GameResult::Draw)
         return 0.0;
@@ -31,17 +30,21 @@ double eval(
     else if (depth == 0)
         return score( game );
         
-    double best_score = max_value( toggle( index ));
-    const auto compare = cmp( index );
-    double* palpha = nullptr;
-    double* pbeta = nullptr;
-    if (index == Player1) // minimizing player
+    double best_score;
+    std::function< bool (double, double) > compare;
+    double* palpha;
+    double* pbeta;
+    if (game.current_player_index() == Player1) // minimizing player
     {
+        best_score = INFINITY;
+        compare = std::less< double >();
         palpha = &beta;
         pbeta = &alpha;
     }
     else // maximizing player
     {
+        best_score = -INFINITY;
+        compare = std::greater< double >();
         palpha = &alpha;
         pbeta = &beta;
     }
@@ -49,16 +52,16 @@ double eval(
     const size_t prev_move_stack_size = move_stack.size();
     game.append_valid_moves( move_stack );
 
-    for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
+    for (size_t i = prev_move_stack_size, end = move_stack.size(); i != end; ++i)
     {
         auto next_score = eval( 
-            game.apply( move_stack[index] ), score, depth - 1, move_stack, alpha, beta, g, calls );
+            game.apply( move_stack[i] ), score, depth - 1, move_stack, alpha, beta, g, calls );
         if (compare( next_score, best_score ))
             best_score = next_score;
-        if (!compare( *pbeta, best_score ))
-            break;
         if (compare( best_score, *palpha ))
             *palpha = best_score;
+        if (!compare( *pbeta, best_score ))
+            break;
     }
 
     move_stack.erase( move_stack.begin() + prev_move_stack_size, move_stack.end());
