@@ -32,10 +32,11 @@ struct MultiMatch : public ::Match< MoveT, StateT >
     void report( Game< MoveT, StateT > const&, MoveT const& ) override
     {}
 
+    // we need a new player each round, so we use a factory
     void play_match( 
         Game< MoveT, StateT > const& game, 
-        std::function< std::unique_ptr< Player< MoveT > > () > fst_player_factory, 
-        std::function< std::unique_ptr< Player< MoveT > > () > snd_player_factory, 
+        PlayerFactory< MoveT > fst_player_factory, 
+        PlayerFactory< MoveT > snd_player_factory, 
         size_t rounds )
     {
         draws = 0;

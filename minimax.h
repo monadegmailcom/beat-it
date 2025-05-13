@@ -1,3 +1,4 @@
+#pragma once
 #include "player.h"
 #include "game.h"
 
@@ -138,11 +139,22 @@ protected:
 };
 
 template< typename MoveT, typename StateT >
-std::function< std::unique_ptr< ::Player< MoveT > > () > player_factory(
-    Game< MoveT, StateT > const& game, unsigned depth, Data< MoveT >& data )
+using Buffer = char[sizeof( Player< MoveT, StateT > )];
+
+template< typename MoveT, typename StateT >
+PlayerFactory< MoveT > player_factory(
+    Game< MoveT, StateT > const&, unsigned depth, Data< MoveT >& data, Buffer< MoveT, StateT > );
+
+template< typename MoveT, typename StateT >
+PlayerFactory< MoveT > player_factory(
+    Game< MoveT, StateT > const& game, unsigned depth, Data< MoveT >& data, Buffer< MoveT, StateT > raw_data )
 {
-    return [&game, &data, depth]()
-        { return std::make_unique< Player< MoveT, StateT > >( game, depth, data ); };
+    return [&game, &data, depth, raw_data]()
+    { 
+        return std::unique_ptr< ::Player< MoveT >, void(*)( ::Player< MoveT >*) >( 
+            new (raw_data) Player< MoveT, StateT >( game, depth, data ), 
+            [](::Player< MoveT >* p){p->~Player(); }); 
+    };
 }
 
 } // namespace minimax

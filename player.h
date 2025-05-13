@@ -1,4 +1,6 @@
 #pragma once
+#include <memory>
+#include <functional>
 
 // require: choose_move and set_opponent_move are called alternatingly
 template< typename MoveT >
@@ -13,3 +15,9 @@ public:
     // require: move is a valid move
     virtual void apply_opponent_move( MoveT const& ) = 0; 
 };
+
+// use placement new to construct player, we need such for a multi round match
+template< typename MoveT >
+using PlayerFactory = std::function< 
+    std::unique_ptr< Player< MoveT >, void(*)(Player< MoveT >*) > () >;
+

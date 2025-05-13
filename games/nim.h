@@ -1,5 +1,4 @@
-#include "../player.h"
-#include "../game.h"
+#include "../minimax.h"
 
 #include <array>
 #include <algorithm>
@@ -21,6 +20,18 @@ template< size_t N >
 using Game = ::Game< Move, State< N > >;
 
 using Player = ::Player< Move >;
+
+namespace minimax {
+
+template< size_t N >
+using Player = ::minimax::Player< Move, State< N > >;
+
+using Data = ::minimax::Data< Move >;
+template< size_t N >
+using Buffer = char[sizeof( Player< N > )];
+using PlayerFactory = ::PlayerFactory< Move >;
+
+} // namespace minimax {
 
 namespace console {
 

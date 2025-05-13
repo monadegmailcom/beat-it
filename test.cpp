@@ -159,18 +159,21 @@ void nim_match()
 {
     cout << __func__ << endl;
 
-    mt19937 g( seed );
-    minimax::Data< nim::Move > data1( g );
-    minimax::Data< nim::Move > data2( g );
-
     const size_t HEAPS = 5;
+
+    mt19937 g( seed );
+    nim::minimax::Data data1( g );
+    nim::minimax::Buffer< HEAPS > buffer1;
+    nim::minimax::Data data2( g );
+    nim::minimax::Buffer< HEAPS > buffer2;
+
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
     MultiMatch< nim::Move, nim::State< HEAPS > > match;
     match.play_match( 
         game, 
-        minimax::player_factory( game, 2, data1 ), 
-        minimax::player_factory( game, 3, data2 ), 
+        minimax::player_factory( game, 2, data1, buffer1 ), 
+        minimax::player_factory( game, 3, data2, buffer2 ), 
         100 );
 
     cout 
@@ -210,7 +213,6 @@ void ttt_human()
 
     mt19937 g( seed );
     minimax::Data< ttt::Move > data( g );
-
     ttt::minimax::Player player( game, 0, data );
 
     TicTacToeMatch match( player);
@@ -230,16 +232,20 @@ void tic_tac_toe_match()
     cout << __func__ << endl;
 
     mt19937 g( seed );
+
     minimax::Data< ttt::Move > data1( g );
+    ttt::minimax::Buffer buffer1;
+
     minimax::Data< ttt::Move > data2( g );
+    ttt::minimax::Buffer buffer2;
 
     ttt::Game game( Player1, ttt::empty_state );
     
     MultiMatch< ttt::Move, ttt::State > match;
     match.play_match( 
         game, 
-        minimax::player_factory( game, 0, data1 ), 
-        minimax::player_factory( game, 5, data2 ), 
+        minimax::player_factory( game, 0, data1, buffer1 ), 
+        minimax::player_factory( game, 5, data2, buffer2 ), 
         100 );
 
     cout 
@@ -304,15 +310,18 @@ void uttt_match()
 
     mt19937 g( seed );
     minimax::Data< uttt::Move > data1( g );
+    uttt::minimax::Buffer buffer1;
+
     minimax::Data< uttt::Move > data2( g );
+    uttt::minimax::Buffer buffer2;
 
     uttt::Game game( Player1, uttt::empty_state );
 
     MultiMatch< uttt::Move, uttt::State > match;
     match.play_match( 
         game, 
-        uttt::minimax::player_factory( game, 9.0, 1, data1), 
-        uttt::minimax::player_factory( game, 9.0, 4, data2), 
+        uttt::minimax::player_factory( game, 9.0, 1, data1, buffer1), 
+        uttt::minimax::player_factory( game, 9.0, 4, data2, buffer2), 
         100 );
 
     cout 

@@ -41,6 +41,10 @@ public:
     { return minimax::score( game.get_state() ); };
 };
 
+using Data = ::minimax::Data< Move >;
+using Buffer = char[sizeof( Player )];
+using PlayerFactory = ::PlayerFactory< Move >;
+
 } // namespace minimax {
 
 namespace console

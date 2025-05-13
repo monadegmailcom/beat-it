@@ -37,6 +37,7 @@ double score( State const& state )
 
     return score;
 }
+
 } // namespace minimax {
 
 Symbol player_index_to_symbol( PlayerIndex player_index )

@@ -121,11 +121,14 @@ double Player::score( Game const& game ) const
     return score;
 }
 
-function< unique_ptr< ::Player< uttt::Move > > () > player_factory(
-    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data )
+PlayerFactory player_factory(
+    Game const& game, double weight, unsigned depth, Data& data,
+    Buffer buffer )
 {
-    return [&game, &data, weight, depth]()
-        { return make_unique< Player >( game, weight, depth, data ); };
+    return [&game, &data, weight, depth, buffer]()
+        { return unique_ptr< ::Player< uttt::Move >, void(*)(::Player< uttt::Move >*) >( 
+            new (buffer) Player( game, weight, depth, data ), 
+            [](::Player< uttt::Move >* p){p->~Player(); }); };
 }
 
 } // namespace minimax {

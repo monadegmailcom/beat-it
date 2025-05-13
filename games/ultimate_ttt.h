@@ -52,8 +52,12 @@ private:
     const double weight;
 };
 
-std::function< std::unique_ptr< ::Player< uttt::Move > > () > player_factory(
-    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data );
+using Data = ::minimax::Data< Move >;
+using Buffer = char[sizeof( Player )];
+using PlayerFactory = ::PlayerFactory< uttt::Move >;
+
+PlayerFactory player_factory(
+    Game const& game, double weight, unsigned depth, Data& data, Buffer );
 
 } // namespace minimax {
 
