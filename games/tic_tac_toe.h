@@ -16,7 +16,7 @@ enum Symbol : char
 using Move = uint8_t;
 using State = std::array< Symbol, 9 >;
 using Game = ::Game< Move, State >;
-using Player = ::Player< Move, State >;
+using Player = ::Player< Move >;
 
 extern const std::array< Move, 3 > wins[8];
 
@@ -35,7 +35,8 @@ double score( State const& state );
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( unsigned depth, std::mt19937& g ) : ::minimax::Player< Move, State >( depth, g ) {}
+    Player( Game const& game, unsigned depth, ::minimax::Data< Move >& data ) 
+    : ::minimax::Player< Move, State >( game, depth, data ) {}
     double score( Game const& game ) const override 
     { return minimax::score( game.get_state() ); };
 };
@@ -48,7 +49,11 @@ namespace console
 class HumanPlayer : public Player
 {
 public:
-    Move choose( Game const& game ) override;
+    HumanPlayer( Game const& game ) : game( game ) {}
+    Move choose_move() override;
+    void apply_opponent_move( Move const& ) override;
+private:
+    Game game;
 };
 
 } // namespace console

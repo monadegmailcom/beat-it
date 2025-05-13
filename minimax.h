@@ -1,4 +1,5 @@
 #include "player.h"
+#include "game.h"
 
 #include <functional>
 #include <algorithm>
@@ -69,28 +70,38 @@ double eval(
     return best_score;
 }
 
-template< typename MoveT, typename StateT >
-class Player : public ::Player< MoveT, StateT >
-{   
-public:
-    Player( unsigned depth, std::mt19937& g ) : depth( depth ), g( g ) {}
-    virtual ~Player() {}
-    virtual double score( Game< MoveT, StateT > const& ) const { return 0.0; };
-    std::vector< MoveT > const& get_move_stack() { return move_stack; }
-    size_t get_eval_calls() const { return eval_calls; }
-    double get_best_score() const { return best_score; }
-protected:
-    unsigned depth;
+template< typename MoveT >
+struct Data
+{
+    Data( std::mt19937& g ) : g( g ) {}
     std::mt19937& g;
     std::vector< MoveT > move_stack;
     size_t eval_calls = 0;
-    double best_score;
+    double best_score = 0.0;
+};
 
-    MoveT choose( Game< MoveT, StateT > const& game ) override
+template< typename MoveT, typename StateT >
+class Player : public ::Player< MoveT >
+{   
+public:
+    Player( Game< MoveT, StateT > const& game, unsigned depth, Data< MoveT >& data ) 
+    : game( game ), depth( depth ), data( data ) {}
+    virtual double score( Game< MoveT, StateT > const&) const { return 0.0; };
+protected:
+    Game< MoveT, StateT > game;
+    unsigned depth;
+    Data< MoveT >& data;
+
+    void apply_opponent_move( MoveT const& move ) override
     {
-        const size_t prev_move_stack_size = move_stack.size();
-        game.append_valid_moves( move_stack );
-        if (prev_move_stack_size == move_stack.size())
+        game = game.apply( move );
+    }
+
+    MoveT choose_move() override
+    {
+        const size_t prev_move_stack_size = data.move_stack.size();
+        game.append_valid_moves( data.move_stack );
+        if (prev_move_stack_size == data.move_stack.size())
             throw std::invalid_argument( "no valid moves" );
 
         const auto compare = cmp( game.current_player_index());
@@ -98,27 +109,40 @@ protected:
             [this](Game< MoveT, StateT > const& game) { return this->score( game ); };
 
         // shuffle order of moves to avoid the same order every time
-        std::shuffle( move_stack.begin() + prev_move_stack_size, move_stack.end(), g );
+        std::shuffle( 
+            data.move_stack.begin() + prev_move_stack_size, data.move_stack.end(), 
+            data.g );
 
-        best_score = max_value( toggle( game.current_player_index()));
+        data.best_score = max_value( toggle( game.current_player_index()));
         size_t best_move_index = 0;
 
-        for (size_t index = prev_move_stack_size, end = move_stack.size(); index != end; ++index)
+        for (size_t index = prev_move_stack_size, end = data.move_stack.size(); index != end; ++index)
         {
             const double score = eval( 
-                game.apply( move_stack[index] ), score_function, depth, move_stack, 
-                -INFINITY, INFINITY, g, eval_calls );
-            if (compare( score, best_score ))
+                game.apply( data.move_stack[index] ), score_function, depth, data.move_stack, 
+                -INFINITY, INFINITY, data.g, data.eval_calls );
+            if (compare( score, data.best_score ))
             {
-                best_score = score;
+                data.best_score = score;
                 best_move_index = index;
             }
         }
             
-        const MoveT best_move = move_stack[best_move_index];
-        move_stack.erase( move_stack.begin() + prev_move_stack_size, move_stack.end());
+        const MoveT best_move = data.move_stack[best_move_index];
+        data.move_stack.erase( 
+            data.move_stack.begin() + prev_move_stack_size, data.move_stack.end());
+
+        game = game.apply( best_move );
         return best_move;
     }
 };
+
+template< typename MoveT, typename StateT >
+std::function< std::unique_ptr< ::Player< MoveT > > () > player_factory(
+    Game< MoveT, StateT > const& game, unsigned depth, Data< MoveT >& data )
+{
+    return [&game, &data, depth]()
+        { return std::make_unique< Player< MoveT, StateT > >( game, depth, data ); };
+}
 
 } // namespace minimax

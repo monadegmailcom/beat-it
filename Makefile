@@ -5,7 +5,7 @@ CC=g++
 # build raylib with: make PLATFORM=PLATFORM_DESKTOP
 HOMEBREW=/opt/homebrew/Cellar
 
-BOOST_PATH=$(HOMEBREW)/boost/1.85.0
+BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
 #GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
 #GPERF_PATH=$(HOMEBREW)/gperftools/2.16
 

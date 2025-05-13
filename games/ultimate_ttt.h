@@ -21,9 +21,10 @@ struct State
 };
 
 using Game = ::Game< Move, State >;
-using Player = ::Player< Move, State >;
+using Player = ::Player< Move >;
 
 extern const State empty_state; 
+const Move no_move = { ttt::no_move, ttt::no_move };
 
 namespace console
 {
@@ -31,7 +32,11 @@ namespace console
 class HumanPlayer : public Player
 {
 public:
-    Move choose( Game const& game ) override;
+    HumanPlayer( Game const& game ) : game( game ) {}
+    Move choose_move() override;
+    void apply_opponent_move( Move const& ) override;
+private:
+    Game game;
 };
 
 } // namespace console
@@ -41,11 +46,14 @@ namespace minimax {
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( double weight, unsigned depth, std::mt19937& g );
+    Player( Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& );
     double score( Game const& game ) const override;
 private:
     const double weight;
 };
+
+std::function< std::unique_ptr< ::Player< uttt::Move > > () > player_factory(
+    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data );
 
 } // namespace minimax {
 

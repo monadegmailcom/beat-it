@@ -18,7 +18,7 @@ const State empty_state =
 
 namespace console {
 
-Move HumanPlayer::choose( Game const& game )
+Move HumanPlayer::choose_move()
 {
     vector< Move > valid_moves;
     game.append_valid_moves( valid_moves );
@@ -64,8 +64,14 @@ Move HumanPlayer::choose( Game const& game )
             continue;
         }
 
+        game = game.apply( move );
         return move;
     }
+}
+
+void HumanPlayer::apply_opponent_move( Move const& move )
+{
+    game = game.apply( move );
 }
 
 } // namespace console {
@@ -77,8 +83,9 @@ bool operator==( uttt::Move const& lhs, uttt::Move const& rhs )
 
 namespace minimax {
 
-Player::Player( double weight, unsigned depth, std::mt19937& g ) 
-    : ::minimax::Player< Move, State >( depth, g ), weight( weight ) {}
+Player::Player( 
+    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data ) 
+    : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
 
 double Player::score( Game const& game ) const
 {
@@ -112,6 +119,13 @@ double Player::score( Game const& game ) const
             score += ttt::minimax::score( state.small_states[i] );
 
     return score;
+}
+
+function< unique_ptr< ::Player< uttt::Move > > () > player_factory(
+    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data )
+{
+    return [&game, &data, weight, depth]()
+        { return make_unique< Player >( game, weight, depth, data ); };
 }
 
 } // namespace minimax {

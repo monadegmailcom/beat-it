@@ -5,6 +5,7 @@
 #include "games/nim.h"
 #include "games/ultimate_ttt.h"
 #include "match.h"
+#include "montecarlo.h"
 
 using namespace std;
 
@@ -42,9 +43,9 @@ void toggle_player()
 
 using TestGame = Game< char, GameResult >;
 
-struct TestPlayer : public Player< char, GameResult >
+struct TestPlayer : public Player< char >
 {
-    char choose( TestGame const& ) override
+    char choose_move() override
     {
         return 0;
     }
@@ -104,12 +105,18 @@ void eval_undecided_game()
 
 }
 
-struct TestNimPlayer : public Player< nim::Move, nim::State< 1 > >
+struct TestNimPlayer : public Player< nim::Move >
 {
-    nim::Move choose( Game< nim::Move, nim::State< 1 > > const& game ) override
+    nim::Move choose_move() override
     {
         return next_move;
     }
+
+    void apply_opponent_move( nim::Move const& ) override
+    {
+        // do nothing
+    }
+
     nim::Move next_move;
 };
 
@@ -153,24 +160,27 @@ void nim_match()
     cout << __func__ << endl;
 
     mt19937 g( seed );
+    minimax::Data< nim::Move > data1( g );
+    minimax::Data< nim::Move > data2( g );
+
     const size_t HEAPS = 5;
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
-    minimax::Player< nim::Move, nim::State< HEAPS > > fst_player( 2, g );
-    minimax::Player< nim::Move, nim::State< HEAPS > > snd_player( 3, g );
     MultiMatch< nim::Move, nim::State< HEAPS > > match;
-    match.play_match( game, fst_player, snd_player, 100 );
+    match.play_match( 
+        game, 
+        minimax::player_factory( game, 2, data1 ), 
+        minimax::player_factory( game, 3, data2 ), 
+        100 );
 
     cout 
         << "fst player wins: " << match.fst_player_wins << '\n'
         << "snd player wins: " << match.snd_player_wins << '\n'
         << "draws: " << match.draws << '\n'
-        << "fst player move stack size: " << fst_player.get_move_stack().size() << '\n'
-        << "fst player move stack capacity: " << fst_player.get_move_stack().capacity() << '\n'
-        << "snd player move stack size: " << snd_player.get_move_stack().size() << '\n'
-        << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
-        << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
-        << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
+        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+        << "fst player eval calls: " << data1.eval_calls << '\n'
+        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+        << "snd player eval calls: " << data2.eval_calls << endl;
 }
 
 struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
@@ -196,10 +206,12 @@ void ttt_human()
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    ttt::console::HumanPlayer human;
+    ttt::console::HumanPlayer human( game );
 
     mt19937 g( seed );
-    ttt::minimax::Player player( 0, g );
+    minimax::Data< ttt::Move > data( g );
+
+    ttt::minimax::Player player( game, 0, data );
 
     TicTacToeMatch match( player);
     if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
@@ -209,8 +221,8 @@ void ttt_human()
     else
         cout << "draw\n";
     cout << '\n'
-        << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
-        << "player eval calls: " << player.get_eval_calls() << endl;
+        << "player move stack capacity: " << data.move_stack.capacity() << '\n'
+        << "player eval calls: " << data.eval_calls << endl;
 }
 
 void tic_tac_toe_match()
@@ -218,32 +230,37 @@ void tic_tac_toe_match()
     cout << __func__ << endl;
 
     mt19937 g( seed );
+    minimax::Data< ttt::Move > data1( g );
+    minimax::Data< ttt::Move > data2( g );
 
     ttt::Game game( Player1, ttt::empty_state );
-
-    minimax::Player< ttt::Move, ttt::State > fst_player( 0, g );
-    minimax::Player< ttt::Move, ttt::State > snd_player( 5, g );
+    
     MultiMatch< ttt::Move, ttt::State > match;
-    match.play_match( game, fst_player, snd_player, 100 );
+    match.play_match( 
+        game, 
+        minimax::player_factory( game, 0, data1 ), 
+        minimax::player_factory( game, 5, data2 ), 
+        100 );
 
     cout 
         << "fst player wins: " << match.fst_player_wins << '\n'
         << "snd player wins: " << match.snd_player_wins << '\n'
         << "draws: " << match.draws << '\n'
-        << "fst player move stack size: " << fst_player.get_move_stack().size() << '\n'
-        << "fst player move stack capacity: " << fst_player.get_move_stack().capacity() << '\n'
-        << "snd player move stack size: " << snd_player.get_move_stack().size() << '\n'
-        << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
-        << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
-        << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
+        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+        << "fst player eval calls: " << data1.eval_calls << '\n'
+        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+        << "snd player eval calls: " << data2.eval_calls << endl;
 }
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 {
-    UltimateTicTacToeMatch( minimax::Player< uttt::Move, uttt::State > const& minimax_player)
-        : minimax_player( minimax_player ) {}
+    UltimateTicTacToeMatch( 
+        minimax::Player< uttt::Move, uttt::State > const& minimax_player,
+        minimax::Data< uttt::Move > const& data )
+        : minimax_player( minimax_player ), data( data ) {}
 
     minimax::Player< uttt::Move, uttt::State > const& minimax_player;
+    minimax::Data< uttt::Move > const& data;
 
     void report( uttt::Game const& game, uttt::Move const& move ) override
     {
@@ -252,7 +269,7 @@ struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
             << (int)move.big_move << "," << (int)move.small_move << ")\n"
             << "resulting board:\n" << game << '\n'
             << "score: " << minimax_player.score( game ) << '\n'
-            << "best score: " << minimax_player.get_best_score() << endl;
+            << "best score: " << data.best_score << endl;
     }
 };
 
@@ -262,12 +279,14 @@ void uttt_human()
     cout << __func__ << endl;
     uttt::Game game( Player1, uttt::empty_state );
 
-    uttt::console::HumanPlayer human;
+    uttt::console::HumanPlayer human( game );
 
     mt19937 g( seed );
-    uttt::minimax::Player player( 9.0, 5, g );
+    minimax::Data< uttt::Move > data( g );
 
-    UltimateTicTacToeMatch match( player );
+    uttt::minimax::Player player( game, 9.0, 5, data );
+
+    UltimateTicTacToeMatch match( player, data );
     if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
         cout << "player 1 wins\n";
     else if (result == GameResult::Player2Win)
@@ -275,8 +294,8 @@ void uttt_human()
     else
         cout << "draw\n";
     cout << '\n'
-        << "player move stack capacity: " << player.get_move_stack().capacity() << '\n'
-        << "player eval calls: " << player.get_eval_calls() << endl;
+        << "player move stack capacity: " << data.move_stack.capacity() << '\n'
+        << "player eval calls: " << data.eval_calls << endl;
 }
 
 void uttt_match()
@@ -284,25 +303,43 @@ void uttt_match()
     cout << __func__ << endl;
 
     mt19937 g( seed );
+    minimax::Data< uttt::Move > data1( g );
+    minimax::Data< uttt::Move > data2( g );
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    uttt::minimax::Player fst_player( 9.0, 1, g );
-    //minimax::Player< uttt::Move, uttt::State > snd_player( 0, g );
-    uttt::minimax::Player snd_player( 9.0, 4, g );
     MultiMatch< uttt::Move, uttt::State > match;
-    match.play_match( game, fst_player, snd_player, 100 );
+    match.play_match( 
+        game, 
+        uttt::minimax::player_factory( game, 9.0, 1, data1), 
+        uttt::minimax::player_factory( game, 9.0, 4, data2), 
+        100 );
 
     cout 
         << "fst player wins: " << match.fst_player_wins << '\n'
         << "snd player wins: " << match.snd_player_wins << '\n'
         << "draws: " << match.draws << '\n'
-        << "fst player move stack size: " << fst_player.get_move_stack().size() << '\n'
-        << "fst player move stack capacity: " << fst_player.get_move_stack().capacity() << '\n'
-        << "snd player move stack size: " << snd_player.get_move_stack().size() << '\n'
-        << "snd player move stack capacity: " << snd_player.get_move_stack().capacity() << '\n'
-        << "fst player eval calls: " << fst_player.get_eval_calls() << '\n'
-        << "snd player eval calls: " << snd_player.get_eval_calls() << endl;
+        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+        << "fst player eval calls: " << data1.eval_calls << '\n'
+        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+        << "snd player eval calls: " << data2.eval_calls << endl;
+
+}
+
+void montecarlo_node()
+{
+    cout << __func__ << endl;
+
+    using Node = montecarlo::Node< uttt::Move, uttt::State >;
+    montecarlo::NodeAllocator< uttt::Move, uttt::State > allocator;
+
+    uttt::Game game( Player1, uttt::empty_state );
+    uttt::Move move = uttt::no_move;
+    Node node( game, move, allocator );
+    node.push_front_child( game, move );
+    Node& sib = node.push_front_sibling( game, move );
+    node.push_front_sibling( game, move );
+    sib.push_front_child( game, move );
 }
 
 } // namespace test {
@@ -320,11 +357,12 @@ int main()
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-        //test::nim_match();
+        test::nim_match();
         //test::ttt_human();
-        //test::tic_tac_toe_match();
+        test::tic_tac_toe_match();
         //test::uttt_human();
         test::uttt_match();
+        test::montecarlo_node();
 
         cout << "\neverything ok" << endl;    
         return 0;

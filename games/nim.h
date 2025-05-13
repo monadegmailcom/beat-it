@@ -1,4 +1,5 @@
 #include "../player.h"
+#include "../game.h"
 
 #include <array>
 #include <algorithm>
@@ -19,16 +20,17 @@ using State = std::array< size_t, N >;
 template< size_t N >
 using Game = ::Game< Move, State< N > >;
 
-template< size_t N >
-using Player = ::Player< Move, State< N > >;
+using Player = ::Player< Move >;
 
 namespace console {
 
 template< size_t N >
-class HumanPlayer : public Player< N >
+class HumanPlayer : public Player
 {
 public:
-    Move choose( Game< N > const& game ) override
+    HumanPlayer( Game< N > const& game ) : game( game ) {}
+
+    Move choose_move() override
     {
         std::vector< nim::Move > valid_moves;
         auto const& heaps = game.get_state();
@@ -37,6 +39,12 @@ public:
             game.current_player_index(), 
             std::vector< size_t >( heaps.begin(), heaps.end()), valid_moves );
     }
+    void apply_opponent_move( Move const& move ) override
+    {
+        game = game.apply( move );
+    }
+private:
+     Game< N > game;
 };
 
 Move choose( PlayerIndex, std::vector< size_t > const& heaps, std::vector< nim::Move > const& valid_moves );

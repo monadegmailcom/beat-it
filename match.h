@@ -6,16 +6,18 @@ class Match
 public:
     virtual ~Match() {}
     GameResult play( 
-        Game< MoveT, StateT > game, Player< MoveT, StateT >& player, 
-        Player< MoveT, StateT >& opponent )
+        Game< MoveT, StateT > game, 
+        Player< MoveT >& player, 
+        Player< MoveT >& opponent )
     {
         const GameResult result = game.result();
         if (result != GameResult::Undecided)
             return result;
         else
         {
-            const MoveT move = player.choose( game );
+            const MoveT move = player.choose_move();
             const Game next_game = game.apply( move );
+            opponent.apply_opponent_move( move );
             report( next_game, move );
             return play( next_game, opponent, player );
         }
@@ -30,22 +32,26 @@ struct MultiMatch : public ::Match< MoveT, StateT >
     void report( Game< MoveT, StateT > const&, MoveT const& ) override
     {}
 
-    void play_match( Game< MoveT, StateT > const& game, Player< MoveT, StateT >& fst_player, 
-                     Player< MoveT, StateT >& snd_player, size_t rounds )
+    void play_match( 
+        Game< MoveT, StateT > const& game, 
+        std::function< std::unique_ptr< Player< MoveT > > () > fst_player_factory, 
+        std::function< std::unique_ptr< Player< MoveT > > () > snd_player_factory, 
+        size_t rounds )
     {
         draws = 0;
         fst_player_wins = 0;
         snd_player_wins = 0;
         
-        Player< MoveT, StateT >* player = &fst_player;
-        Player< MoveT, StateT >* opponent = &snd_player;
+        auto player_factory = &fst_player_factory;
+        auto opponent_factory = &snd_player_factory;
         
         fst_player_index = game.current_player_index();
         snd_player_index = toggle( fst_player_index );
 
         for (; rounds > 0; --rounds)
         {
-            const GameResult game_result = this->play( game, *player, *opponent );
+            const GameResult game_result = this->play( 
+                game, *(*player_factory)(), *(*opponent_factory)());
             if (game_result == GameResult::Draw)
                 ++draws;
             else if (game_result == GameResult::Player1Win)
@@ -56,7 +62,7 @@ struct MultiMatch : public ::Match< MoveT, StateT >
                  fst_player_index == Player2
                     ? ++fst_player_wins
                     : ++snd_player_wins;
-            std::swap( player, opponent );
+            std::swap( player_factory, opponent_factory );
             std::swap( fst_player_index, snd_player_index );
         }
     }

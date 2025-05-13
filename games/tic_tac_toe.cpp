@@ -45,7 +45,10 @@ Symbol player_index_to_symbol( PlayerIndex player_index )
     return symbols[player_index];
 }
 
-Move console::HumanPlayer::choose( Game const& game )
+namespace console
+{
+
+Move HumanPlayer::choose_move()
 {
     vector< Move > valid_moves;
     game.append_valid_moves( valid_moves );
@@ -72,10 +75,17 @@ Move console::HumanPlayer::choose( Game const& game )
             continue;
         }
 
+        game = game.apply( Move( move ) );
         return move;
     }
 }
 
+void HumanPlayer::apply_opponent_move( Move const& move )
+{
+    game = game.apply( move );
+}
+
+} // namespace console
 } // namespace ttt
 
 void GameState< ttt::Move, ttt::State >::append_valid_moves( 
