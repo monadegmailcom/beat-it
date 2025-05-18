@@ -1,4 +1,5 @@
 #include "../minimax.h"
+#include "../montecarlo.h"
 
 #include <array>
 #include <iostream>
@@ -46,6 +47,17 @@ using Buffer = char[sizeof( Player )];
 using PlayerFactory = ::PlayerFactory< Move >;
 
 } // namespace minimax {
+
+namespace montecarlo 
+{
+
+using Data = ::montecarlo::Data< Move, State >;
+using Player = ::montecarlo::Player< Move, State >;
+using Buffer = char[sizeof( Player )];
+using PlayerFactory = ::PlayerFactory< Move >;
+using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
+
+} // namespace montecarlo 
 
 namespace console
 {

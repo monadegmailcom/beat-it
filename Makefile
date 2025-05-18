@@ -21,6 +21,7 @@ LINK=
 # -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
 #	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
+#DEBUG=-g
 DEBUG=-g -O3
 RELEASE=-O3 -DNDEBUG
 

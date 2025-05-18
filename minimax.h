@@ -1,4 +1,5 @@
 #pragma once
+
 #include "player.h"
 #include "game.h"
 
@@ -140,10 +141,6 @@ protected:
 
 template< typename MoveT, typename StateT >
 using Buffer = char[sizeof( Player< MoveT, StateT > )];
-
-template< typename MoveT, typename StateT >
-PlayerFactory< MoveT > player_factory(
-    Game< MoveT, StateT > const&, unsigned depth, Data< MoveT >& data, Buffer< MoveT, StateT > );
 
 template< typename MoveT, typename StateT >
 PlayerFactory< MoveT > player_factory(

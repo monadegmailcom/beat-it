@@ -9,6 +9,11 @@
 
 using namespace std;
 
+unsigned seed = 0;
+bool verbose = true;
+bool interactive = false;
+bool extensive = true;
+
 template<>
 struct GameState< char, GameResult >
 {
@@ -120,9 +125,6 @@ struct TestNimPlayer : public Player< nim::Move >
     nim::Move next_move;
 };
 
-random_device rd;
-unsigned seed = 0;
-
 void nim_game()
 {
     cout << __func__ << endl;
@@ -157,7 +159,13 @@ void nim_game()
 
 void nim_match()
 {
-    cout << __func__ << endl;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
 
     const size_t HEAPS = 5;
 
@@ -176,14 +184,25 @@ void nim_match()
         minimax::player_factory( game, 3, data2, buffer2 ), 
         100 );
 
-    cout 
-        << "fst player wins: " << match.fst_player_wins << '\n'
-        << "snd player wins: " << match.snd_player_wins << '\n'
-        << "draws: " << match.draws << '\n'
-        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-        << "fst player eval calls: " << data1.eval_calls << '\n'
-        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-        << "snd player eval calls: " << data2.eval_calls << endl;
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player eval calls: " << data1.eval_calls << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data2.eval_calls << endl;
+
+    assert (match.fst_player_wins < 50);
+    assert (match.snd_player_wins > 50);
+    assert (match.draws == 0);
+    assert (data1.move_stack.empty());
+    assert (data2.move_stack.empty());
+    assert (data1.move_stack.capacity() == 64);
+    assert (data2.move_stack.capacity() == 64);
+    assert (data1.eval_calls > 50000 && data1.eval_calls < 100000);
+    assert (data2.eval_calls > 200000 && data2.eval_calls < 400000);
 }
 
 struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
@@ -205,7 +224,13 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
 
 void ttt_human()
 {
-    cout << __func__ << endl;
+    if (interactive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (interactive mode off)" << endl;
+        return;
+    }
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -229,7 +254,13 @@ void ttt_human()
 
 void tic_tac_toe_match()
 {
-    cout << __func__ << endl;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
 
     mt19937 g( seed );
 
@@ -248,14 +279,25 @@ void tic_tac_toe_match()
         minimax::player_factory( game, 5, data2, buffer2 ), 
         100 );
 
-    cout 
-        << "fst player wins: " << match.fst_player_wins << '\n'
-        << "snd player wins: " << match.snd_player_wins << '\n'
-        << "draws: " << match.draws << '\n'
-        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-        << "fst player eval calls: " << data1.eval_calls << '\n'
-        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-        << "snd player eval calls: " << data2.eval_calls << endl;
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player eval calls: " << data1.eval_calls << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data2.eval_calls << endl;
+
+    assert (match.fst_player_wins == 0);
+    assert (match.snd_player_wins > 50);
+    assert (match.draws > 0);
+    assert (data1.move_stack.empty());
+    assert (data2.move_stack.empty());
+    assert (data1.move_stack.capacity() == 16);
+    assert (data2.move_stack.capacity() == 64);
+    assert (data1.eval_calls > 1000 && data1.eval_calls < 3000);
+    assert (data2.eval_calls > 300000 && data2.eval_calls < 600000);
 }
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
@@ -282,7 +324,14 @@ struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 
 void uttt_human()
 {
-    cout << __func__ << endl;
+    if (interactive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (interactive mode off)" << endl;
+        return;
+    }
+
     uttt::Game game( Player1, uttt::empty_state );
 
     uttt::console::HumanPlayer human( game );
@@ -306,7 +355,13 @@ void uttt_human()
 
 void uttt_match()
 {
-    cout << __func__ << endl;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
 
     mt19937 g( seed );
     minimax::Data< uttt::Move > data1( g );
@@ -324,31 +379,115 @@ void uttt_match()
         uttt::minimax::player_factory( game, 9.0, 4, data2, buffer2), 
         100 );
 
-    cout 
-        << "fst player wins: " << match.fst_player_wins << '\n'
-        << "snd player wins: " << match.snd_player_wins << '\n'
-        << "draws: " << match.draws << '\n'
-        << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-        << "fst player eval calls: " << data1.eval_calls << '\n'
-        << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-        << "snd player eval calls: " << data2.eval_calls << endl;
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player eval calls: " << data1.eval_calls << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data2.eval_calls << endl;
 
+    assert (match.fst_player_wins < 50);
+    assert (match.snd_player_wins > 50);
+    assert (match.draws > 0);
+    assert (data1.move_stack.empty());
+    assert (data2.move_stack.empty());
+    assert (data1.move_stack.capacity() == 128);
+    assert (data2.move_stack.capacity() == 256);
+    assert (data1.eval_calls > 100000 && data1.eval_calls < 300000);
+    assert (data2.eval_calls > 13000000 && data2.eval_calls < 15000000);
 }
 
 void montecarlo_node()
 {
     cout << __func__ << endl;
 
-    using Node = montecarlo::Node< uttt::Move, uttt::State >;
-    montecarlo::NodeAllocator< uttt::Move, uttt::State > allocator;
+    vector< ttt::Move > move_stack;
+    ttt::montecarlo::NodeAllocator allocator;
+    ttt::Game game( Player1, ttt::empty_state );
 
-    uttt::Game game( Player1, uttt::empty_state );
-    uttt::Move move = uttt::no_move;
-    Node node( game, move, allocator );
-    node.push_front_child( game, move );
-    Node& sib = node.push_front_sibling( game, move );
-    node.push_front_sibling( game, move );
-    sib.push_front_child( game, move );
+    using Node = montecarlo::detail::Node< ttt::Move, ttt::State >;
+
+    Node* node = new (allocator.allocate()) Node( game, allocator );
+    assert (node->children_count() == 0);
+    assert (node->node_count() == 1);
+
+    node->add_children( move_stack );
+    assert (node->children_count() == 9);
+    assert (node->node_count() == 10);
+    node->~Node();
+}
+
+void montecarlo_player()
+{
+    cout << __func__ << endl;
+
+    mt19937 g( seed );
+    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::Data data( g, allocator );
+    ttt::Game game( Player1, ttt::empty_state );
+    ttt::montecarlo::Player player( game, 1.0, 1000, data );
+    assert (player.root_node().node_count() == 10);
+    player.apply_opponent_move( ttt::Move( 4 ) );
+    game = game.apply( ttt::Move( 4 ) );
+
+    using Node = montecarlo::detail::Node< ttt::Move, ttt::State >;
+    
+    Node const& root = player.root_node();
+    assert (root.children_count() == 8);
+    assert (root.node_count() == 9);
+    assert (root.get_move() == ttt::Move( 4 ));
+    ttt::Move move = player.choose_move();
+    vector< ttt::Move > valid_moves;
+    game.append_valid_moves( valid_moves );
+    assert (ranges::contains( valid_moves, move ));
+}
+
+void montecarlo_ttt_match()
+{
+    extensive = true;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
+
+    mt19937 g( seed );
+    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::Data data1( g, allocator );
+    ttt::montecarlo::Buffer buffer1;
+
+    ttt::montecarlo::Data data2( g, allocator );
+    ttt::montecarlo::Buffer buffer2;
+
+    ttt::Game game( Player1, ttt::empty_state );
+
+    MultiMatch< ttt::Move, ttt::State > match;
+    const double exploration = 0.4;
+    const size_t rounds = 100;
+    match.play_match( 
+        game, 
+        montecarlo::player_factory( game, exploration, 100, data1, buffer1 ), 
+        montecarlo::player_factory( game, exploration, 500, data2, buffer2 ), 
+        rounds );
+
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player playouts: " << data1.playout_count << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player playouts: " << data2.playout_count << endl;
+
+    assert (match.draws > 0);
+    assert (data1.move_stack.empty());
+    assert (data2.move_stack.empty());
 }
 
 } // namespace test {
@@ -357,8 +496,9 @@ int main()
 {
     try
     {
-        test::seed = test::rd();
-        cout << "run tests with seed " << test::seed << endl << endl;
+        random_device rd;
+        seed = rd();
+        cout << "run tests with seed " << seed << endl << endl;
 
         test::toggle_player();
         test::build_game();
@@ -366,12 +506,15 @@ int main()
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-        test::nim_match();
-        //test::ttt_human();
-        test::tic_tac_toe_match();
-        //test::uttt_human();
-        test::uttt_match();
+//        test::nim_match();
+        test::ttt_human();
+//        test::tic_tac_toe_match();
+        test::uttt_human();
+//        test::uttt_match();
         test::montecarlo_node();
+        test::montecarlo_player();
+
+        test::montecarlo_ttt_match();
 
         cout << "\neverything ok" << endl;    
         return 0;
