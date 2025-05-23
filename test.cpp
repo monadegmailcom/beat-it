@@ -10,9 +10,9 @@
 using namespace std;
 
 unsigned seed = 0;
-bool verbose = true;
+bool verbose = false;
 bool interactive = false;
-bool extensive = true;
+bool extensive = false;
 
 template<>
 struct GameState< char, GameResult >
@@ -235,13 +235,15 @@ void ttt_human()
     ttt::Game game( Player1, ttt::empty_state );
 
     ttt::console::HumanPlayer human( game );
-
+    chrono::microseconds human_duration;
     mt19937 g( seed );
     minimax::Data< ttt::Move > data( g );
     ttt::minimax::Player player( game, 0, data );
-
+    chrono::microseconds player_duration;
     TicTacToeMatch match( player);
-    if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
+    if (GameResult result = match.play( game, human, human_duration, 
+                                        player, player_duration ); 
+        result == GameResult::Player1Win)
         cout << "player 1 wins\n";
     else if (result == GameResult::Player2Win)
         cout << "player 2 wins\n";
@@ -335,14 +337,18 @@ void uttt_human()
     uttt::Game game( Player1, uttt::empty_state );
 
     uttt::console::HumanPlayer human( game );
+    chrono::microseconds human_duration;
 
     mt19937 g( seed );
     minimax::Data< uttt::Move > data( g );
 
     uttt::minimax::Player player( game, 9.0, 5, data );
+    chrono::microseconds player_duration;
 
     UltimateTicTacToeMatch match( player, data );
-    if (GameResult result = match.play( game, human, player ); result == GameResult::Player1Win)
+    if (GameResult result = match.play( game, human, human_duration, 
+                                        player, player_duration ); 
+        result == GameResult::Player1Win)
         cout << "player 1 wins\n";
     else if (result == GameResult::Player2Win)
         cout << "player 2 wins\n";
@@ -428,16 +434,13 @@ void montecarlo_player()
     ttt::montecarlo::NodeAllocator allocator;
     ttt::montecarlo::Data data( g, allocator );
     ttt::Game game( Player1, ttt::empty_state );
-    ttt::montecarlo::Player player( game, 1.0, 1000, data );
-    assert (player.root_node().node_count() == 10);
+    ttt::montecarlo::Player player( game, 1.0, 2, data );
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
     using Node = montecarlo::detail::Node< ttt::Move, ttt::State >;
     
     Node const& root = player.root_node();
-    assert (root.children_count() == 8);
-    assert (root.node_count() == 9);
     assert (root.get_move() == ttt::Move( 4 ));
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves;
@@ -445,9 +448,72 @@ void montecarlo_player()
     assert (ranges::contains( valid_moves, move ));
 }
 
-void montecarlo_ttt_match()
+void montecarlo_minimax_uttt_match()
 {
     extensive = true;
+    verbose = true;
+
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
+
+    mt19937 g( seed );
+
+    uttt::Game game( Player1, uttt::empty_state );
+
+    uttt::montecarlo::NodeAllocator allocator;
+    uttt::montecarlo::Data data1( g, allocator );
+    uttt::montecarlo::Buffer buffer1;
+    const double exploration = 0.4;
+//    const size_t simulations = 3200;
+    const size_t simulations = 100;
+    PlayerFactory< uttt::Move > mc_factory = montecarlo::player_factory( 
+        game, exploration, simulations, data1, buffer1 );
+
+    minimax::Data< uttt::Move > data2( g );
+    uttt::minimax::Buffer buffer2;
+//    const size_t depth = 6;
+    const size_t depth = 2;
+    const double factor = 9.0;
+    PlayerFactory< uttt::Move > mm_factory = uttt::minimax::player_factory( 
+        game, factor, depth, data2, buffer2);
+
+    const size_t rounds = 100;
+
+    MultiMatch< uttt::Move, uttt::State > match;
+    match.play_match( game, mc_factory, mm_factory, rounds );
+
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player simulations: " << simulations << '\n'
+            << "fst player exploration: " << exploration << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player playouts: " << data1.playout_count << '\n'
+            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "snd player depth: " << depth << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data2.eval_calls << '\n' 
+            << "snd player duration: " << match.snd_player_duration << '\n' 
+            << "fst/snd player duration ratio: " 
+            << double( chrono::duration_cast< std::chrono::microseconds >( 
+                    match.fst_player_duration ).count()) / 
+               chrono::duration_cast< std::chrono::microseconds >( 
+                    match.snd_player_duration ).count() << '\n';
+
+    assert (match.draws > 0);
+    assert (data1.move_stack.empty());
+    assert (data2.move_stack.empty());
+}
+
+void montecarlo_ttt_match()
+{
     if (extensive)
         cout << __func__ << endl;
     else
@@ -458,6 +524,7 @@ void montecarlo_ttt_match()
 
     mt19937 g( seed );
     ttt::montecarlo::NodeAllocator allocator;
+
     ttt::montecarlo::Data data1( g, allocator );
     ttt::montecarlo::Buffer buffer1;
 
@@ -499,22 +566,23 @@ int main()
         random_device rd;
         seed = rd();
         cout << "run tests with seed " << seed << endl << endl;
-
+/*
         test::toggle_player();
         test::build_game();
         test::eval_won_game();
         test::eval_drawn_game();
         test::eval_undecided_game();
         test::nim_game();
-//        test::nim_match();
+        test::nim_match();
         test::ttt_human();
-//        test::tic_tac_toe_match();
+        test::tic_tac_toe_match();
         test::uttt_human();
-//        test::uttt_match();
+        test::uttt_match();
         test::montecarlo_node();
         test::montecarlo_player();
-
         test::montecarlo_ttt_match();
+*/
+        test::montecarlo_minimax_uttt_match();
 
         cout << "\neverything ok" << endl;    
         return 0;

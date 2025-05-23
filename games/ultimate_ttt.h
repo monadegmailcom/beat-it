@@ -61,6 +61,17 @@ PlayerFactory player_factory(
 
 } // namespace minimax {
 
+namespace montecarlo 
+{
+
+using Data = ::montecarlo::Data< Move, State >;
+using Player = ::montecarlo::Player< Move, State >;
+using Buffer = char[sizeof( Player )];
+using PlayerFactory = ::PlayerFactory< Move >;
+using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
+
+} // namespace montecarlo 
+
 } // namespace uttt
 
 std::ostream& operator<<( std::ostream&, uttt::Game const& );

@@ -135,23 +135,30 @@ PlayerFactory player_factory(
 } // namespace uttt
 
 void append_valid_moves( 
-    uttt::State const& state, ttt::Move big_move, std::vector< uttt::Move >& move_stack )
+    uttt::State const& state, ttt::Move big_move, 
+    vector< uttt::Move >::iterator& move_itr )
 {
     if (state.big_state[big_move] == GameResult::Undecided)
         for (ttt::Move small_move = 0; small_move != 9; ++small_move)
             if (state.small_states[big_move][small_move] == ttt::Symbol::Empty)
-                move_stack.push_back( uttt::Move {big_move, small_move} );
+                *move_itr++ = uttt::Move( big_move, small_move );
 }
 
 void GameState< uttt::Move, uttt::State >::append_valid_moves( 
     std::vector< uttt::Move >& move_stack, PlayerIndex, 
     uttt::State const& state )
 {
+    const size_t prev_size = move_stack.size();
+    move_stack.resize( prev_size + 81 );
+    auto move_itr = move_stack.begin() + prev_size;
+
     if (state.next_big_move != ttt::no_move) 
-        ::append_valid_moves( state, state.next_big_move, move_stack );
+        ::append_valid_moves( state, state.next_big_move, move_itr );
     else
         for (ttt::Move big_move = 0; big_move != 9; ++big_move)
-            ::append_valid_moves( state, big_move, move_stack );
+            ::append_valid_moves( state, big_move, move_itr );
+
+    move_stack.resize( move_itr - move_stack.begin());
 }
 
 uttt::State GameState< uttt::Move, uttt::State >::apply( 

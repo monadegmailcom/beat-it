@@ -37,22 +37,21 @@ namespace detail {
 template< typename MoveT, typename StateT >
 GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
 {
-    const size_t prev_size = data.move_stack.size();
-    game.append_valid_moves( data.move_stack );
-    const size_t move_count = data.move_stack.size() - prev_size;
-    if (move_count == 0)
-        throw std::runtime_error( "no valid moves to playout" );
+    GameResult result;
+    for (result = GameResult::Undecided; result == GameResult::Undecided;)
+    {
+        const size_t prev_size = data.move_stack.size();
+        game.append_valid_moves( data.move_stack );
+        const size_t move_count = data.move_stack.size() - prev_size;
+        if (move_count == 0)
+            throw std::runtime_error( "no valid moves to playout" );
 
-    auto playout_game = game.apply( 
-        data.move_stack[prev_size + data.g() % move_count] );
-    data.move_stack.erase( 
-        data.move_stack.begin() + prev_size, data.move_stack.end());        
-    const GameResult playout_result = playout_game.result();
-
-    if (playout_result != GameResult::Undecided)
-        return playout_result;
-    else
-        return playout( playout_game, data );
+        game = game.apply( 
+            data.move_stack[prev_size + data.g() % move_count] );
+        result = game.result();
+        data.move_stack.resize( prev_size );
+    }
+    return result;
 }
 
 template< typename MoveT, typename StateT >
@@ -100,17 +99,18 @@ public:
     }
     // <- debug interface
 
+    size_t get_visits() const { return visits; }
+
     void add_children( std::vector< MoveT >& move_stack )
     {
-        if (game_result == GameResult::Undecided && !first_child)
-        {
-            const size_t prev_size = move_stack.size();
-            game.append_valid_moves( move_stack );
-            for (MoveT const& child_move : std::ranges::subrange( move_stack.begin() + prev_size, move_stack.end()))
-                this->push_front_child( game.apply( child_move ), child_move );
+        if (first_child)
+            throw std::runtime_error( "children already added" );
+        const size_t prev_size = move_stack.size();
+        game.append_valid_moves( move_stack );
+        for (MoveT const& child_move : std::ranges::subrange( move_stack.begin() + prev_size, move_stack.end()))
+            this->push_front_child( game.apply( child_move ), child_move );
 
-            move_stack.erase( move_stack.begin() + prev_size, move_stack.end());
-        }
+        move_stack.resize( prev_size );
     }
 
     Node* remove_child_by_move( MoveT const& move )
@@ -182,14 +182,16 @@ public:
         GameResult backpropagation;
         if (game_result != GameResult::Undecided)
             backpropagation = game_result;
-        else if (!first_child)
+        else if (visits == 1)
         {
-            add_children( data.move_stack );
             backpropagation = playout< MoveT, StateT >( game, data );
             ++data.playout_count;
         }
-        else
+        else 
         {
+            if (visits == 2)
+                add_children( data.move_stack );
+
             Node* const node = selection( exploration );
             if (!node)
                 throw std::runtime_error( "no node selected" );
@@ -276,9 +278,7 @@ public:
             [&data](detail::Node< MoveT, StateT >* ptr) { deallocate( data.allocator, ptr ); }
           ),
       exploration( exploration ), simulations( simulations ) 
-    {
-        root->add_children( data.move_stack );
-    }
+    {}
 
     MoveT choose_move() override
     {
@@ -290,19 +290,20 @@ public:
             throw std::runtime_error( "no move choosen" );
 
         root.reset( node );
-        root->add_children( data.move_stack );
 
         return root->get_move();
     }
 
     void apply_opponent_move( MoveT const& move ) override
     {
+        if (root->get_visits() <= 1)
+            root->add_children( data.move_stack );
+
         detail::Node< MoveT, StateT >* node = root->remove_child_by_move( move );
         if (!node)
-            throw std::invalid_argument( "cannot apply invalid opponent move" );
+            throw std::runtime_error( "no move found" );
 
         root.reset( node );
-        root->add_children( data.move_stack );
     }
 
     // debug interface ->
