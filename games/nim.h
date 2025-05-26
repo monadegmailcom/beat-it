@@ -11,6 +11,8 @@ struct Move
     size_t count;
 };
 
+const Move no_move = { 0, 0 };
+
 bool operator==( Move const& lhs, Move const& rhs );
 
 template< size_t N >
@@ -66,12 +68,27 @@ Move choose( PlayerIndex, std::vector< size_t > const& heaps, std::vector< nim::
 template< size_t N >
 struct GameState< nim::Move, nim::State< N > >
 {
-    static void append_valid_moves( 
-        std::vector< nim::Move >& move_stack, PlayerIndex, nim::State< N > const& state )
+    static void next_valid_move( 
+        std::optional< nim::Move >& move, PlayerIndex, nim::State< N > const& state )
     {
-        for (size_t heap = 0; heap != state.size(); ++heap)
-            for (size_t count = 1; count <= state[heap]; ++count)
-                move_stack.push_back( nim::Move{ heap, count } );
+        if (!move)
+            move = nim::Move {0, 1}; // first possibly valid move
+        else
+            ++move->count; // possible next move
+        while (true)
+        {
+            if (move->heap_index >= state.size()) // no valid move possible anymore
+            {
+                move.reset();
+                break;
+            }
+            else if (move->count <= state[move->heap_index]) // move is valid
+                break;
+    
+            // try next move
+            ++move->heap_index; 
+            move->count = 1;
+        }    
     }
 
     static nim::State< N > apply( nim::Move const& move, PlayerIndex, nim::State< N > const& state )

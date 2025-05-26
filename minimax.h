@@ -19,7 +19,7 @@ std::function< bool (double, double) > cmp( PlayerIndex );
 template< typename MoveT, typename StateT >
 double eval( 
     Game< MoveT, StateT > game, ScoreFunction< MoveT, StateT > score, unsigned depth, 
-    std::vector< MoveT >& move_stack, double alpha, double beta, std::mt19937& g, size_t& calls )
+    double alpha, double beta, std::mt19937& g, size_t& calls )
 {
     ++calls;
 
@@ -52,13 +52,10 @@ double eval(
         pbeta = &beta;
     }
 
-    const size_t prev_move_stack_size = move_stack.size();
-    game.append_valid_moves( move_stack );
-
-    for (size_t i = prev_move_stack_size, end = move_stack.size(); i != end; ++i)
+    for (MoveT const& move : game)
     {
         auto next_score = eval( 
-            game.apply( move_stack[i] ), score, depth - 1, move_stack, alpha, beta, g, calls );
+            game.apply( move ), score, depth - 1, alpha, beta, g, calls );
         if (compare( next_score, best_score ))
             best_score = next_score;
         if (compare( best_score, *palpha ))
@@ -66,8 +63,6 @@ double eval(
         if (!compare( *pbeta, best_score ))
             break;
     }
-
-    move_stack.erase( move_stack.begin() + prev_move_stack_size, move_stack.end());
 
     return best_score;
 }
@@ -101,41 +96,36 @@ protected:
 
     MoveT choose_move() override
     {
-        const size_t prev_move_stack_size = data.move_stack.size();
-        game.append_valid_moves( data.move_stack );
-        if (prev_move_stack_size == data.move_stack.size())
-            throw std::invalid_argument( "no valid moves" );
-
         const auto compare = cmp( game.current_player_index());
         const ScoreFunction< MoveT, StateT > score_function = 
             [this](Game< MoveT, StateT > const& game) { return this->score( game ); };
 
+        if (game.result() != GameResult::Undecided)
+            throw std::runtime_error( "game already finished" );
+            
+        data.move_stack.assign( game.begin(), game.end());
         // shuffle order of moves to avoid the same order every time
-        std::shuffle( 
-            data.move_stack.begin() + prev_move_stack_size, data.move_stack.end(), 
-            data.g );
+        std::ranges::shuffle( data.move_stack, data.g );
 
         data.best_score = max_value( toggle( game.current_player_index()));
-        size_t best_move_index = 0;
+        if (data.move_stack.empty())
+            throw std::invalid_argument( "no valid moves" );
+        MoveT const* best_move = &data.move_stack.front();
 
-        for (size_t index = prev_move_stack_size, end = data.move_stack.size(); index != end; ++index)
+        for (MoveT const& move : data.move_stack)
         {
             const double score = eval( 
-                game.apply( data.move_stack[index] ), score_function, depth, data.move_stack, 
+                game.apply( move ), score_function, depth, 
                 -INFINITY, INFINITY, data.g, data.eval_calls );
             if (compare( score, data.best_score ))
             {
                 data.best_score = score;
-                best_move_index = index;
+                best_move = &move;
             }
         }
             
-        const MoveT best_move = data.move_stack[best_move_index];
-        data.move_stack.erase( 
-            data.move_stack.begin() + prev_move_stack_size, data.move_stack.end());
-
-        game = game.apply( best_move );
-        return best_move;
+        game = game.apply( *best_move );
+        return *best_move;
     }
 };
 

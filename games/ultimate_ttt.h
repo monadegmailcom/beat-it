@@ -79,9 +79,8 @@ std::ostream& operator<<( std::ostream&, uttt::Game const& );
 template<>
 struct GameState< uttt::Move, uttt::State >
 {
-    static void append_valid_moves( 
-        std::vector< uttt::Move >& move_stack, PlayerIndex, 
-        uttt::State const& );
+    static void next_valid_move( 
+        std::optional< uttt::Move >&, PlayerIndex, uttt::State const& );
 
     static uttt::State apply( 
         uttt::Move const&, PlayerIndex, uttt::State const& );

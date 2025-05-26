@@ -21,7 +21,8 @@ namespace console {
 Move HumanPlayer::choose_move()
 {
     vector< Move > valid_moves;
-    game.append_valid_moves( valid_moves );
+    for (auto itr = game.begin(), end = game.end(); itr != end; ++itr)
+        valid_moves.push_back( *itr );
 
     cout << "valid moves:\n";
     for (auto const& move : valid_moves)
@@ -134,31 +135,59 @@ PlayerFactory player_factory(
 } // namespace minimax {
 } // namespace uttt
 
-void append_valid_moves( 
-    uttt::State const& state, ttt::Move big_move, 
-    vector< uttt::Move >::iterator& move_itr )
+void GameState< uttt::Move, uttt::State >::next_valid_move( 
+    optional< uttt::Move >& move, PlayerIndex player_index, uttt::State const& state )
 {
-    if (state.big_state[big_move] == GameResult::Undecided)
-        for (ttt::Move small_move = 0; small_move != 9; ++small_move)
-            if (state.small_states[big_move][small_move] == ttt::Symbol::Empty)
-                *move_itr++ = uttt::Move( big_move, small_move );
-}
+    if (state.next_big_move != ttt::no_move) // fixed big move
+    {
+        optional< ttt::Move > small_move;
+        if (move)
+            small_move = move->small_move;
 
-void GameState< uttt::Move, uttt::State >::append_valid_moves( 
-    std::vector< uttt::Move >& move_stack, PlayerIndex, 
-    uttt::State const& state )
-{
-    const size_t prev_size = move_stack.size();
-    move_stack.resize( prev_size + 81 );
-    auto move_itr = move_stack.begin() + prev_size;
+        GameState< ttt::Move, ttt::State >::next_valid_move( 
+            small_move, player_index, state.small_states[state.next_big_move] );
+        if (small_move)
+            move = uttt::Move {state.next_big_move, *small_move};
+        else
+            move.reset();
+    }    
+    else // free big move
+    {
+        ttt::Move big_move;
+        optional< ttt::Move > small_move;
+        if (!move)
+            big_move = 0; // first possibly valid big move
+        else
+        {
+            // possible next move
+            big_move = move->big_move; 
+            small_move = move->small_move;
+        } 
 
-    if (state.next_big_move != ttt::no_move) 
-        ::append_valid_moves( state, state.next_big_move, move_itr );
-    else
-        for (ttt::Move big_move = 0; big_move != 9; ++big_move)
-            ::append_valid_moves( state, big_move, move_itr );
+        while (true)
+        {
+            if (big_move >= 9) // no valid move possible anymore
+            {
+                move.reset();
+                break;
+            }
 
-    move_stack.resize( move_itr - move_stack.begin());
+            if (state.big_state[big_move] == GameResult::Undecided)
+            {
+                GameState< ttt::Move, ttt::State >::next_valid_move( 
+                    small_move, player_index, state.small_states[big_move] );
+                if (small_move) // small move is valid
+                {
+                    move = uttt::Move {big_move, *small_move};
+                    break;
+                }
+            }
+
+            // try next move
+            ++big_move;
+            small_move.reset();
+        }
+    }
 }
 
 uttt::State GameState< uttt::Move, uttt::State >::apply( 

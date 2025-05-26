@@ -52,7 +52,8 @@ namespace console
 Move HumanPlayer::choose_move()
 {
     vector< Move > valid_moves;
-    game.append_valid_moves( valid_moves );
+    for (auto itr = game.begin(), end = game.end(); itr != end; ++itr)
+        valid_moves.push_back( *itr );
 
     cout << "valid moves:\n";
     for (auto const& move : valid_moves)
@@ -89,12 +90,27 @@ void HumanPlayer::apply_opponent_move( Move const& move )
 } // namespace console
 } // namespace ttt
 
-void GameState< ttt::Move, ttt::State >::append_valid_moves( 
-    std::vector< ttt::Move >& move_stack, PlayerIndex, ttt::State const& state )
+void GameState< ttt::Move, ttt::State >::next_valid_move( 
+    optional< ttt::Move >& move, PlayerIndex, ttt::State const& state )
 {
-    for (char index = 0; index != 9; ++index)
-        if (state[index] == ttt::Symbol::Empty)
-            move_stack.push_back( index );
+    if (!move)
+        move = 0; // first possibly valid move
+    else
+        ++*move; // possible next move
+
+    while (true)
+    {
+        if (move >= 9) // no valid move possible anymore
+        {
+            move.reset();
+            break;
+        }
+        else if (state[*move] == ttt::Symbol::Empty) // move is valid
+            break;
+
+        // try next move
+        ++*move;
+    }
 }
 
 ttt::State GameState< ttt::Move, ttt::State >::apply( 
@@ -103,7 +119,7 @@ ttt::State GameState< ttt::Move, ttt::State >::apply(
     if (move >= 9)
         throw std::invalid_argument( "invalid move" );
     if (state[move] != ttt::Symbol::Empty)
-        throw std::invalid_argument( "invalid move" );
+        throw std::invalid_argument( "invalid move, cell not empty" );
 
     ttt::State new_state = state;
     new_state[move] = ttt::player_index_to_symbol( player_index );

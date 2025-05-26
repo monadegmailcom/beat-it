@@ -80,8 +80,8 @@ std::ostream& operator<<( std::ostream&, ttt::Game const& );
 template<>
 struct GameState< ttt::Move, ttt::State >
 {
-    static void append_valid_moves( 
-        std::vector< ttt::Move >& move_stack, PlayerIndex, ttt::State const& );
+    static void next_valid_move( 
+        std::optional< ttt::Move >&, PlayerIndex, ttt::State const& );
 
     static ttt::State apply( 
         ttt::Move const&, PlayerIndex, ttt::State const& );
