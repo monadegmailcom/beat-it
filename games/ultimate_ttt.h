@@ -77,7 +77,7 @@ using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 std::ostream& operator<<( std::ostream&, uttt::Game const& );
 
 template<>
-struct GameState< uttt::Move, uttt::State >
+struct GameState< uttt::Move, uttt::State > 
 {
     static void next_valid_move( 
         std::optional< uttt::Move >&, PlayerIndex, uttt::State const& );

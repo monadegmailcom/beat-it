@@ -78,7 +78,7 @@ private:
 std::ostream& operator<<( std::ostream&, ttt::Game const& );
 
 template<>
-struct GameState< ttt::Move, ttt::State >
+struct GameState< ttt::Move, ttt::State > 
 {
     static void next_valid_move( 
         std::optional< ttt::Move >&, PlayerIndex, ttt::State const& );

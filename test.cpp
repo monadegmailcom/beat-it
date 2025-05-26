@@ -15,7 +15,8 @@ bool interactive = false;
 bool extensive = true;
 
 template<>
-struct GameState< char, GameResult >
+struct GameState< char, GameResult > 
+    : public GameStateBase<GameState<char, GameResult>, char, GameResult>
 {
     static void next_valid_move( 
         optional< char >& move, PlayerIndex, GameResult const& )
@@ -27,6 +28,8 @@ struct GameState< char, GameResult >
         else
             move.reset();
     }
+
+    // get_valid_moves will be inherited from GameStateDefaultGetValidMovesProvider
 
     static GameResult apply( char const& move, PlayerIndex, GameResult const& state )
     {
@@ -609,15 +612,15 @@ void montecarlo_minimax_uttt_match()
     uttt::montecarlo::Data data1( g, allocator );
     uttt::montecarlo::Buffer buffer1;
     const double exploration = 0.4;
-    const size_t simulations = 3200;
-//    const size_t simulations = 100;
+//    const size_t simulations = 3200;
+    const size_t simulations = 100;
     PlayerFactory< uttt::Move > mc_factory = montecarlo::player_factory( 
         game, exploration, simulations, data1, buffer1 );
 
     minimax::Data< uttt::Move > data2( g );
     uttt::minimax::Buffer buffer2;
-    const size_t depth = 6;
-//    const size_t depth = 2;
+//    const size_t depth = 6;
+    const size_t depth = 2;
     const double factor = 9.0;
     PlayerFactory< uttt::Move > mm_factory = uttt::minimax::player_factory( 
         game, factor, depth, data2, buffer2);

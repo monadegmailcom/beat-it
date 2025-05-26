@@ -21,30 +21,35 @@ enum GameResult : char
     Undecided
 };
 
-// for each game specialize game state
-template< typename MoveT, typename StateT >
-struct GameState
+// Helper base class to provide a default get_valid_moves implementation
+template<typename DerivedGameState, typename MoveT, typename StateT>
+struct GameStateBase
 {
-    // normal iterator like move generation
-    static void next_valid_move( std::optional< MoveT >&, PlayerIndex, StateT const& );
-    // optimization for montecarlo tree search playout, if not
-    // provided, this default will be used
     static void get_valid_moves( std::vector< MoveT >& moves, PlayerIndex player_index, StateT const& state )
     {
         moves.clear();
-                
-        for (std::optional< MoveT > move;;) 
+        for (std::optional< MoveT > move;;)
         {
-            GameState< MoveT, StateT >::next_valid_move( move, player_index, state );
+            // Call next_valid_move on the actual specialized GameState
+            DerivedGameState::next_valid_move( move, player_index, state );
             if (move)
                 moves.push_back(*move);
-            else 
+            else
                 break;
-        }       
+        }
     }
+};
 
+// for each game specialize game state
+template< typename MoveT, typename StateT >
+struct GameState : public GameStateBase<GameState<MoveT, StateT>, MoveT, StateT>
+{
+    // Specializations are expected to provide these:
+    static void next_valid_move( std::optional< MoveT >&, PlayerIndex, StateT const& );
     static StateT apply( MoveT const&, PlayerIndex, StateT const& );
     static GameResult result( PlayerIndex, StateT const& state );
+    // get_valid_moves is inherited from GameStateDefaultGetValidMovesProvider by default.
+    // Specializations can provide their own get_valid_moves to override it.
 };
 
 template< typename MoveT, typename StateT >
@@ -111,5 +116,3 @@ private:
     PlayerIndex player_index;
     StateT state;
 };
-
-

@@ -66,7 +66,7 @@ Move choose( PlayerIndex, std::vector< size_t > const& heaps, std::vector< nim::
 } // namespace nim {
 
 template< size_t N >
-struct GameState< nim::Move, nim::State< N > >
+struct GameState< nim::Move, nim::State< N > > 
 {
     static void next_valid_move( 
         std::optional< nim::Move >& move, PlayerIndex, nim::State< N > const& state )
