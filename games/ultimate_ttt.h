@@ -82,6 +82,9 @@ struct GameState< uttt::Move, uttt::State >
     static void next_valid_move( 
         std::optional< uttt::Move >&, PlayerIndex, uttt::State const& );
 
+    static void get_valid_moves(
+        std::vector< uttt::Move >& moves, PlayerIndex, uttt::State const& state );
+
     static uttt::State apply( 
         uttt::Move const&, PlayerIndex, uttt::State const& );
 

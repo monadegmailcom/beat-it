@@ -91,6 +91,15 @@ struct GameState< nim::Move, nim::State< N > >
         }    
     }
 
+   static void get_valid_moves(
+        std::vector< nim::Move >& moves, PlayerIndex, nim::State< N > const& state )
+    {
+        moves.clear();
+        for (size_t heap = 0; heap != state.size(); ++heap)
+            for (size_t count = 1; count <= state[heap]; ++count)
+                moves.push_back( nim::Move{ heap, count } );
+    }
+
     static nim::State< N > apply( nim::Move const& move, PlayerIndex, nim::State< N > const& state )
     {
         if (move.heap_index >= state.size())

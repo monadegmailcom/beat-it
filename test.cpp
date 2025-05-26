@@ -65,7 +65,11 @@ void build_game()
     cout << __func__ << endl;
 
     TestGame game( Player2, GameResult::Undecided );
+    std::mt19937 g;
+    minimax::Data< char > data( g );
+    minimax::Player< char, GameResult > player( game, 0, data );
 
+    assert( game.current_player_index() == Player2);
     if (game.current_player_index() != Player2)
         assert( !"invalid current player index" );
 }
@@ -380,8 +384,8 @@ void tic_tac_toe_match()
     assert (match.fst_player_wins == 0);
     assert (match.snd_player_wins > 50);
     assert (match.draws > 0);
-    assert (data1.move_stack.capacity() == 16);
-    assert (data2.move_stack.capacity() == 16);
+    assert (data1.move_stack.capacity() == 9);
+    assert (data2.move_stack.capacity() == 9);
     assert (data1.eval_calls > 1000 && data1.eval_calls < 3000);
     assert (data2.eval_calls > 300000 && data2.eval_calls < 600000);
 }
@@ -504,8 +508,8 @@ void uttt_match()
     assert (match.fst_player_wins < 50);
     assert (match.snd_player_wins > 50);
     assert (match.draws > 0);
-    assert (data1.move_stack.capacity() == 128);
-    assert (data2.move_stack.capacity() == 128);
+    assert (data1.move_stack.capacity() == 81);
+    assert (data2.move_stack.capacity() == 81);
     assert (data1.eval_calls > 100000 && data1.eval_calls < 300000);
     assert (data2.eval_calls > 13000000 && data2.eval_calls < 15000000);
 }
@@ -605,15 +609,15 @@ void montecarlo_minimax_uttt_match()
     uttt::montecarlo::Data data1( g, allocator );
     uttt::montecarlo::Buffer buffer1;
     const double exploration = 0.4;
-//    const size_t simulations = 3200;
-    const size_t simulations = 100;
+    const size_t simulations = 3200;
+//    const size_t simulations = 100;
     PlayerFactory< uttt::Move > mc_factory = montecarlo::player_factory( 
         game, exploration, simulations, data1, buffer1 );
 
     minimax::Data< uttt::Move > data2( g );
     uttt::minimax::Buffer buffer2;
-//    const size_t depth = 6;
-    const size_t depth = 2;
+    const size_t depth = 6;
+//    const size_t depth = 2;
     const double factor = 9.0;
     PlayerFactory< uttt::Move > mm_factory = uttt::minimax::player_factory( 
         game, factor, depth, data2, buffer2);

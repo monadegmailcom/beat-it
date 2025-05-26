@@ -41,7 +41,9 @@ GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
     for (result = GameResult::Undecided; result == GameResult::Undecided; 
          result = game.result())
     {
-        data.move_stack.assign( game.begin(), game.end());
+        GameState< MoveT, StateT >::get_valid_moves( 
+            data.move_stack, game.current_player_index(), game.get_state());
+        
         if (data.move_stack.empty())
             throw std::runtime_error( "no valid moves to playout" );
 

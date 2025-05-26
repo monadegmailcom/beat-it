@@ -103,7 +103,9 @@ protected:
         if (game.result() != GameResult::Undecided)
             throw std::runtime_error( "game already finished" );
             
-        data.move_stack.assign( game.begin(), game.end());
+        GameState< MoveT, StateT >::get_valid_moves( 
+            data.move_stack, game.current_player_index(), game.get_state());
+        
         // shuffle order of moves to avoid the same order every time
         std::ranges::shuffle( data.move_stack, data.g );
 

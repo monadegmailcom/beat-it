@@ -96,7 +96,7 @@ void GameState< ttt::Move, ttt::State >::next_valid_move(
     if (!move)
         move = 0; // first possibly valid move
     else
-        ++*move; // possible next move
+        ++*move; // next possible move
 
     while (true)
     {
@@ -111,6 +111,19 @@ void GameState< ttt::Move, ttt::State >::next_valid_move(
         // try next move
         ++*move;
     }
+}
+
+void GameState< ttt::Move, ttt::State >::get_valid_moves(
+    std::vector< ttt::Move >& moves, PlayerIndex, ttt::State const& state )
+{
+    // allocate enough (only the first time actually)
+    moves.resize( 9 );
+    auto move_itr = moves.begin();
+    for (char index = 0; index != 9; ++index)
+        if (state[index] == ttt::Symbol::Empty)
+            *move_itr++ = index;
+    // reduce to correct logical size
+    moves.resize( move_itr - moves.begin());
 }
 
 ttt::State GameState< ttt::Move, ttt::State >::apply( 

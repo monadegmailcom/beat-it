@@ -135,59 +135,64 @@ PlayerFactory player_factory(
 } // namespace minimax {
 } // namespace uttt
 
-void GameState< uttt::Move, uttt::State >::next_valid_move( 
-    optional< uttt::Move >& move, PlayerIndex player_index, uttt::State const& state )
+bool next_move( ttt::Move& small_move, ttt::State const& state )
+{    
+    for (;small_move < 9; ++small_move)
+        if (state[small_move] == ttt::Symbol::Empty)
+            return true;
+    return false;
+}
+
+void GameState<uttt::Move, uttt::State>::next_valid_move(
+    optional<uttt::Move>& move, PlayerIndex player_index, uttt::State const& state)
 {
-    if (state.next_big_move != ttt::no_move) // fixed big move
-    {
-        optional< ttt::Move > small_move;
-        if (move)
-            small_move = move->small_move;
+    if (!move) // reset first move
+        move = uttt::Move {
+            state.next_big_move != ttt::no_move ? state.next_big_move : ttt::Move {0}, 
+            0 };
+    else        
+        ++move->small_move; // possible next move
 
-        GameState< ttt::Move, ttt::State >::next_valid_move( 
-            small_move, player_index, state.small_states[state.next_big_move] );
-        if (small_move)
-            move = uttt::Move {state.next_big_move, *small_move};
-        else
-            move.reset();
+    if (state.next_big_move == ttt::no_move) // free big move
+    {
+        for (;move->big_move < 9; ++move->big_move, move->small_move = 0) 
+            if (   state.big_state[move->big_move] == GameResult::Undecided
+                && next_move( move->small_move, state.small_states[move->big_move] ))
+                return;
     }    
-    else // free big move
-    {
-        ttt::Move big_move;
-        optional< ttt::Move > small_move;
-        if (!move)
-            big_move = 0; // first possibly valid big move
-        else
-        {
-            // possible next move
-            big_move = move->big_move; 
-            small_move = move->small_move;
-        } 
+    else if (next_move( move->small_move, state.small_states[state.next_big_move] )) // fixed big move        
+        return;
+    
+    // no valid move found
+    move.reset();
+}
 
-        while (true)
-        {
-            if (big_move >= 9) // no valid move possible anymore
-            {
-                move.reset();
-                break;
-            }
+void append_valid_moves(
+    uttt::State const& state, ttt::Move big_move,
+    vector< uttt::Move >::iterator& move_itr )
+{
+    for (ttt::Move small_move = 0; small_move != 9; ++small_move)
+        if (state.small_states[big_move][small_move] == ttt::Symbol::Empty)
+            *move_itr++ = uttt::Move( big_move, small_move );
+}
 
+void GameState< uttt::Move, uttt::State >::get_valid_moves(
+    std::vector< uttt::Move >& moves, PlayerIndex,
+    uttt::State const& state )
+{
+    // allocate enough (only the first time actually)
+    moves.resize( 81 );
+    auto move_itr = moves.begin();
+
+    if (state.next_big_move != ttt::no_move)
+        ::append_valid_moves( state, state.next_big_move, move_itr );
+    else
+        for (ttt::Move big_move = 0; big_move != 9; ++big_move)
             if (state.big_state[big_move] == GameResult::Undecided)
-            {
-                GameState< ttt::Move, ttt::State >::next_valid_move( 
-                    small_move, player_index, state.small_states[big_move] );
-                if (small_move) // small move is valid
-                {
-                    move = uttt::Move {big_move, *small_move};
-                    break;
-                }
-            }
-
-            // try next move
-            ++big_move;
-            small_move.reset();
-        }
-    }
+                ::append_valid_moves( state, big_move, move_itr );
+                
+    // reduce to correct logical size
+    moves.resize( move_itr - moves.begin());
 }
 
 uttt::State GameState< uttt::Move, uttt::State >::apply( 

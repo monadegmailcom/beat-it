@@ -3,6 +3,7 @@
 #include <cstdint>
 #include <boost/iterator/iterator_facade.hpp>
 #include <optional>
+#include <vector>
 
 enum PlayerIndex
 {
@@ -24,7 +25,24 @@ enum GameResult : char
 template< typename MoveT, typename StateT >
 struct GameState
 {
+    // normal iterator like move generation
     static void next_valid_move( std::optional< MoveT >&, PlayerIndex, StateT const& );
+    // optimization for montecarlo tree search playout, if not
+    // provided, this default will be used
+    static void get_valid_moves( std::vector< MoveT >& moves, PlayerIndex player_index, StateT const& state )
+    {
+        moves.clear();
+                
+        for (std::optional< MoveT > move;;) 
+        {
+            GameState< MoveT, StateT >::next_valid_move( move, player_index, state );
+            if (move)
+                moves.push_back(*move);
+            else 
+                break;
+        }       
+    }
+
     static StateT apply( MoveT const&, PlayerIndex, StateT const& );
     static GameResult result( PlayerIndex, StateT const& state );
 };
