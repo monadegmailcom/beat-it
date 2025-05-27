@@ -4,6 +4,7 @@
 
 #include <boost/pool/pool_alloc.hpp>
 #include <cmath>
+#include <iterator>
 
 namespace montecarlo {
 
@@ -41,6 +42,7 @@ GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
     for (result = GameResult::Undecided; result == GameResult::Undecided; 
          result = game.result())
     {
+        // use get_valid_moves because it may be faster than the child iterator
         GameState< MoveT, StateT >::get_valid_moves( 
             data.move_stack, game.current_player_index(), game.get_state());
         
@@ -64,15 +66,12 @@ struct Node
 
     ~Node() 
     {
-        if (first_child)
+        for (auto child = first_child; child;)
         {
-            first_child->~Node();
-            allocator.deallocate( first_child );
-        }
-        if (next_sibling)
-        {
-            next_sibling->~Node();
-            allocator.deallocate( next_sibling );
+            auto next = child->next_sibling;
+            child->~Node();
+            allocator.deallocate( child );
+            child = next;
         }
     }
 
@@ -84,90 +83,83 @@ struct Node
     NodeAllocator< MoveT, StateT >& allocator;
 
     Node* next_sibling = nullptr;
+    Node* prev_sibling = nullptr;
     Node* first_child = nullptr;
 
     double points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
     size_t visits = 0;
+
+    class ChildItr : public boost::iterator_facade<
+                            ChildItr, // Derived class
+                            Node, // Value type
+                            std::bidirectional_iterator_tag,
+                            Node& // Reference type
+                        >
+    {
+    public:
+        explicit ChildItr( Node* node ) : node( node ) {}
+
+        Node& dereference() const { return *node; }
+
+        // Pre-increment operator
+        void increment() 
+        {
+            node = node->next_sibling;
+        }
+
+        // Post-increment operator
+        void decrement() 
+        {
+            node = node->prev_sibling;
+        }
+
+        // Equality comparison
+        bool equal(const ChildItr& other) const { return node == other.node; }
+    private:
+        friend struct Node;
+        friend class boost::iterator_core_access;
+        Node* node;
+    };
+
+    void remove_child( ChildItr child )
+    {
+        if (child.node == nullptr)
+            return;
+
+        auto prev = child.node->prev_sibling;
+        auto next = child.node->next_sibling;
+        if (prev)
+            prev->next_sibling = next;
+        else
+            first_child = next;
+        if (next)
+            next->prev_sibling = prev;
+        child.node->next_sibling = nullptr;
+        child.node->prev_sibling = nullptr;
+    }
+
+    ChildItr begin() const { return ChildItr( first_child ); }
+    ChildItr end() const { return ChildItr( nullptr ); }
 };
 
 template< typename MoveT, typename StateT >
 size_t children_count( Node< MoveT, StateT > const& node ) 
 {
-    size_t count = 0;
-    for (Node< MoveT, StateT >* child = node.first_child; child != nullptr;
-         child = child->next_sibling)
-        ++count;
-    return count;
+    return std::distance( node.begin(), node.end());
 }
 
 template< typename MoveT, typename StateT >
 size_t node_count( Node< MoveT, StateT > const& node )
 {
     size_t count = 1;
-    for (Node< MoveT, StateT >* child = node.first_child; child != nullptr; 
-         child = child->next_sibling)
-        count += node_count( *child);
+    for (Node< MoveT, StateT > const& child : node)
+        count += node_count( child );
     return count;
-}
-  
-template< typename MoveT, typename StateT >
-Node< MoveT, StateT >* remove_child_by_most_visits( Node< MoveT, StateT >& node)
-{
-    Node< MoveT, StateT >* best_child = node.first_child;
-    Node< MoveT, StateT >* prev_child = nullptr;
-    Node< MoveT, StateT >* child2 = nullptr;
-    size_t most_visits = 0;
-
-    for (Node< MoveT, StateT >* child = node.first_child; child; 
-         child2 = child, child = child->next_sibling)
-        if (child->visits > most_visits)
-        {
-            most_visits = child->visits;
-            best_child = child;
-            prev_child = child2;
-        }
-
-    if (best_child)
-    {    
-        if (prev_child)
-            prev_child->next_sibling = best_child->next_sibling;
-        else
-            node.first_child = best_child->next_sibling;
-
-        best_child->next_sibling = nullptr;
-    }
-
-    return best_child;
-}
-
-template< typename MoveT, typename StateT >
-Node< MoveT, StateT >* remove_child_by_move( 
-    Node< MoveT, StateT >& node, MoveT const& move )
-{
-    Node< MoveT, StateT >* found_node = nullptr;
-    Node< MoveT, StateT >* prev_node = nullptr;
-    for (Node< MoveT, StateT >* child = node.first_child; child != nullptr; 
-            prev_node = child, child = child->next_sibling)
-        if (child->move == move)
-        {   
-            found_node = child;
-            
-            if (prev_node)
-                prev_node->next_sibling = child->next_sibling;
-            else
-                node.first_child = child->next_sibling;
-
-            found_node->next_sibling = nullptr;
-            break;
-        }
-
-    return found_node;
 }
 
 template< typename MoveT, typename StateT >
 Node< MoveT, StateT >* push_front_child( 
-    Node< MoveT, StateT >& node, 
-    MoveT const& child_move )
+    Node< MoveT, StateT >& node, MoveT const& child_move )
 {
     Node< MoveT, StateT >* const child = 
         new (node.allocator.allocate()) Node< MoveT, StateT >( 
@@ -178,25 +170,24 @@ Node< MoveT, StateT >* push_front_child(
 }
 
 template< typename MoveT, typename StateT >
-Node< MoveT, StateT >* select( 
-    Node< MoveT, StateT >& node, double exploration )
-{             
-    Node< MoveT, StateT >* selected_node = nullptr;                  
-    double best_uct = -INFINITY;
-    for (Node< MoveT, StateT >* child = node.first_child; child != nullptr; 
-         child = child->next_sibling)
-    {
-        const double uct = 
-            1 - child->points / child->visits 
-            + exploration * std::sqrt( std::log( node.visits ) / child->visits );
-        if (uct > best_uct)
-        {
-            best_uct = uct;
-            selected_node = child;
-        }
-    }
+double uct( Node< MoveT, StateT > const& node, size_t parent_visits, double exploration )
+{
+    return 
+        1 - node.points / node.visits 
+        + exploration * std::sqrt( std::log( parent_visits ) / node.visits );
+}
 
-    return selected_node;
+template< typename MoveT, typename StateT >
+Node< MoveT, StateT >* select( Node< MoveT, StateT >& node, double exploration )
+{             
+    typename Node< MoveT, StateT >::ChildItr itr = std::max_element( 
+        node.begin(), node.end(), 
+        [exploration, parent_visits = node.visits]
+        (Node< MoveT, StateT > const& a, Node< MoveT, StateT > const& b)
+        { return   uct( a, parent_visits, exploration ) 
+                 < uct( b, parent_visits, exploration ); });
+
+    return &*itr;
 }
 
 template< typename MoveT, typename StateT >
@@ -281,23 +272,33 @@ public:
         for (size_t i = simulations; i != 0; --i)
             simulation( *root, data, exploration );
 
-        detail::Node< MoveT, StateT >* const node = remove_child_by_most_visits( *root );
-        if (!node)
+        // remove child with most visits
+        typename detail::Node< MoveT, StateT >::ChildItr itr = 
+            std::max_element( root->begin(), root->end(), 
+                [](detail::Node< MoveT, StateT > const& a, detail::Node< MoveT, StateT > const& b)
+                { return a.visits < b.visits; } );
+        if (itr == root->end())
             throw std::runtime_error( "no move choosen" );
 
-        root.reset( node );
+        root->remove_child( itr );
+        root.reset( &*itr );
 
         return root->move;
     }
 
     void apply_opponent_move( MoveT const& move ) override
     {
-        detail::Node< MoveT, StateT >* node = remove_child_by_move( *root, move );
-        if (!node)
-            node = new (this->data.allocator.allocate()) 
+        typename detail::Node< MoveT, StateT >::ChildItr itr = 
+            std::find_if( root->begin(), root->end(), 
+                [move](detail::Node< MoveT, StateT > const& node)
+                { return node.move == move; } );
+        auto node = itr == root->end() 
+            ? new (this->data.allocator.allocate()) 
                    detail::Node< MoveT, StateT >( 
-                        root->game.apply( move ), move, this->data.allocator );
+                        root->game.apply( move ), move, this->data.allocator ) 
+            : &*itr;
 
+        root->remove_child( itr );
         root.reset( node );
     }
 
@@ -331,4 +332,3 @@ PlayerFactory< MoveT > player_factory(
 }
 
 } // namespace montecarlo
-
