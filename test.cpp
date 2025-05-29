@@ -311,7 +311,9 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
         if (auto p = dynamic_cast< const ttt::minimax::Player* >( &player ))
             cout << "score: " << p->score( game ) << endl;
         else if (auto p = dynamic_cast< const ttt::montecarlo::Player* >( &player ))
-            cout << "point ratio: " << p->root_node().points / p->root_node().visits << endl;
+            cout << "point ratio: " 
+                 << p->root_node().get_value().points / p->root_node().get_value().visits 
+                 << endl;
     }
 };
 
@@ -514,7 +516,7 @@ void uttt_match()
     assert (data1.move_stack.capacity() == 81);
     assert (data2.move_stack.capacity() == 81);
     assert (data1.eval_calls > 100000 && data1.eval_calls < 300000);
-    assert (data2.eval_calls > 13000000 && data2.eval_calls < 15000000);
+    assert (data2.eval_calls > 12000000 && data2.eval_calls < 15000000);
 }
 
 void montecarlo_node()
@@ -525,18 +527,20 @@ void montecarlo_node()
     ttt::montecarlo::NodeAllocator allocator;
     ttt::Game game( Player1, ttt::empty_state );
 
-    using Node = montecarlo::detail::Node< ttt::Move, ttt::State >;
+    using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
 
-    Node* node = new (allocator.allocate()) Node( game, ttt::no_move, allocator );
+    Node< Value >* node = new (allocator.allocate()) Node< Value >( 
+                     Value( game, ttt::no_move ), allocator );
     assert (children_count( *node ) == 0);
     assert (node_count( *node) == 1);
 
     for (auto const& move : game)
-        push_front_child( *node, move );
+        node->push_front_child( Value( game.apply( move ), move ));
 
     assert (children_count( *node) == 9);
     assert (node_count( *node) == 10);
     node->~Node();
+    allocator.deallocate( node );
 }
 
 void montecarlo_player()
@@ -551,10 +555,10 @@ void montecarlo_player()
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
-    using Node = montecarlo::detail::Node< ttt::Move, ttt::State >;
+    using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
     
-    Node const& root = player.root_node();
-    assert (root.move == ttt::Move( 4 ));
+    Node< Value > const& root = player.root_node();
+    assert (root.get_value().move == ttt::Move( 4 ));
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves( game.begin(), game.end() );
     

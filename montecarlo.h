@@ -1,25 +1,42 @@
 #pragma once
 
 #include "player.h"
+#include "node.h"
 
-#include <boost/pool/pool_alloc.hpp>
 #include <cmath>
-#include <iterator>
 
 namespace montecarlo {
 
 namespace detail {
 
 template< typename MoveT, typename StateT >
-struct Node;
+struct Value
+{
+    Value( Game< MoveT, StateT > const& game, MoveT const& move )
+    : game( game ), move( move ), game_result( game.result()), 
+      next_move_itr(this->game.begin()) {}
+    
+    Value( Value&& other ) noexcept
+        : game(std::move(other.game)), // Game is truly moved
+          move(std::move(other.move)),
+          game_result(other.game_result),
+          next_move_itr(this->game.begin()), // Iterator bound to the newly moved-to this->game
+          points(other.points),
+          visits(other.visits) {}
+
+    Game< MoveT, StateT > game;
+    MoveT move; // the previous move resulting in this game
+    const GameResult game_result; // the cached game result
+    // iterator to next valid move not already added as a child node
+    typename Game< MoveT, StateT >::MoveItr next_move_itr; 
+    double points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
+    size_t visits = 0;
+};
 
 } // namespace detail {
 
 template< typename MoveT, typename StateT >
-using NodeAllocator = boost::fast_pool_allocator< 
-    detail::Node< MoveT, StateT >,
-    boost::default_user_allocator_new_delete,
-    boost::details::pool::null_mutex >;
+using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
 
 template< typename MoveT, typename StateT >
 struct Data
@@ -35,6 +52,7 @@ struct Data
 
 namespace detail {
 
+// require: game finally ends into result != Undecided
 template< typename MoveT, typename StateT >
 GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
 {
@@ -55,165 +73,60 @@ GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
 }
 
 template< typename MoveT, typename StateT >
-struct Node
-{
-    Node( Game< MoveT, StateT > const& game, MoveT const& move, NodeAllocator< MoveT, StateT >& allocator )
-    : game( game ), next_move_itr( this->game.begin()), move( move ), 
-      game_result( game.result()), allocator( allocator ) {}
-
-    Node( Node const& ) = delete;
-    Node& operator=( Node const& ) = delete;
-
-    ~Node() 
-    {
-        for (auto child = first_child; child;)
-        {
-            auto next = child->next_sibling;
-            child->~Node();
-            allocator.deallocate( child );
-            child = next;
-        }
-    }
-
-    Game< MoveT, StateT > game;
-    // next valid move iterator not already added as a child node
-    typename Game< MoveT, StateT >::MoveItr next_move_itr; 
-    const MoveT move; // the previous move resulting in this game
-    const GameResult game_result; // the cached game result
-    NodeAllocator< MoveT, StateT >& allocator;
-
-    Node* next_sibling = nullptr;
-    Node* prev_sibling = nullptr;
-    Node* first_child = nullptr;
-
-    double points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
-    size_t visits = 0;
-
-    class ChildItr : public boost::iterator_facade<
-                            ChildItr, // Derived class
-                            Node, // Value type
-                            std::bidirectional_iterator_tag,
-                            Node& // Reference type
-                        >
-    {
-    public:
-        explicit ChildItr( Node* node ) : node( node ) {}
-
-        Node& dereference() const { return *node; }
-
-        // Pre-increment operator
-        void increment() 
-        {
-            node = node->next_sibling;
-        }
-
-        // Post-increment operator
-        void decrement() 
-        {
-            node = node->prev_sibling;
-        }
-
-        // Equality comparison
-        bool equal(const ChildItr& other) const { return node == other.node; }
-    private:
-        friend struct Node;
-        friend class boost::iterator_core_access;
-        Node* node;
-    };
-
-    void remove_child( ChildItr child )
-    {
-        if (child.node == nullptr)
-            return;
-
-        auto prev = child.node->prev_sibling;
-        auto next = child.node->next_sibling;
-        if (prev)
-            prev->next_sibling = next;
-        else
-            first_child = next;
-        if (next)
-            next->prev_sibling = prev;
-        child.node->next_sibling = nullptr;
-        child.node->prev_sibling = nullptr;
-    }
-
-    ChildItr begin() const { return ChildItr( first_child ); }
-    ChildItr end() const { return ChildItr( nullptr ); }
-};
-
-template< typename MoveT, typename StateT >
-size_t children_count( Node< MoveT, StateT > const& node ) 
-{
-    return std::distance( node.begin(), node.end());
-}
-
-template< typename MoveT, typename StateT >
-size_t node_count( Node< MoveT, StateT > const& node )
-{
-    size_t count = 1;
-    for (Node< MoveT, StateT > const& child : node)
-        count += node_count( child );
-    return count;
-}
-
-template< typename MoveT, typename StateT >
-Node< MoveT, StateT >* push_front_child( 
-    Node< MoveT, StateT >& node, MoveT const& child_move )
-{
-    Node< MoveT, StateT >* const child = 
-        new (node.allocator.allocate()) Node< MoveT, StateT >( 
-            node.game.apply( child_move ), child_move, node.allocator );                            
-    child->next_sibling = node.first_child;
-    node.first_child = child;
-    return child;
-}
-
-template< typename MoveT, typename StateT >
-double uct( Node< MoveT, StateT > const& node, size_t parent_visits, double exploration )
+double uct( 
+    Value< MoveT, StateT > const& value, 
+    size_t parent_visits, double exploration )
 {
     return 
-        1 - node.points / node.visits 
-        + exploration * std::sqrt( std::log( parent_visits ) / node.visits );
+        1 - value.points / value.visits 
+        + exploration * std::sqrt( std::log( parent_visits ) / value.visits );
 }
 
 template< typename MoveT, typename StateT >
-Node< MoveT, StateT >* select( Node< MoveT, StateT >& node, double exploration )
+Node< Value< MoveT, StateT >>* select( 
+    Node< Value< MoveT, StateT >>& node, double exploration )
 {             
-    typename Node< MoveT, StateT >::ChildItr itr = std::max_element( 
+    auto itr = std::max_element( 
         node.begin(), node.end(), 
-        [exploration, parent_visits = node.visits]
-        (Node< MoveT, StateT > const& a, Node< MoveT, StateT > const& b)
-        { return   uct( a, parent_visits, exploration ) 
-                 < uct( b, parent_visits, exploration ); });
+        [exploration, parent_visits = node.get_value().visits]
+        (auto const& a, auto const& b)
+        { return   uct( a.get_value(), parent_visits, exploration ) 
+                 < uct( b.get_value(), parent_visits, exploration ); });
 
     return &*itr;
 }
 
 template< typename MoveT, typename StateT >
 GameResult simulation( 
-    Node< MoveT, StateT >& node, 
+    Node< Value< MoveT, StateT >>& node, 
     Data< MoveT, StateT >& data, 
     double exploration)
 {
-    ++node.visits;
+    auto& value = node.get_value();
+    ++value.visits;
 
     GameResult backpropagation;
 
-    if (node.game_result != GameResult::Undecided)
-        backpropagation = node.game_result;
-    else if (node.visits == 1) // PLAYOUT on first visit
+    if (value.game_result != GameResult::Undecided)
+        backpropagation = value.game_result;
+    else if (value.visits == 1) // PLAYOUT on first visit
     {
-        backpropagation = playout< MoveT, StateT >( node.game, data );
+        backpropagation = playout< MoveT, StateT >( value.game, data );
         ++data.playout_count;
     }
     else // otherwise create or select child node
     {
-        Node< MoveT, StateT >* selected_node = node.next_move_itr != node.game.end()
+        Node< Value< MoveT, StateT >>* selected_node = nullptr;
+        if (value.next_move_itr != value.game.end())
+        {
             // push front newly created node from next move if available
-            ? push_front_child( node, *node.next_move_itr++ )
-            // otherwise SELECT child node
-            : select( node, exploration );
+            const MoveT move = *value.next_move_itr;
+            ++value.next_move_itr;
+            selected_node = node.push_front_child( 
+                Value( value.game.apply( move ), move ));
+        }
+        else // otherwise SELECT child node
+            selected_node = select( node, exploration );
 
         if (!selected_node)
             throw std::runtime_error( "no node selected" );
@@ -226,26 +139,11 @@ GameResult simulation(
     const GameResult player_to_game_result[] = 
         { GameResult::Player1Win, GameResult::Player2Win };
     if (backpropagation == GameResult::Draw)
-        node.points += 0.5;
-    else if (backpropagation == player_to_game_result[node.game.current_player_index()])
-        node.points += 1.0;
+        value.points += 0.5;
+    else if (backpropagation == player_to_game_result[value.game.current_player_index()])
+        value.points += 1.0;
 
     return backpropagation;
-}
-
-template< typename MoveT, typename StateT >
-using NodePtr = std::unique_ptr< Node< MoveT, StateT >, 
-                                 std::function< void (Node< MoveT, StateT >*) > 
-                               >;
-
-template< typename MoveT, typename StateT >                               
-void deallocate( NodeAllocator< MoveT, StateT >& allocator, Node< MoveT, StateT >* ptr )
-{
-    if (ptr)
-    {
-        ptr->~Node< MoveT, StateT >(); // Call the destructor
-        allocator.deallocate( ptr ); // Deallocate memory
-    }
 }
 
 } // namespace detail
@@ -261,8 +159,9 @@ public:
         Data< MoveT, StateT >& data )
     : data( data ), 
       root( new (data.allocator.allocate()) 
-            detail::Node< MoveT, StateT >( game, MoveT(), data.allocator ),
-            [&data](detail::Node< MoveT, StateT >* ptr) { deallocate( data.allocator, ptr ); }
+            Node< detail::Value< MoveT, StateT >>( 
+                detail::Value< MoveT, StateT >( game, MoveT()), data.allocator ),
+            [&data](auto ptr) { deallocate( data.allocator, ptr ); }
           ),
       exploration( exploration ), simulations( simulations ) 
     {}
@@ -273,29 +172,31 @@ public:
             simulation( *root, data, exploration );
 
         // remove child with most visits
-        typename detail::Node< MoveT, StateT >::ChildItr itr = 
+        auto itr = 
             std::max_element( root->begin(), root->end(), 
-                [](detail::Node< MoveT, StateT > const& a, detail::Node< MoveT, StateT > const& b)
-                { return a.visits < b.visits; } );
+                [](auto const& a, auto const& b)
+                { return a.get_value().visits < b.get_value().visits; } );
         if (itr == root->end())
             throw std::runtime_error( "no move choosen" );
 
         root->remove_child( itr );
         root.reset( &*itr );
 
-        return root->move;
+        return root->get_value().move;
     }
 
     void apply_opponent_move( MoveT const& move ) override
     {
-        typename detail::Node< MoveT, StateT >::ChildItr itr = 
+        auto itr = 
             std::find_if( root->begin(), root->end(), 
-                [move](detail::Node< MoveT, StateT > const& node)
-                { return node.move == move; } );
+                [move](auto const& node)
+                { return node.get_value().move == move; } );
         auto node = itr == root->end() 
             ? new (this->data.allocator.allocate()) 
-                   detail::Node< MoveT, StateT >( 
-                        root->game.apply( move ), move, this->data.allocator ) 
+                   Node< detail::Value< MoveT, StateT >>( 
+                        detail::Value< MoveT, StateT >(
+                            root->get_value().game.apply( move ), move), 
+                        this->data.allocator ) 
             : &*itr;
 
         root->remove_child( itr );
@@ -303,11 +204,11 @@ public:
     }
 
     // debug interface ->
-    detail::Node< MoveT, StateT > const& root_node() const { return *root; }
+    Node< detail::Value< MoveT, StateT >> const& root_node() const { return *root; }
     // <- debug interface
 private:
     Data< MoveT, StateT >& data;
-    detail::NodePtr< MoveT, StateT > root;
+    NodePtr< detail::Value< MoveT, StateT > > root;
     double exploration;
     size_t simulations;
 };
