@@ -33,18 +33,17 @@ namespace minimax {
 
 double score( State const& state );
 
+using Data = ::minimax::Data< Move >;
+using PlayerFactory = ::PlayerFactory< Move >;
+
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, ::minimax::Data< Move >& data ) 
+    Player( Game const& game, unsigned depth, Data& data ) 
     : ::minimax::Player< Move, State >( game, depth, data ) {}
     double score( Game const& game ) const override 
     { return minimax::score( game.get_state() ); };
 };
-
-using Data = ::minimax::Data< Move >;
-using Buffer = char[sizeof( Player )];
-using PlayerFactory = ::PlayerFactory< Move >;
 
 } // namespace minimax {
 
@@ -53,7 +52,6 @@ namespace montecarlo
 
 using Data = ::montecarlo::Data< Move, State >;
 using Player = ::montecarlo::Player< Move, State >;
-using Buffer = char[sizeof( Player )];
 using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 

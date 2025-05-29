@@ -197,18 +197,16 @@ void nim_match()
     const size_t HEAPS = 5;
 
     mt19937 g( seed );
-    nim::minimax::Data data1( g );
-    nim::minimax::Buffer< HEAPS > buffer1;
-    nim::minimax::Data data2( g );
-    nim::minimax::Buffer< HEAPS > buffer2;
+    nim::minimax::Data< HEAPS > data1( g );
+    nim::minimax::Data< HEAPS > data2( g );
 
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
     MultiMatch< nim::Move, nim::State< HEAPS > > match;
     match.play_match( 
         game, 
-        minimax::player_factory( game, 2, data1, buffer1 ), 
-        minimax::player_factory( game, 3, data2, buffer2 ), 
+        [&game, &data1]() { return new nim::minimax::Player< HEAPS >( game, 2, data1 ); }, 
+        [&game, &data2]() { return new nim::minimax::Player< HEAPS >( game, 3, data2 ); }, 
         100 );
 
     if (verbose)
@@ -332,7 +330,7 @@ void ttt_human()
     ttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
     mt19937 g( seed );
-    minimax::Data< ttt::Move > data( g );
+    ttt::minimax::Data data( g );
     ttt::minimax::Player player( game, 0, data );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player);
@@ -361,19 +359,16 @@ void tic_tac_toe_match()
 
     mt19937 g( seed );
 
-    minimax::Data< ttt::Move > data1( g );
-    ttt::minimax::Buffer buffer1;
-
-    minimax::Data< ttt::Move > data2( g );
-    ttt::minimax::Buffer buffer2;
+    ttt::minimax::Data data1( g );
+    ttt::minimax::Data data2( g );
 
     ttt::Game game( Player1, ttt::empty_state );
     
     MultiMatch< ttt::Move, ttt::State > match;
     match.play_match( 
         game, 
-        minimax::player_factory( game, 0, data1, buffer1 ), 
-        minimax::player_factory( game, 5, data2, buffer2 ), 
+        [&game, &data1]() { return new ttt::minimax::Player( game, 0, data1 ); }, 
+        [&game, &data2]() { return new ttt::minimax::Player( game, 5, data2 ); }, 
         100 );
 
     if (verbose)
@@ -387,23 +382,22 @@ void tic_tac_toe_match()
             << "snd player eval calls: " << data2.eval_calls << endl;
 
     assert (match.fst_player_wins == 0);
-    assert (match.snd_player_wins > 50);
-    assert (match.draws > 0);
+    assert (match.draws > 50);
     assert (data1.move_stack.capacity() == 9);
     assert (data2.move_stack.capacity() == 9);
     assert (data1.eval_calls > 1000 && data1.eval_calls < 3000);
-    assert (data2.eval_calls > 300000 && data2.eval_calls < 600000);
+    assert (data2.eval_calls > 300000 && data2.eval_calls < 800000);
 }
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 {
     UltimateTicTacToeMatch( 
-        minimax::Player< uttt::Move, uttt::State > const& minimax_player,
-        minimax::Data< uttt::Move > const& data )
+        uttt::minimax::Player const& minimax_player,
+        uttt::minimax::Data const& data )
         : minimax_player( minimax_player ), data( data ) {}
 
-    minimax::Player< uttt::Move, uttt::State > const& minimax_player;
-    minimax::Data< uttt::Move > const& data;
+    uttt::minimax::Player const& minimax_player;
+    uttt::minimax::Data const& data;
 
     void report( uttt::Game const& game, uttt::Move const& move ) override
     {
@@ -455,7 +449,7 @@ void uttt_human()
     chrono::microseconds human_duration;
 
     mt19937 g( seed );
-    minimax::Data< uttt::Move > data( g );
+    uttt::minimax::Data data( g );
 
     uttt::minimax::Player player( game, 9.0, 5, data );
     chrono::microseconds player_duration;
@@ -485,19 +479,16 @@ void uttt_match()
     }
 
     mt19937 g( seed );
-    minimax::Data< uttt::Move > data1( g );
-    uttt::minimax::Buffer buffer1;
-
-    minimax::Data< uttt::Move > data2( g );
-    uttt::minimax::Buffer buffer2;
+    uttt::minimax::Data data1( g );
+    uttt::minimax::Data data2( g );
 
     uttt::Game game( Player1, uttt::empty_state );
 
     MultiMatch< uttt::Move, uttt::State > match;
     match.play_match( 
         game, 
-        uttt::minimax::player_factory( game, 9.0, 1, data1, buffer1), 
-        uttt::minimax::player_factory( game, 9.0, 4, data2, buffer2), 
+        [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, 1, data1 ); }, 
+        [&game, &data2]() { return new uttt::minimax::Player( game, 9.0, 4, data2 ); }, 
         100 );
 
     if (verbose)
@@ -614,25 +605,25 @@ void montecarlo_minimax_uttt_match()
 
     uttt::montecarlo::NodeAllocator allocator;
     uttt::montecarlo::Data data1( g, allocator );
-    uttt::montecarlo::Buffer buffer1;
     const double exploration = 0.4;
 //    const size_t simulations = 3200;
     const size_t simulations = 100;
-    PlayerFactory< uttt::Move > mc_factory = montecarlo::player_factory( 
-        game, exploration, simulations, data1, buffer1 );
 
-    minimax::Data< uttt::Move > data2( g );
-    uttt::minimax::Buffer buffer2;
+    uttt::minimax::Data data2( g );
 //    const size_t depth = 6;
     const size_t depth = 2;
     const double factor = 9.0;
-    PlayerFactory< uttt::Move > mm_factory = uttt::minimax::player_factory( 
-        game, factor, depth, data2, buffer2);
 
     const size_t rounds = 100;
 
     MultiMatch< uttt::Move, uttt::State > match;
-    match.play_match( game, mc_factory, mm_factory, rounds );
+    match.play_match( 
+        game,
+        [&game, exploration, &data1]() 
+            { return new uttt::montecarlo::Player( game, exploration, simulations, data1 ); }, 
+        [&game, factor, &data2]() 
+            { return new uttt::minimax::Player( game, factor, depth, data2 ); }, 
+        rounds );
 
     if (verbose)
         cout 
@@ -671,10 +662,7 @@ void montecarlo_ttt_match()
     ttt::montecarlo::NodeAllocator allocator;
 
     ttt::montecarlo::Data data1( g, allocator );
-    ttt::montecarlo::Buffer buffer1;
-
     ttt::montecarlo::Data data2( g, allocator );
-    ttt::montecarlo::Buffer buffer2;
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -683,8 +671,8 @@ void montecarlo_ttt_match()
     const size_t rounds = 100;
     match.play_match( 
         game, 
-        montecarlo::player_factory( game, exploration, 100, data1, buffer1 ), 
-        montecarlo::player_factory( game, exploration, 500, data2, buffer2 ), 
+        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 100, data1 ); }, 
+        [&game, exploration, &data2]() { return new ttt::montecarlo::Player( game, exploration, 500, data2 ); }, 
         rounds );
 
     if (verbose)

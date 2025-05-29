@@ -16,8 +16,6 @@ public:
     virtual void apply_opponent_move( MoveT const& ) = 0; 
 };
 
-// use placement new to construct player, we need such for a multi round match
+// for match
 template< typename MoveT >
-using PlayerFactory = std::function< 
-    std::unique_ptr< Player< MoveT >, void(*)(Player< MoveT >*) > () >;
-
+using PlayerFactory = std::function< Player< MoveT >* () >;

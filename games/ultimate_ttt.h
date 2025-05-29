@@ -43,21 +43,18 @@ private:
 
 namespace minimax {
 
+using Data = ::minimax::Data< Move >;
+
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& );
+    Player( Game const& game, double weight, unsigned depth, Data& );
     double score( Game const& game ) const override;
 private:
     const double weight;
 };
 
-using Data = ::minimax::Data< Move >;
-using Buffer = char[sizeof( Player )];
 using PlayerFactory = ::PlayerFactory< uttt::Move >;
-
-PlayerFactory player_factory(
-    Game const& game, double weight, unsigned depth, Data& data, Buffer );
 
 } // namespace minimax {
 

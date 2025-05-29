@@ -28,9 +28,9 @@ namespace minimax {
 template< size_t N >
 using Player = ::minimax::Player< Move, State< N > >;
 
-using Data = ::minimax::Data< Move >;
 template< size_t N >
-using Buffer = char[sizeof( Player< N > )];
+using Data = ::minimax::Data< Move >;
+
 using PlayerFactory = ::PlayerFactory< Move >;
 
 } // namespace minimax {

@@ -85,7 +85,7 @@ bool operator==( uttt::Move const& lhs, uttt::Move const& rhs )
 namespace minimax {
 
 Player::Player( 
-    Game const& game, double weight, unsigned depth, ::minimax::Data< Move >& data ) 
+    Game const& game, double weight, unsigned depth, Data& data ) 
     : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
 
 double Player::score( Game const& game ) const
@@ -122,15 +122,6 @@ double Player::score( Game const& game ) const
     return score;
 }
 
-PlayerFactory player_factory(
-    Game const& game, double weight, unsigned depth, Data& data,
-    Buffer buffer )
-{
-    return [&game, &data, weight, depth, buffer]()
-        { return unique_ptr< ::Player< uttt::Move >, void(*)(::Player< uttt::Move >*) >( 
-            new (buffer) Player( game, weight, depth, data ), 
-            [](::Player< uttt::Move >* p){p->~Player(); }); };
-}
 
 } // namespace minimax {
 } // namespace uttt

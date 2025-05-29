@@ -213,23 +213,4 @@ private:
     size_t simulations;
 };
 
-template< typename MoveT, typename StateT >
-using Buffer = char[sizeof( Player< MoveT, StateT > )];
-
-template< typename MoveT, typename StateT >
-PlayerFactory< MoveT > player_factory(
-    Game< MoveT, StateT > const& game, 
-    double exploration,
-    size_t simulations,
-    Data< MoveT, StateT >& data,
-    Buffer< MoveT, StateT > raw_data )
-{
-    return [&game, &data, exploration, simulations, raw_data]()
-    { 
-        return std::unique_ptr< ::Player< MoveT >, void(*)( ::Player< MoveT >*) >( 
-            new (raw_data) Player< MoveT, StateT >( game, exploration, simulations, data ), 
-            [](::Player< MoveT >* p){p->~Player(); }); 
-    };
-}
-
 } // namespace montecarlo

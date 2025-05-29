@@ -71,8 +71,8 @@ struct MultiMatch : public ::Match< MoveT, StateT >
         for (; rounds > 0; --rounds)
         {
             const GameResult game_result = this->play( 
-                game, *(*player_factory)(), *player_duration, 
-                *(*opponent_factory)(), *opponent_duration );
+                game, *(std::unique_ptr< Player< MoveT > >((*player_factory)())), *player_duration, 
+                *(std::unique_ptr< Player< MoveT > >((*opponent_factory)())), *opponent_duration );
             if (game_result == GameResult::Draw)
                 ++draws;
             else if (game_result == GameResult::Player1Win)
@@ -83,7 +83,6 @@ struct MultiMatch : public ::Match< MoveT, StateT >
                  fst_player_index == Player2
                     ? ++fst_player_wins
                     : ++snd_player_wins;
-
 
             std::swap( player_factory, opponent_factory );
             std::swap( player_duration, opponent_duration );
