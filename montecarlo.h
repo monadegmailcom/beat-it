@@ -56,6 +56,8 @@ namespace detail {
 template< typename MoveT, typename StateT >
 GameResult playout( Game< MoveT, StateT > game, Data< MoveT, StateT >& data )
 {
+    ++data.playout_count;
+
     GameResult result;
     for (result = GameResult::Undecided; result == GameResult::Undecided; 
          result = game.result())
@@ -83,17 +85,37 @@ double uct(
 }
 
 template< typename MoveT, typename StateT >
-Node< Value< MoveT, StateT >>* select( 
+Node< Value< MoveT, StateT >>& select( 
     Node< Value< MoveT, StateT >>& node, double exploration )
-{             
-    auto itr = std::max_element( 
-        node.begin(), node.end(), 
-        [exploration, parent_visits = node.get_value().visits]
-        (auto const& a, auto const& b)
-        { return   uct( a.get_value(), parent_visits, exploration ) 
-                 < uct( b.get_value(), parent_visits, exploration ); });
+{    
+    auto& value = node.get_value();
+    // if another move is available push front newly created child node
+    if (value.next_move_itr != value.game.end())
+    {
+        const MoveT move = *value.next_move_itr++;
+        auto child = new 
+            (node.get_allocator().allocate()) 
+            Node( 
+                Value( value.game.apply( move ), move ), 
+                node.get_allocator());                            
 
-    return &*itr;
+        node.get_children().push_front( *child );
+        return *child;
+    }
+    else // otherwise SELECT child node from children list  
+    {    
+        if (node.get_children().empty())
+            throw std::runtime_error( "no children to select");
+
+        return *std::ranges::max_element( 
+            node.get_children(),
+            [exploration, parent_visits = node.get_value().visits]
+            (auto const& a, auto const& b)
+            { 
+                return  uct( a.get_value(), parent_visits, exploration ) 
+                      < uct( b.get_value(), parent_visits, exploration ); 
+            });
+    }
 }
 
 template< typename MoveT, typename StateT >
@@ -110,30 +132,10 @@ GameResult simulation(
     if (value.game_result != GameResult::Undecided)
         backpropagation = value.game_result;
     else if (value.visits == 1) // PLAYOUT on first visit
-    {
         backpropagation = playout< MoveT, StateT >( value.game, data );
-        ++data.playout_count;
-    }
-    else // otherwise create or select child node
-    {
-        Node< Value< MoveT, StateT >>* selected_node = nullptr;
-        if (value.next_move_itr != value.game.end())
-        {
-            // push front newly created node from next move if available
-            const MoveT move = *value.next_move_itr;
-            ++value.next_move_itr;
-            selected_node = node.push_front_child( 
-                Value( value.game.apply( move ), move ));
-        }
-        else // otherwise SELECT child node
-            selected_node = select( node, exploration );
-
-        if (!selected_node)
-            throw std::runtime_error( "no node selected" );
-
-        // recursively simulate the selected node
-        backpropagation = simulation( *selected_node, data, exploration );
-    }
+    else // recursively simulate the selected child node
+        backpropagation = simulation( 
+            select( node, exploration ), data, exploration );
 
     // update points
     const GameResult player_to_game_result[] = 
@@ -173,13 +175,13 @@ public:
 
         // remove child with most visits
         auto itr = 
-            std::max_element( root->begin(), root->end(), 
+            std::ranges::max_element( root->get_children(),
                 [](auto const& a, auto const& b)
                 { return a.get_value().visits < b.get_value().visits; } );
-        if (itr == root->end())
+        if (itr == root->get_children().end())
             throw std::runtime_error( "no move choosen" );
 
-        root->remove_child( itr );
+        root->get_children().erase( itr );
         root.reset( &*itr );
 
         return root->get_value().move;
@@ -188,19 +190,25 @@ public:
     void apply_opponent_move( MoveT const& move ) override
     {
         auto itr = 
-            std::find_if( root->begin(), root->end(), 
+            std::ranges::find_if( 
+                root->get_children(), 
                 [move](auto const& node)
                 { return node.get_value().move == move; } );
-        auto node = itr == root->end() 
-            ? new (this->data.allocator.allocate()) 
+        Node< detail::Value< MoveT, StateT >>* new_root = nullptr;
+
+        if (itr == root->get_children().end())
+            new_root = new (this->data.allocator.allocate()) 
                    Node< detail::Value< MoveT, StateT >>( 
                         detail::Value< MoveT, StateT >(
                             root->get_value().game.apply( move ), move), 
-                        this->data.allocator ) 
-            : &*itr;
+                        this->data.allocator );
+        else
+        {
+            root->get_children().erase( itr );
+            new_root = &*itr;
+        }
 
-        root->remove_child( itr );
-        root.reset( node );
+        root.reset( new_root );
     }
 
     // debug interface ->

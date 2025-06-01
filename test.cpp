@@ -524,13 +524,15 @@ void montecarlo_node()
 
     Node< Value >* node = new (allocator.allocate()) Node< Value >( 
                      Value( game, ttt::no_move ), allocator );
-    assert (children_count( *node ) == 0);
+    assert (node->get_children().size() == 0);
     assert (node_count( *node) == 1);
 
     for (auto const& move : game)
-        node->push_front_child( Value( game.apply( move ), move ));
+        node->get_children().push_front( 
+            *(new (allocator.allocate()) Node< Value >( 
+                Value( game.apply( move ), move), allocator )));
 
-    assert (children_count( *node) == 9);
+    assert (node->get_children().size() == 9);
     assert (node_count( *node) == 10);
     node->~Node();
     allocator.deallocate( node );
@@ -729,7 +731,6 @@ void uttt_match_mm_vs_tree_mm()
             << "fst player eval calls: " << data1.eval_calls << '\n'
             << "snd player depth: " << snd_depth << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
-            << "snd player node stack capacity: " << data2.stack.capacity() << '\n'
             << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
             << "snd player eval calls: " << data2.eval_calls << '\n'
             << "fst/snd player duration ratio: "
@@ -743,7 +744,6 @@ void uttt_match_mm_vs_tree_mm()
     assert (match.draws > 0);
     assert (data1.move_stack.capacity() == 81);
     assert (data2.move_stack.capacity() == 81);
-    assert (data2.stack.capacity() == 128);
     assert (data1.eval_calls > 800000 && data1.eval_calls < 1000000);
     assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }

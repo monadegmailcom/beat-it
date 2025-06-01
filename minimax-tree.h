@@ -42,7 +42,6 @@ struct Data
 
     std::mt19937& g;
     NodeAllocator< MoveT, StateT >& allocator;
-    std::vector< Node< detail::Value< MoveT, StateT > >* > stack;
     std::vector< MoveT > move_stack;
     size_t eval_calls = 0;
     double best_score = 0.0;
@@ -71,19 +70,25 @@ protected:
     void apply_opponent_move( MoveT const& move ) override
     {
         auto itr = 
-            std::find_if( root->begin(), root->end(), 
+            std::ranges::find_if( 
+                root->get_children(),
                 [move](auto const& node)
                 { return node.get_value().move == move; } );
-        auto node = itr == root->end() 
-            ? new (this->data.allocator.allocate()) 
+        Node< detail::Value< MoveT, StateT > >* new_root = nullptr;
+
+        if (itr == root->get_children().end())
+            new_root = new (this->data.allocator.allocate()) 
                    Node< detail::Value< MoveT, StateT >>( 
                         detail::Value< MoveT, StateT >(
                             root->get_value().game.apply( move ), move), 
-                        this->data.allocator ) 
-            : &*itr;
+                        this->data.allocator );
+        else
+        {
+            root->get_children().erase( itr );
+            new_root = &*itr;
+        }
 
-        root->remove_child( itr );
-        root.reset( node );
+        root.reset( new_root );
     }
 
     double eval( 
@@ -123,7 +128,7 @@ protected:
         }
 
         // push_front child nodes on first visit
-        if (node.begin() == node.end())
+        if (node.get_children().empty())
         {
             data.move_stack.clear();
             GameState< MoveT, StateT >::get_valid_moves( 
@@ -131,12 +136,15 @@ protected:
             std::shuffle( data.move_stack.begin(), data.move_stack.end(), data.g );
 
             for (MoveT const& move : data.move_stack)
-                node.push_front_child( detail::Value< MoveT, StateT >( 
-                    value.game.apply( move ), move));
+                node.get_children().push_front( *(new 
+                    (data.allocator.allocate()) 
+                    Node( 
+                        detail::Value< MoveT, StateT >( value.game.apply( move ), move ), 
+                        data.allocator )));                            
         }
         // evaluate child nodes recursivly until pruning
-        auto child_itr = node.begin();
-        for (;child_itr != node.end(); ++child_itr)
+        auto child_itr = node.get_children().begin();
+        for (;child_itr != node.get_children().end(); ++child_itr)
         {
             child_itr->get_value().evaluation = 
                  eval( *child_itr, depth - 1, alpha, beta );
@@ -151,12 +159,22 @@ protected:
             }
         }
 
-        // sort relevant child nodes for earlier pruning opportunities on next visit
-        node.sort_prefix( 
-            child_itr, data.stack,
-            [compare](auto const& a, auto const& b) 
-            { return compare( a.evaluation, b.evaluation); });
+        // stable sort child nodes up to pruned child itr 
+        // for earlier pruning opportunities on next visit
+        boost::intrusive::list<Node<detail::Value<MoveT, StateT>>> prefix;
+        prefix.splice(
+            prefix.begin(), 
+            node.get_children(),
+            node.get_children().begin(),
+            child_itr           // ...up to (but not including) child_itr
+        );
 
+        prefix.sort(
+            [compare](auto const& a, auto const& b) 
+            { return compare( a.get_value().evaluation, b.get_value().evaluation); });
+
+        node.get_children().splice(node.get_children().begin(), prefix);
+        
         return best_score;
     }
 
@@ -168,15 +186,15 @@ protected:
         // eval with increasing depth
         // evaluation will benefit from better pruning from ordering of previous step
         // always start from level 0 because pruning my be different from last 
-        //   time due to initialized alpha/beta start values
+        // time due to initialized alpha/beta start values
         for (size_t d = 0; d <= depth + 1; ++d)
             root->get_value().evaluation = eval( *root, d, -INFINITY, INFINITY );
     
-        auto chosen = root->begin();
-        if (chosen == root->end())
+        if (root->get_children().empty())
             throw std::runtime_error( "no move choosen");
+        auto chosen = root->get_children().begin();
 
-        root->remove_child( chosen );
+        root->get_children().erase( chosen );
         root.reset( &*chosen );
 
         return root->get_value().move;
