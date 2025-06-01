@@ -1,4 +1,8 @@
+#pragma once
+
 #include <boost/pool/pool_alloc.hpp>
+#include <boost/iterator/iterator_facade.hpp>
+
 #include <iterator>
 #include <memory>
 
@@ -95,6 +99,40 @@ public:
 
     ChildItr begin() const { return ChildItr( first_child ); }
     ChildItr end() const { return ChildItr( nullptr ); }
+
+    void sort_prefix( 
+        ChildItr suffix_itr, 
+        std::vector< Node* >& stack,
+        std::function< bool (ValueT const&, ValueT const&) > comp )
+    {
+        stack.clear();
+        for (auto itr = begin(); itr != suffix_itr; ++itr) 
+            stack.push_back( &*itr );
+
+        // relink
+        if (!stack.empty())
+        {
+            // use of stable sort is important because for moves with the same evaluation
+            // following moves may be worse than the first due to alpha/beta pruning
+            std::stable_sort( 
+                stack.begin(), stack.end(),
+                [comp](auto a, auto b)
+                { return comp( a->get_value(), b->get_value()); });
+
+            first_child = stack.front();
+            first_child->prev_sibling = nullptr;
+
+            for (size_t i = 0; i < stack.size() - 1; ++i) 
+            {
+                stack[i]->next_sibling = stack[i+1];
+                stack[i+1]->prev_sibling = stack[i];
+            }
+
+            stack.back()->next_sibling = suffix_itr.node;
+            if (suffix_itr.node) 
+                suffix_itr.node->prev_sibling = stack.back();
+        }
+    }
 private:
     ValueT value;
     NodeAllocator< ValueT >& allocator;

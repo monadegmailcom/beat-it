@@ -1,3 +1,4 @@
+#include "../minimax-tree.h"
 #include "../minimax.h"
 #include "../montecarlo.h"
 
@@ -44,6 +45,23 @@ public:
     double score( Game const& game ) const override 
     { return minimax::score( game.get_state() ); };
 };
+
+namespace tree {
+
+using Data = ::minimax::tree::Data< Move, State >;
+using PlayerFactory = ::PlayerFactory< Move >;
+using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
+
+class Player : public ::minimax::tree::Player< Move, State >
+{
+public:
+    Player( Game const& game, unsigned depth, Data& data ) 
+    : ::minimax::tree::Player< Move, State >( game, depth, data ) {}
+    double score( Game const& game ) const override 
+    { return minimax::score( game.get_state() ); };
+};
+
+} // namespace tree {
 
 } // namespace minimax {
 

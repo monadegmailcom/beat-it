@@ -1,5 +1,5 @@
 #pragma once
-#include <memory>
+
 #include <functional>
 
 // require: choose_move and set_opponent_move are called alternatingly

@@ -1,4 +1,5 @@
 #include "tic_tac_toe.h"
+
 #include <iostream>
 
 namespace uttt
@@ -56,6 +57,22 @@ private:
 
 using PlayerFactory = ::PlayerFactory< uttt::Move >;
 
+namespace tree {
+
+using Data = ::minimax::tree::Data< Move, State >;
+using PlayerFactory = ::PlayerFactory< Move >;
+using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
+
+class Player : public ::minimax::tree::Player< Move, State >
+{
+public:
+    Player( Game const& game, double weight, unsigned depth, Data& );
+    double score( Game const& game ) const override;
+private:
+    const double weight;
+};
+
+} // namespace tree {
 } // namespace minimax {
 
 namespace montecarlo 

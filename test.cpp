@@ -7,6 +7,8 @@
 #include "match.h"
 #include "montecarlo.h"
 
+#include "minimax-tree.h"
+
 using namespace std;
 
 unsigned seed = 0;
@@ -589,6 +591,46 @@ void montecarlo_ttt_human()
         << "player playout count: " << data.playout_count << endl;
 }
 
+void montecarlo_ttt_match()
+{
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
+
+    mt19937 g( seed );
+    ttt::montecarlo::NodeAllocator allocator;
+
+    ttt::montecarlo::Data data1( g, allocator );
+    ttt::montecarlo::Data data2( g, allocator );
+
+    ttt::Game game( Player1, ttt::empty_state );
+
+    MultiMatch< ttt::Move, ttt::State > match;
+    const double exploration = 0.4;
+    const size_t rounds = 100;
+    match.play_match( 
+        game, 
+        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 100, data1 ); }, 
+        [&game, exploration, &data2]() { return new ttt::montecarlo::Player( game, exploration, 500, data2 ); }, 
+        rounds );
+
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
+            << "fst player playouts: " << data1.playout_count << '\n'
+            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
+            << "snd player playouts: " << data2.playout_count << endl;
+
+    assert (match.draws > 0);
+}
+
 void montecarlo_minimax_uttt_match()
 {
     if (extensive)
@@ -648,7 +690,7 @@ void montecarlo_minimax_uttt_match()
     assert (match.draws > 0);
 }
 
-void montecarlo_ttt_match()
+void uttt_match_mm_vs_tree_mm()
 {
     if (extensive)
         cout << __func__ << endl;
@@ -659,33 +701,51 @@ void montecarlo_ttt_match()
     }
 
     mt19937 g( seed );
-    ttt::montecarlo::NodeAllocator allocator;
+    uttt::minimax::tree::NodeAllocator allocator;
 
-    ttt::montecarlo::Data data1( g, allocator );
-    ttt::montecarlo::Data data2( g, allocator );
+    uttt::minimax::Data data1( g );
+    uttt::minimax::tree::Data data2( g, allocator );
 
-    ttt::Game game( Player1, ttt::empty_state );
+    const size_t fst_depth = 2; // 2
+    const size_t snd_depth = 2; // 2
 
-    MultiMatch< ttt::Move, ttt::State > match;
-    const double exploration = 0.4;
-    const size_t rounds = 100;
+    uttt::Game game( Player1, uttt::empty_state );
+
+    MultiMatch< uttt::Move, uttt::State > match;
     match.play_match( 
         game, 
-        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 100, data1 ); }, 
-        [&game, exploration, &data2]() { return new ttt::montecarlo::Player( game, exploration, 500, data2 ); }, 
-        rounds );
+        [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, fst_depth, data1 ); }, 
+        [&game, &data2]() { return new uttt::minimax::tree::Player( game, 9.0, snd_depth, data2 ); }, 
+        100 );
 
     if (verbose)
         cout 
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
             << "draws: " << match.draws << '\n'
+            << "fst player depth: " << fst_depth << '\n'
+            << "fst player duration: " << match.fst_player_duration << '\n'
             << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player playouts: " << data1.playout_count << '\n'
+            << "fst player eval calls: " << data1.eval_calls << '\n'
+            << "snd player depth: " << snd_depth << '\n'
+            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "snd player node stack capacity: " << data2.stack.capacity() << '\n'
             << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player playouts: " << data2.playout_count << endl;
+            << "snd player eval calls: " << data2.eval_calls << '\n'
+            << "fst/snd player duration ratio: "
+            << double( chrono::duration_cast< std::chrono::microseconds >( 
+                    match.fst_player_duration ).count()) / 
+               chrono::duration_cast< std::chrono::microseconds >( 
+                    match.snd_player_duration ).count() << '\n' << endl;
 
+    assert (match.fst_player_wins != 0);
+    assert (match.snd_player_wins != 0);
     assert (match.draws > 0);
+    assert (data1.move_stack.capacity() == 81);
+    assert (data2.move_stack.capacity() == 81);
+    assert (data2.stack.capacity() == 128);
+    assert (data1.eval_calls > 800000 && data1.eval_calls < 1000000);
+    assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
 } // namespace test {
@@ -716,7 +776,8 @@ int main()
         test::montecarlo_ttt_human();
         test::montecarlo_ttt_match();
         test::montecarlo_minimax_uttt_match();
-
+        test::uttt_match_mm_vs_tree_mm();
+ 
         cout << "\neverything ok" << endl;    
         return 0;
     }

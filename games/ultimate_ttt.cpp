@@ -82,16 +82,8 @@ bool operator==( uttt::Move const& lhs, uttt::Move const& rhs )
     return lhs.big_move == rhs.big_move && lhs.small_move == rhs.small_move;
 }
 
-namespace minimax {
-
-Player::Player( 
-    Game const& game, double weight, unsigned depth, Data& data ) 
-    : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
-
-double Player::score( Game const& game ) const
+double score_function( uttt::State const& state, double weight )
 {
-    State const& state = game.get_state();
-    
     double score = 0.0;
     for (auto const& win : ttt::wins)
     {
@@ -122,7 +114,29 @@ double Player::score( Game const& game ) const
     return score;
 }
 
+namespace minimax {
 
+Player::Player( 
+    Game const& game, double weight, unsigned depth, Data& data ) 
+    : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
+
+double Player::score( Game const& game ) const
+{
+    return score_function( game.get_state(), weight );
+}
+
+namespace tree {
+
+Player::Player( 
+    Game const& game, double weight, unsigned depth, Data& data ) 
+    : ::minimax::tree::Player< Move, State >( game, depth, data ), weight( weight ) {}
+
+double Player::score( Game const& game ) const
+{
+    return score_function( game.get_state(), weight );
+}
+
+} // namespace tree {
 } // namespace minimax {
 } // namespace uttt
 
