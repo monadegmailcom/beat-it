@@ -40,6 +40,20 @@ double score( State const& state )
 
 } // namespace minimax {
 
+namespace alphazero {
+
+float Data::predict( Game const& game )
+{
+    return 0.0;
+}
+
+size_t Data::move_to_policy_index( Move const& move )
+{
+    return size_t( move );
+}
+
+} // namespace alphazero {
+
 Symbol player_index_to_symbol( PlayerIndex player_index )
 {
     const Symbol symbols[] = { Symbol::Player1, Symbol::Player2 };

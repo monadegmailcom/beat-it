@@ -6,8 +6,8 @@
 #include "games/ultimate_ttt.h"
 #include "match.h"
 #include "montecarlo.h"
-
 #include "minimax-tree.h"
+#include "alphazero.h"
 
 using namespace std;
 
@@ -748,6 +748,79 @@ void uttt_match_mm_vs_tree_mm()
     assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
+template< typename MoveT, typename StateT >
+struct MockNN : alphazero::Data< MoveT, StateT >
+{
+    using MC_PlayerFactory = 
+        function< montecarlo::Player< MoveT, StateT >* 
+                  (Game< MoveT, StateT > const&,
+                   double exploration,
+                   size_t simulations,
+                   montecarlo::Data< MoveT, StateT >& data) >;
+    MockNN( 
+        mt19937& g, 
+        alphazero::NodeAllocator< MoveT, StateT >& allocator,
+        MC_PlayerFactory player_factory,
+        function< size_t (MoveT const&) > move2pol )
+    : alphazero::Data< MoveT, StateT >( g, allocator ), 
+      mc_data( g, mc_allocator ),
+      player_factory( player_factory ),
+      move2pol( move2pol )
+    {}
+
+    float predict( Game< MoveT, StateT > const& game ) override
+    {
+        unique_ptr< montecarlo::Player< MoveT, StateT > > player( 
+            player_factory( game, mc_exploration, mc_simulations, mc_data ));
+        return 0.0;
+    }
+
+    size_t move_to_policy_index( MoveT const& move) override
+    {
+        return move2pol( move );
+    }
+
+    montecarlo::NodeAllocator< MoveT, StateT > mc_allocator;
+    montecarlo::Data< MoveT, StateT > mc_data;
+    double mc_exploration = 0.4;
+    size_t mc_simulations = 100;
+    MC_PlayerFactory player_factory;
+    function< size_t (MoveT const&) > move2pol;
+};
+
+void alphazero()
+{
+    cout << __func__ << endl;
+
+    mt19937 g( seed );
+
+    ttt::montecarlo::NodeAllocator mc_allocator;
+    ttt::montecarlo::Data mc_data( g, mc_allocator );
+    MockNN< ttt::Move, ttt::State >::MC_PlayerFactory player_factory = 
+        []
+        (ttt::Game const& game,
+         double exploration,
+         size_t simulations,
+         ttt::montecarlo::Data& data)
+        { 
+            return new ttt::montecarlo::Player(
+                game, exploration, simulations, data );
+        };
+
+    ttt::alphazero::NodeAllocator allocator;
+    ttt::alphazero::Data data( g, allocator );
+    ttt::Game game( Player1, ttt::empty_state );
+    MockNN< ttt::Move, ttt::State > mock_nn( 
+        g, allocator, player_factory, 
+        []( ttt::Move const& move) { return size_t( move ); });
+
+    const double exploration = .4;
+    const size_t simulations = 100;
+    const size_t opening_moves = 1;
+    ttt::alphazero::Player player( 
+        game, exploration, simulations, opening_moves, data);
+}
+
 } // namespace test {
 
 int main()
@@ -777,7 +850,8 @@ int main()
         test::montecarlo_ttt_match();
         test::montecarlo_minimax_uttt_match();
         test::uttt_match_mm_vs_tree_mm();
- 
+        test::alphazero();
+
         cout << "\neverything ok" << endl;    
         return 0;
     }
