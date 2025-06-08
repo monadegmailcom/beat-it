@@ -43,11 +43,11 @@ struct Data
     virtual ~Data() = default;
 
     // predict game state value and policy vector from nn
-    // promise: policy_vector is set
+    // promise: policy_vector contain probability distribution of moves
     virtual float predict( Game< MoveT, StateT > const& ) = 0;
 
     // promise: return index of move in policy_vector
-    virtual size_t move_to_policy_index( MoveT const& ) = 0;
+    virtual size_t move_to_policy_index( MoveT const& ) const = 0;
 
     std::mt19937& g;
     NodeAllocator< MoveT, StateT >& allocator;
@@ -68,21 +68,23 @@ float nn_eval( Node< Value< MoveT, StateT >>& node, Data< MoveT, StateT >& data 
     return value.nn_value;
 }
 
-double game_result_2_score( GameResult, PlayerIndex );
+float game_result_2_score( GameResult, PlayerIndex );
 
 template< typename MoveT, typename StateT >
 float puct( Value< MoveT, StateT > const& value, 
-    size_t parent_visits, double exploration )
+    size_t parent_visits, float exploration )
 {
-    const float q = value.nn_value_sum / value.visits;
+    float q = 0.0;
+    if (value.visits != 0)
+        q = value.nn_value_sum / value.visits;
     const float p = value.nn_policy;
         
-    return q + exploration * p * std::sqrt( parent_visits / value.visits );
+    return q + exploration * p * std::sqrt( parent_visits / (value.visits + 1));
 }
 
 template< typename MoveT, typename StateT >
 Node< Value< MoveT, StateT >>& select( 
-    Node< Value< MoveT, StateT >>& node, double exploration )
+    Node< Value< MoveT, StateT >>& node, float exploration )
 {  
     return *std::ranges::max_element( 
         node.get_children(),
@@ -114,7 +116,7 @@ template< typename MoveT, typename StateT >
 float simulation( 
     Node< Value< MoveT, StateT >>& node, 
     Data< MoveT, StateT >& data, 
-    double exploration)
+    float exploration)
 {
     auto& value = node.get_value();
     ++value.visits;
@@ -148,7 +150,7 @@ class Player : public ::Player< MoveT >
 public:
     Player( 
         Game< MoveT, StateT > const& game, 
-        double exploration,
+        float exploration,
         size_t simulations,
         size_t opening_moves,
         Data< MoveT, StateT >& data )
@@ -177,8 +179,7 @@ public:
             for (auto const& child : root->get_children())
                 visits += child.get_value().visits;
             int r = data.g() % visits;
-            for (auto itr = root->get_children().begin(); 
-                itr != root->get_children().end(); ++itr)
+            for (;itr != root->get_children().end(); ++itr)
             {
                 r -= itr->get_value().visits;
                 if (r < 0)
@@ -230,7 +231,7 @@ public:
 private:
     Data< MoveT, StateT >& data;
     NodePtr< detail::Value< MoveT, StateT > > root;
-    double exploration;
+    float exploration;
     size_t simulations;
     size_t opening_moves;
     size_t move_count = 0;

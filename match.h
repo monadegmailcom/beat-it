@@ -39,7 +39,7 @@ public:
         }
     }
 protected:
-    virtual void report( Game< MoveT, StateT > const& game, MoveT const& move ) = 0;
+    virtual void report( Game< MoveT, StateT > const&, MoveT const& ) {};
 };
 
 template< typename MoveT, typename StateT >

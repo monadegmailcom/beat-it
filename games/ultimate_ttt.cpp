@@ -138,6 +138,21 @@ double Player::score( Game const& game ) const
 
 } // namespace tree {
 } // namespace minimax {
+
+namespace alphazero {
+
+float Data::predict( Game const& game )
+{
+    return 0.0;
+}
+
+size_t Data::move_to_policy_index( Move const& move ) const
+{
+    return size_t( move.big_move * 9 + move.small_move );
+}
+
+} // namespace alphazero {
+
 } // namespace uttt
 
 bool next_move( ttt::Move& small_move, ttt::State const& state )

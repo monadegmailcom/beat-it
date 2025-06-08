@@ -47,7 +47,7 @@ float Data::predict( Game const& game )
     return 0.0;
 }
 
-size_t Data::move_to_policy_index( Move const& move )
+size_t Data::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
 }

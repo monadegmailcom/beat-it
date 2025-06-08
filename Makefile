@@ -64,4 +64,4 @@ $(ODIR):
 -include $(DEPS)
 
 clean:
-	rm -f $(ODIR)/*.o $(ODIR)/beat-it $(ODIR)/test obj/*.d
+	rm -f $(ODIR)/*.o $(ODIR)/games/*.o $(ODIR)/beat-it $(ODIR)/test $(ODIR)/*.d $(ODIR)/games/*.d

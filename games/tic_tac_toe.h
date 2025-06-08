@@ -86,7 +86,7 @@ struct Data : public ::alphazero::Data< Move, State >
     : ::alphazero::Data< Move, State >( g, allocator ) {}
 
     float predict( Game const& ) override;
-    size_t move_to_policy_index( Move const& ) override;
+    size_t move_to_policy_index( Move const& ) const override;
 };
 
 using Player = ::alphazero::Player< Move, State >;

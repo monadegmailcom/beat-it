@@ -86,6 +86,23 @@ using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 } // namespace montecarlo 
 
+namespace alphazero {
+
+using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
+
+struct Data : public ::alphazero::Data< Move, State >
+{
+    Data( std::mt19937& g, NodeAllocator& allocator )
+    : ::alphazero::Data< Move, State >( g, allocator ) {}
+
+    float predict( Game const& ) override;
+    size_t move_to_policy_index( Move const& ) const override;
+};
+
+using Player = ::alphazero::Player< Move, State >;
+
+} // namespace alphazero {
+
 } // namespace uttt
 
 std::ostream& operator<<( std::ostream&, uttt::Game const& );
