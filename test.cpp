@@ -792,12 +792,11 @@ struct MockNN : alphazero::Data< MoveT, StateT >
     MockNN( 
         mt19937& g, 
         alphazero::NodeAllocator< MoveT, StateT >& allocator,
-        float exploration, 
+        float exploration,
         size_t simulations )
     : alphazero::Data< MoveT, StateT >( g, allocator ), mc_data( g, mc_allocator ),
       exploration( exploration ), simulations( simulations )
     {}
-
     virtual ~MockNN() = default;
 
     virtual size_t policy_vector_size() const = 0;
@@ -850,7 +849,7 @@ struct MockTTTNN : public MockNN< ttt::Move, ttt::State >
     size_t policy_vector_size() const override
     {
         return 9;
-    }
+    }    
 };
 
 void alphazero_ttt_match()
@@ -862,12 +861,14 @@ void alphazero_ttt_match()
     ttt::alphazero::NodeAllocator allocator;
     MockTTTNN mock_nn( g, allocator );
 
-    const float exploration = .4;
+    const float exploration = .4;;
+    const float c_base = 19652;
+    const float c_init = 1.25; 
     const size_t simulations = 100;
     const size_t opening_moves = 1;
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::Player player1( 
-        game, exploration, simulations, opening_moves, mock_nn);
+        game, c_base, c_init, simulations, opening_moves, mock_nn);
 
     ttt::montecarlo::NodeAllocator mc_allocator;
     ttt::montecarlo::Data mc_data( g, mc_allocator );
@@ -903,7 +904,7 @@ void ttt_multimatch_alphazero_vs_minimax()
     const size_t rounds = 100;
     match.play_match( 
         game, 
-        [&game, &mock_nn]() { return new ttt::alphazero::Player( game, 0.4, 100, opening_moves, mock_nn); }, 
+        [&game, &mock_nn]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, opening_moves, mock_nn); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 2, data ); }, 
         rounds );
 
@@ -963,7 +964,7 @@ void uttt_multimatch_alphazero_vs_minimax()
     const double factor = 9.0;
     match.play_match( 
         game, 
-        [&game, exploration, &mock_nn]() { return new uttt::alphazero::Player( game, exploration, simulations, opening_moves, mock_nn); }, 
+        [&game, &mock_nn]() { return new uttt::alphazero::Player( game, 19652, 1.25, simulations, opening_moves, mock_nn); }, 
         [&game, factor, &data]() { return new uttt::minimax::Player( game, factor, depth, data ); }, 
         rounds );
 

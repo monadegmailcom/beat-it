@@ -70,29 +70,34 @@ float nn_eval( Node< Value< MoveT, StateT >>& node, Data< MoveT, StateT >& data 
 
 float game_result_2_score( GameResult, PlayerIndex );
 
+// upper confidence bound
 template< typename MoveT, typename StateT >
-float puct( Value< MoveT, StateT > const& value, 
-    size_t parent_visits, float exploration )
+float ucb( Value< MoveT, StateT > const& value, 
+    size_t parent_visits, float c_base, float c_init )
 {
+    const float c = 
+        std::log( (parent_visits + c_base + 1) / c_base) + c_init;
     float q = 0.0;
     if (value.visits != 0)
         q = value.nn_value_sum / value.visits;
     const float p = value.nn_policy;
         
-    return q + exploration * p * std::sqrt( parent_visits / (value.visits + 1));
+    return q + c * p * std::sqrt( parent_visits / (value.visits + 1));
 }
 
 template< typename MoveT, typename StateT >
 Node< Value< MoveT, StateT >>& select( 
-    Node< Value< MoveT, StateT >>& node, float exploration )
+    Node< Value< MoveT, StateT >>& node, 
+    float c_base, float c_init )
 {  
     return *std::ranges::max_element( 
         node.get_children(),
-        [exploration, parent_visits = node.get_value().visits]
+        [c_base, c_init, 
+         parent_visits = node.get_value().visits]
         (auto const& a, auto const& b)
         { 
-            return puct( a.get_value(), parent_visits, exploration ) 
-                 < puct( b.get_value(), parent_visits, exploration ); 
+            return ucb( a.get_value(), parent_visits, c_base, c_init ) 
+                 < ucb( b.get_value(), parent_visits, c_base, c_init ); 
         });
 }
 
@@ -116,7 +121,7 @@ template< typename MoveT, typename StateT >
 float simulation( 
     Node< Value< MoveT, StateT >>& node, 
     Data< MoveT, StateT >& data, 
-    float exploration)
+    float c_base, float c_init)
 {
     auto& value = node.get_value();
     ++value.visits;
@@ -135,7 +140,7 @@ float simulation(
         // recursively simulate the selected child node
         // negate sign of return value because its from the opponent's perspective
         nn_value = -simulation( 
-            select( node, exploration ), data, exploration );
+            select( node, c_base, c_init ), data, c_base, c_init );
 
     value.nn_value_sum += nn_value;
 
@@ -150,7 +155,8 @@ class Player : public ::Player< MoveT >
 public:
     Player( 
         Game< MoveT, StateT > const& game, 
-        float exploration,
+        float c_base,
+        float c_init,
         size_t simulations,
         size_t opening_moves,
         Data< MoveT, StateT >& data )
@@ -160,14 +166,14 @@ public:
                 detail::Value< MoveT, StateT >( game, MoveT()), data.allocator ),
             [&data](auto ptr) { deallocate( data.allocator, ptr ); }
           ),
-      exploration( exploration ), simulations( simulations ),
+      c_base( c_base ), c_init( c_init ), simulations( simulations ),
       opening_moves( opening_moves )
     {}
 
     MoveT choose_move() override
     {
         for (size_t i = simulations; i != 0; --i)
-            simulation( *root, data, exploration );
+            simulation( *root, data, c_base, c_init );
 
         auto itr = root->get_children().begin();
 
@@ -231,7 +237,8 @@ public:
 private:
     Data< MoveT, StateT >& data;
     NodePtr< detail::Value< MoveT, StateT > > root;
-    float exploration;
+    float c_base;
+    float c_init;
     size_t simulations;
     size_t opening_moves;
     size_t move_count = 0;
