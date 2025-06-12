@@ -2,6 +2,7 @@
 
 #include <boost/pool/pool_alloc.hpp>
 #include <boost/intrusive/list.hpp>
+#include <boost/intrusive/list_hook.hpp>
 
 #include <iterator>
 #include <memory>
@@ -54,6 +55,10 @@ template< typename ValueT >
 using NodePtr = std::unique_ptr< 
     Node< ValueT >, 
     std::function< void (Node< ValueT >*) > >; // deallocator
+
+
+template< typename ValueT >
+using List = boost::intrusive::list< Node< ValueT >>;
 
 template< typename ValueT >                               
 void deallocate( NodeAllocator< ValueT >& allocator, Node< ValueT >* ptr )

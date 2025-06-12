@@ -1,0 +1,44 @@
+digraph alphazero 
+{
+    sp_SharedStorage -> tn_SharedStorage [arrowhead=none]
+    sp_ReplayBuffer -> tn_ReplayBuffer  [arrowhead=none]
+    subgraph cluster_sp 
+    {
+        label=<run_selfplay, infinite loop >
+        sp_SharedStorage [shape = "box", label=<SharedStorage<br/><font point-size="10">list of networks</font>>]
+        sp_SharedStorage -> sp_Network [label=<latest network>]
+        sp_ReplayBuffer [shape = "box", label=<ReplayBuffer<br/><font point-size="10">list of games</font>>]
+        sp_run_selfplay [label=<(storage, replay_buffer, game)>]
+        sp_run_selfplay -> sp_save_game
+        sp_Network [label=<Network>]
+        sp_Network -> sp_Game [label=<play_game>]
+        sp_Game [label=<Game>]
+        sp_save_game [label=<(replay_buffer, game)>]
+        sp_save_game -> sp_Game [label=<game>]
+        sp_run_selfplay -> sp_SharedStorage [label=<storage>]
+        sp_save_game -> sp_ReplayBuffer [label=<save game>]
+    }
+
+    subgraph cluster_tn
+    {
+        label=<train_network, loop training_steps>
+        tn_ReplayBuffer [shape = "box", label=<ReplayBuffer<br/><font point-size="10">list of games</font>>]
+        tn_ReplayBuffer -> tn_batch [label=<sample_batch>]
+        tn_SharedStorage [shape = "box", label=<SharedStorage<br/><font point-size="10">list of networks</font>>]
+
+        tn_train_network [label=<(storage, network, replay_buffer, optimizer, batch)>]
+        tn_train_network -> tn_save_network
+        tn_train_network -> tn_update_weights
+        tn_save_network [label=<(storage, network)>]
+        tn_save_network -> tn_Network [label=<network>]
+        tn_save_network -> tn_SharedStorage [label=<save network<br/>on every checkpoint>]
+        tn_Network [label=<Network>]
+        tn_update_weights [label=<optimizer, network, batch)>]
+        tn_batch [label=<Batch<br/><font point-size="10">list of games states, <br/>policies and values</font>>]
+        tn_Optimizer [label=<Optimizer>]
+        tn_update_weights -> tn_Optimizer [label=<optimizer>]
+        tn_update_weights -> tn_batch [label=<batch>]
+        tn_update_weights -> tn_Network [label=<update_weights>]
+        tn_train_network -> tn_ReplayBuffer [label=<replay_buffer>]
+        }
+}

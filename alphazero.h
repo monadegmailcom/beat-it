@@ -33,8 +33,8 @@ struct Value
 template< typename MoveT, typename StateT >
 using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
 
-// N is the maximal number of moves in any position for one-hot encoding in nn
-template< typename MoveT, typename StateT >
+// G game state size, P target policy size
+template< typename MoveT, typename StateT, size_t G, size_t P >
 struct Data
 {
     Data( std::mt19937& g, NodeAllocator< MoveT, StateT >& allocator )
@@ -43,27 +43,37 @@ struct Data
     virtual ~Data() = default;
 
     // predict game state value and policy vector from nn
-    // promise: policy_vector contain probability distribution of moves
-    virtual float predict( Game< MoveT, StateT > const& ) = 0;
+    // promise: policies contain probability distribution of moves
+    virtual float predict( 
+        Game< MoveT, StateT > const&,
+        std::array< float, P >& policies ) = 0;
 
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
 
+    // promise: write serialized game into passed arrays
+    virtual void serialize_game( 
+        Game< MoveT, StateT > const&,
+        std::array< float, G >& game_state_player1,
+        std::array< float, G >& game_state_player2 ) const = 0;
+
     std::mt19937& g;
     NodeAllocator< MoveT, StateT >& allocator;
-    std::vector< float > policy_vector;
 };
 
 namespace detail {
 
-template< typename MoveT, typename StateT >
-float nn_eval( Node< Value< MoveT, StateT >>& node, Data< MoveT, StateT >& data )
+template< typename MoveT, typename StateT, size_t G, size_t P >
+float nn_eval( 
+    Node< Value< MoveT, StateT >>& node, 
+    Data< MoveT, StateT, G, P >& data )
 {
     auto& value = node.get_value();
-    value.nn_value = data.predict( value.game ); 
+    std::array< float, P > policies;
+    value.nn_value = data.predict( value.game, policies ); 
     for (auto& child : node.get_children())
         // todo: convert logits to probabilities with softmax?
-        child.get_value().nn_policy = data.policy_vector[
+        child.get_value().nn_policy = policies[
             data.move_to_policy_index( child.get_value().move )]; 
     return value.nn_value;
 }
@@ -117,10 +127,10 @@ void add_children( Node< Value< MoveT, StateT >>& node )
     }
 }
 
-template< typename MoveT, typename StateT >
+template< typename MoveT, typename StateT, size_t G, size_t P >
 float simulation( 
     Node< Value< MoveT, StateT >>& node, 
-    Data< MoveT, StateT >& data, 
+    Data< MoveT, StateT, G, P >& data, 
     float c_base, float c_init)
 {
     auto& value = node.get_value();
@@ -149,7 +159,7 @@ float simulation(
 
 } // namespace detail {
 
-template< typename MoveT, typename StateT >
+template< typename MoveT, typename StateT, size_t G, size_t P >
 class Player : public ::Player< MoveT >
 {
 public:
@@ -158,56 +168,32 @@ public:
         float c_base,
         float c_init,
         size_t simulations,
-        size_t opening_moves,
-        Data< MoveT, StateT >& data )
+        Data< MoveT, StateT, G, P >& data )
     : data( data ), 
       root( new (data.allocator.allocate()) 
             Node< detail::Value< MoveT, StateT >>( 
                 detail::Value< MoveT, StateT >( game, MoveT()), data.allocator ),
             [&data](auto ptr) { deallocate( data.allocator, ptr ); }
           ),
-      c_base( c_base ), c_init( c_init ), simulations( simulations ),
-      opening_moves( opening_moves )
-    {}
+      c_base( c_base ), c_init( c_init ), simulations( simulations )
+    {
+        if (!simulations)
+            throw std::invalid_argument( "simulations must be > 0" );
+    }
 
     MoveT choose_move() override
     {
         for (size_t i = simulations; i != 0; --i)
-            simulation( *root, data, c_base, c_init );
-
-        auto itr = root->get_children().begin();
-
-        if (move_count < opening_moves)
-        {
-            // sample from children in opening phase by visit distribution
-            // so we are more versatile in the opening
-            size_t visits = 0;
-            for (auto const& child : root->get_children())
-                visits += child.get_value().visits;
-            int r = data.g() % visits;
-            for (;itr != root->get_children().end(); ++itr)
-            {
-                r -= itr->get_value().visits;
-                if (r < 0)
-                    break;
-            }
-        }
-        else // choose the best after opening phase
-        {
-            // remove child with most visits
-            itr = 
-                std::ranges::max_element( root->get_children(),
-                    [](auto const& a, auto const& b)
-                    { return a.get_value().visits < b.get_value().visits; } );
-            if (itr == root->get_children().end())
-                throw std::runtime_error( "no move choosen" );
-        }
-
-        root->get_children().erase( itr );
-        root.reset( &*itr );
-
-        ++move_count;
+            simulation( *root, this->data, c_base, c_init );
+        auto itr = choose_best_move();
         
+        if (itr == root->get_children().end())
+            throw std::runtime_error( "no move choosen" );
+
+        auto new_root = &*itr;
+        root->get_children().erase( itr );
+        root.reset( new_root );
+
         return root->get_value().move;
     }
 
@@ -234,16 +220,165 @@ public:
 
         root.reset( new_root );
     }
-private:
-    Data< MoveT, StateT >& data;
+protected:
+    // Apple clang version 17.0.0 (clang-1700.0.13.3) produces strange errors 
+    // when i specify the return value iterator type explicitly:
+    // Node< ValueT > member boost::intrusive::list< Node > children has incomplete type
+    auto choose_best_move()
+    {
+        // choose child with most visits
+        return std::ranges::max_element( root->get_children(),
+            [](auto const& a, auto const& b)
+            { return a.get_value().visits < b.get_value().visits; } );
+    }
+
+    Data< MoveT, StateT, G, P >& data;
     NodePtr< detail::Value< MoveT, StateT > > root;
     float c_base;
     float c_init;
     size_t simulations;
+};
+
+namespace training {
+
+template< size_t G, size_t P >
+struct Position
+{
+    std::array< float, G > game_state_player1;
+    std::array< float, G > game_state_player2;
+    std::array< float, P > target_policy;
+    float target_value = 0.0f;
+};
+
+template< typename MoveT, typename StateT, size_t G, size_t P >
+class SelfPlay : public alphazero::Player< MoveT, StateT, G, P >
+{
+public:
+    SelfPlay( 
+        Game< MoveT, StateT > const& game, 
+        float c_base,
+        float c_init,
+        float dirichlet_alpha,
+        float dirichlet_epsilon,
+        size_t simulations,
+        size_t opening_moves,
+        Data< MoveT, StateT, G, P >& data,
+        std::vector< Position< G, P >>& positions )
+    : Player< MoveT, StateT, G, P >( game, c_base, c_init, simulations, data ),
+      dirichlet_alpha( dirichlet_alpha ), opening_moves( opening_moves ), 
+      dirichlet_epsilon( dirichlet_epsilon ), positions( positions ) {}
+
+    void run( Game< MoveT, StateT > const& game )
+    {
+        GameResult game_result;
+        for (game_result = game.result();
+             game_result == GameResult::Undecided;
+             game_result = this->root->get_value().game_result)
+            choose_move();
+
+        float target_value = 0.0f;
+        if (game_result == GameResult::Player1Win)
+            target_value = -1.0f;
+        else if (game_result == GameResult::Player2Win)
+            target_value = 1.0f;
+
+        for (auto& position : positions)
+            position.target_value = target_value;
+    }
+protected:
+    void add_dirichlet_noise() override 
+    {
+        std::gamma_distribution< float > gamma_dist(
+            this->dirichlet_alpha, 1.0f );
+               
+        for (auto& child : this->root->get_children())
+        {
+            float& policy = child.get_value().nn_policy;
+            policy *= 1.0 - dirichlet_epsilon;
+            policy += gamma_dist( this->data.g ) * dirichlet_epsilon;
+        }
+    }
+
+    MoveT choose_move() override
+    {
+        // add dirichlet noise on the very first move
+        if (this->root->get_children().empty())
+        {    
+            simulation( *this->root, this->data, this->c_base, this->c_init );
+            --this->simulations;
+            add_dirichlet_noise();
+        }
+
+        for (size_t i = this->simulations; i != 0; --i)
+            simulation( *this->root, this->data, this->c_base, this->c_init );
+        
+        auto itr = this->root->get_children().begin();
+        if (++move_count <= opening_moves)
+            itr = choose_opening_move();
+        else
+            itr = this->choose_best_move();
+
+        if (itr == this->root->get_children().end())
+            throw std::runtime_error( "no move choosen" );
+
+        append_training_data();
+
+        auto new_root = &*itr;
+        this->root->get_children().erase( itr );
+        this->root.reset( new_root );
+
+        return this->root->get_value().move;
+    }
+
+    void append_training_data()
+    {
+        positions.emplace_back();
+        Position< G, P >& position = positions.back();
+
+        // append serialized game state
+        this->data.serialize( this->root->get_value().game, position.game_state );
+        
+        // append new target policies        
+        for (size_t policy_index = 0; policy_index < P; ++policy_index)
+        {
+            auto child_itr = std::ranges::find_if( 
+                this->root->get_children(), 
+                [this, policy_index](auto const& child)
+                { return policy_index == this->data.move_to_policy_index( child.get_value().move ); } );
+            if (child_itr == this->root->get_children().end())
+                position.target_policy[policy_index] = 0.0f;
+            else
+                position.target_policy[policy_index] = static_cast< float >( 
+                    child_itr->get_value().visits ) / (this->root->get_value().visits - 1);
+        }
+    }
+
+    auto choose_opening_move()
+    {
+        // sample from children in opening phase by visit distribution
+        // so we are more versatile in the opening
+        size_t visits = 0;
+        for (auto const& child : this->root->get_children())
+            visits += child.get_value().visits;
+        int r = this->data.g() % visits;
+        for (auto itr = this->root->get_children().begin(); 
+                itr != this->root->get_children().end(); ++itr)
+        {
+            r -= itr->get_value().visits;
+            if (r < 0)
+                return itr;
+        }
+
+        return this->root->get_children().end();
+    }
+
     size_t opening_moves;
+    float dirichlet_alpha;
+    float dirichlet_epsilon;
+    std::vector< Position< G, P >>& positions;
     size_t move_count = 0;
 };
 
-
+} // namespace training
 
 } // namespace alphazero

@@ -141,7 +141,7 @@ double Player::score( Game const& game ) const
 
 namespace alphazero {
 
-float Data::predict( Game const& game )
+float Data::predict( Game const& game, array< float, P >& policies )
 {
     return 0.0;
 }
@@ -150,6 +150,12 @@ size_t Data::move_to_policy_index( Move const& move ) const
 {
     return size_t( move.big_move * 9 + move.small_move );
 }
+
+void Data::serialize_game( 
+    Game const&,
+    array< float, G >& game_state_player1,
+    array< float, G >& game_state_player2 ) const
+{}
 
 } // namespace alphazero {
 

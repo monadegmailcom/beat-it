@@ -181,8 +181,9 @@ public:
         if (itr == root->get_children().end())
             throw std::runtime_error( "no move choosen" );
 
+        auto new_root = &*itr;
         root->get_children().erase( itr );
-        root.reset( &*itr );
+        root.reset( new_root );
 
         return root->get_value().move;
     }
@@ -204,8 +205,8 @@ public:
                         this->data.allocator );
         else
         {
-            root->get_children().erase( itr );
             new_root = &*itr;
+            root->get_children().erase( itr );
         }
 
         root.reset( new_root );

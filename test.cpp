@@ -786,22 +786,22 @@ void uttt_match_mm_vs_tree_mm()
     assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
-template< typename MoveT, typename StateT >
-struct MockNN : alphazero::Data< MoveT, StateT >
+template< typename MoveT, typename StateT, size_t G, size_t P >
+struct MockNN : public alphazero::Data< MoveT, StateT, G, P >
 {
     MockNN( 
         mt19937& g, 
         alphazero::NodeAllocator< MoveT, StateT >& allocator,
         float exploration,
         size_t simulations )
-    : alphazero::Data< MoveT, StateT >( g, allocator ), mc_data( g, mc_allocator ),
+    : alphazero::Data< MoveT, StateT, G, P >( g, allocator ), 
+      mc_data( g, mc_allocator ),
       exploration( exploration ), simulations( simulations )
     {}
-    virtual ~MockNN() = default;
 
-    virtual size_t policy_vector_size() const = 0;
-
-    float predict( Game< MoveT, StateT > const& game ) override
+    float predict( 
+        Game< MoveT, StateT > const& game,
+        array< float, P >& policies ) override
     {
         using Value = montecarlo::detail::Value< MoveT, StateT >;
         using Node = Node< Value >;
@@ -812,16 +812,16 @@ struct MockNN : alphazero::Data< MoveT, StateT >
         for (size_t i = simulations; i != 0; --i)
             montecarlo::detail::simulation( *root, mc_data, exploration );
 
-        this->policy_vector.assign( policy_vector_size(), 0.0 );        
+        policies.fill( 0.0f );        
         if (root->get_children().empty())
             throw runtime_error( "no children for policy vector");
         if (root->get_value().visits <= 1)
             for (auto const& child : root->get_children())
-                this->policy_vector[this->move_to_policy_index( child.get_value().move )] =
+                policies[this->move_to_policy_index( child.get_value().move )] =
                     1.0 / root->get_children().size();
         else
             for (auto const& child : root->get_children())
-                this->policy_vector[this->move_to_policy_index( child.get_value().move )] = 
+                policies[this->move_to_policy_index( child.get_value().move )] = 
                     static_cast< float >( child.get_value().visits ) 
                         / (root->get_value().visits - 1);
         // transform value form [0, 1] to [-1, 1]
@@ -834,22 +834,22 @@ struct MockNN : alphazero::Data< MoveT, StateT >
     size_t simulations;
 };
 
-struct MockTTTNN : public MockNN< ttt::Move, ttt::State >
+struct MockTTTNN : public MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt::alphazero::P >
 {
     MockTTTNN( 
         mt19937& g, 
         alphazero::NodeAllocator< ttt::Move, ttt::State >& allocator )
-        : MockNN< ttt::Move, ttt::State >( g, allocator, 0.4, 100 ) {}
+        : MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt::alphazero::P >( g, allocator, 0.4, 100 ) {}
 
     size_t move_to_policy_index( ttt::Move const& move ) const override
     {
         return size_t( move );
     }
+    void serialize_game( 
+        ttt::Game const&,
+        std::array< float, ttt::alphazero::G >& game_state_player1,
+        std::array< float, ttt::alphazero::G >& game_state_player2 ) const override {}
 
-    size_t policy_vector_size() const override
-    {
-        return 9;
-    }    
 };
 
 void alphazero_ttt_match()
@@ -865,10 +865,9 @@ void alphazero_ttt_match()
     const float c_base = 19652;
     const float c_init = 1.25; 
     const size_t simulations = 100;
-    const size_t opening_moves = 1;
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::Player player1( 
-        game, c_base, c_init, simulations, opening_moves, mock_nn);
+        game, c_base, c_init, simulations, mock_nn);
 
     ttt::montecarlo::NodeAllocator mc_allocator;
     ttt::montecarlo::Data mc_data( g, mc_allocator );
@@ -893,7 +892,6 @@ void ttt_multimatch_alphazero_vs_minimax()
 
     mt19937 g( seed );
 
-    const size_t opening_moves = 1;
     ttt::alphazero::NodeAllocator allocator;
     MockTTTNN mock_nn( g, allocator );
 
@@ -904,7 +902,7 @@ void ttt_multimatch_alphazero_vs_minimax()
     const size_t rounds = 100;
     match.play_match( 
         game, 
-        [&game, &mock_nn]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, opening_moves, mock_nn); }, 
+        [&game, &mock_nn]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, mock_nn); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 2, data ); }, 
         rounds );
 
@@ -919,22 +917,23 @@ void ttt_multimatch_alphazero_vs_minimax()
     assert (match.draws > 0);
 }
 
-struct MockUTTTNN : public MockNN< uttt::Move, uttt::State >
+struct MockUTTTNN : public MockNN< uttt::Move, uttt::State, uttt::alphazero::G, uttt::alphazero::P >
 {
     MockUTTTNN( 
         mt19937& g, 
         uttt::alphazero::NodeAllocator& allocator )
-        : MockNN< uttt::Move, uttt::State >( g, allocator, 0.4, 100 ) {}
+        : MockNN< uttt::Move, uttt::State, uttt::alphazero::G, uttt::alphazero::P >( g, allocator, 0.4, 100 ) {}
 
     size_t move_to_policy_index( uttt::Move const& move ) const override
     {
         return size_t( move.big_move * 9 + move.small_move );
     }
 
-    size_t policy_vector_size() const override
-    {
-        return 81;
-    }
+    void serialize_game( 
+        uttt::Game const&,
+        std::array< float, uttt::alphazero::G >& game_state_player1,
+        std::array< float, uttt::alphazero::G >& game_state_player2 ) const override {}
+
 };
 
 void uttt_multimatch_alphazero_vs_minimax()
@@ -949,7 +948,6 @@ void uttt_multimatch_alphazero_vs_minimax()
 
     mt19937 g( seed );
 
-    const size_t opening_moves = 1;
     uttt::alphazero::NodeAllocator allocator;
     MockUTTTNN mock_nn( g, allocator );
 
@@ -964,7 +962,7 @@ void uttt_multimatch_alphazero_vs_minimax()
     const double factor = 9.0;
     match.play_match( 
         game, 
-        [&game, &mock_nn]() { return new uttt::alphazero::Player( game, 19652, 1.25, simulations, opening_moves, mock_nn); }, 
+        [&game, &mock_nn]() { return new uttt::alphazero::Player( game, 19652, 1.25, simulations, mock_nn); }, 
         [&game, factor, &data]() { return new uttt::minimax::Player( game, factor, depth, data ); }, 
         rounds );
 
@@ -987,6 +985,17 @@ void uttt_multimatch_alphazero_vs_minimax()
                     match.snd_player_duration ).count() << endl;
 
     assert (match.draws > 0);
+}
+
+void alphazero_training()
+{
+    cout << __func__ << endl;
+
+    mt19937 g( seed );
+
+    ttt::alphazero::NodeAllocator allocator;
+    ttt::alphazero::Data data( g, allocator );
+
 }
 
 } // namespace test {

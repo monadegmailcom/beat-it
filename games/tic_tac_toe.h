@@ -1,5 +1,4 @@
 #include "../minimax-tree.h"
-#include "../minimax.h"
 #include "../montecarlo.h"
 #include "../alphazero.h"
 
@@ -80,16 +79,31 @@ namespace alphazero {
 
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
-struct Data : public ::alphazero::Data< Move, State >
+const size_t G = 9;
+const size_t P = 9;
+
+struct Data : public ::alphazero::Data< Move, State, G, P >
 {
     Data( std::mt19937& g, NodeAllocator& allocator )
-    : ::alphazero::Data< Move, State >( g, allocator ) {}
+    : ::alphazero::Data< Move, State, G, P >( g, allocator ) {}
 
-    float predict( Game const& ) override;
+    float predict( 
+        Game const&, 
+        std::array< float, P >& policies ) override;
     size_t move_to_policy_index( Move const& ) const override;
+    void serialize_game( 
+        Game const&,
+        std::array< float, G >& game_state_player1,
+        std::array< float, G >& game_state_player2 ) const override;
 };
 
-using Player = ::alphazero::Player< Move, State >;
+using Player = ::alphazero::Player< Move, State, G, P >;
+
+namespace training {
+
+using SelfPlay = ::alphazero::training::SelfPlay< Move, State, G, P >;
+
+} // namespace training {
 
 } // namespace alphazero {
 

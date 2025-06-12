@@ -1,7 +1,6 @@
 #pragma once
 
 #include "minimax.h"
-
 #include "node.h"
 
 #include <random>
@@ -84,8 +83,8 @@ protected:
                         this->data.allocator );
         else
         {
-            root->get_children().erase( itr );
             new_root = &*itr;
+            root->get_children().erase( itr );
         }
 
         root.reset( new_root );
@@ -194,8 +193,9 @@ protected:
             throw std::runtime_error( "no move choosen");
         auto chosen = root->get_children().begin();
 
+        auto new_root = &*chosen;
         root->get_children().erase( chosen );
-        root.reset( &*chosen );
+        root.reset( new_root );
 
         return root->get_value().move;
     }

@@ -42,7 +42,7 @@ double score( State const& state )
 
 namespace alphazero {
 
-float Data::predict( Game const& game )
+float Data::predict( Game const& game, array< float, P >& )
 {
     return 0.0;
 }
@@ -52,6 +52,17 @@ size_t Data::move_to_policy_index( Move const& move ) const
     return size_t( move );
 }
 
+void Data::serialize_game( 
+    Game const& game,
+    array< float, G >& game_state_player1,
+    array< float, G >& game_state_player2 ) const
+{
+
+}
+
+namespace training {
+
+} // namespace training {
 } // namespace alphazero {
 
 Symbol player_index_to_symbol( PlayerIndex player_index )
