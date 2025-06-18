@@ -824,7 +824,7 @@ struct MockNN : public alphazero::Data< MoveT, StateT, G, P >
                 policies[this->move_to_policy_index( child.get_value().move )] = 
                     static_cast< float >( child.get_value().visits ) 
                         / (root->get_value().visits - 1);
-        // transform value form [0, 1] to [-1, 1]
+        // transform value from [0, 1] to [-1, 1]
         return 2 * root->get_value().points / root->get_value().visits - 1;
     }
 
@@ -845,7 +845,7 @@ struct MockTTTNN : public MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt:
     {
         return size_t( move );
     }
-    void serialize_game( 
+    void serialize_state( 
         ttt::Game const&,
         std::array< float, ttt::alphazero::G >& game_state_player1,
         std::array< float, ttt::alphazero::G >& game_state_player2 ) const override {}
@@ -929,7 +929,7 @@ struct MockUTTTNN : public MockNN< uttt::Move, uttt::State, uttt::alphazero::G, 
         return size_t( move.big_move * 9 + move.small_move );
     }
 
-    void serialize_game( 
+    void serialize_state( 
         uttt::Game const&,
         std::array< float, uttt::alphazero::G >& game_state_player1,
         std::array< float, uttt::alphazero::G >& game_state_player2 ) const override {}
@@ -996,6 +996,21 @@ void alphazero_training()
     ttt::alphazero::NodeAllocator allocator;
     ttt::alphazero::Data data( g, allocator );
 
+    const float c_base = 19652;
+    const float c_init = 1.25; 
+    const size_t simulations = 100;
+    const float dirichlet_alpha = 0.3;
+    const float dirichlet_epsilon = 0.0; // 0.25;
+    const size_t opening_moves = 0; // 1;
+    vector< ttt::alphazero::training::Position > positions;
+
+    ttt::Game game( Player1, ttt::empty_state );
+    ttt::alphazero::training::SelfPlay selfplay( 
+        game, c_base, c_init, dirichlet_alpha,
+        dirichlet_epsilon, simulations, opening_moves,
+        data, positions );
+
+    selfplay.run( game );
 }
 
 } // namespace test {
@@ -1030,9 +1045,10 @@ int main()
         test::uttt_match_mm_vs_tree_mm();
         test::alphazero_ttt_match();
         test::ttt_multimatch_alphazero_vs_minimax();
-        */
         test::montecarlo_minimax_uttt_match();
         test::uttt_multimatch_alphazero_vs_minimax();
+        */
+        test::alphazero_training();
 
         cout << "\neverything ok" << endl;    
         return 0;

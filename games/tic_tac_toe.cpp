@@ -2,6 +2,7 @@
 
 #include <iostream>
 #include <algorithm>
+#include <cmath>
 
 using namespace std;
 
@@ -42,9 +43,23 @@ double score( State const& state )
 
 namespace alphazero {
 
-float Data::predict( Game const& game, array< float, P >& )
+float Data::predict( Game const& game, array< float, P >& policies )
 {
-    return 0.0;
+    // for debug purposes use score function for prediction
+
+    // initialize policies to 0.0
+    policies.fill ( 0.0f );
+
+    // transform scores to increasing values from worst to best
+    const float f = game.current_player_index() == PlayerIndex::Player1 
+        ? -1.0f
+        : 1.0f;
+    for (auto move : game)
+        policies[move_to_policy_index( move )] = f * static_cast< float >( minimax::score( 
+            game.apply( move ).get_state()));
+
+    // transform score to target value from -1 (loss) to 1 (win)
+    return tanh( f * static_cast< float >( minimax::score( game.get_state())));
 }
 
 size_t Data::move_to_policy_index( Move const& move ) const
@@ -52,12 +67,28 @@ size_t Data::move_to_policy_index( Move const& move ) const
     return size_t( move );
 }
 
-void Data::serialize_game( 
+void Data::serialize_state( 
     Game const& game,
     array< float, G >& game_state_player1,
     array< float, G >& game_state_player2 ) const
 {
-
+    auto const& state = game.get_state();
+    for (size_t i = 0; i != G; ++i)
+        if (state[i] == Symbol::Empty)
+        {
+            game_state_player1[i] = 0.0;    
+            game_state_player2[i] = 0.0;    
+        }
+        else if (state[i] == Symbol::Player1)
+        {
+            game_state_player1[i] = 1.0;    
+            game_state_player2[i] = 0.0;    
+        }
+        else if (state[i] == Symbol::Player2)
+        {
+            game_state_player1[i] = 0.0;    
+            game_state_player2[i] = 1.0;    
+        }
 }
 
 namespace training {

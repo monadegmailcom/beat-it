@@ -151,7 +151,7 @@ size_t Data::move_to_policy_index( Move const& move ) const
     return size_t( move.big_move * 9 + move.small_move );
 }
 
-void Data::serialize_game( 
+void Data::serialize_state( 
     Game const&,
     array< float, G >& game_state_player1,
     array< float, G >& game_state_player2 ) const

@@ -91,7 +91,7 @@ struct Data : public ::alphazero::Data< Move, State, G, P >
         Game const&, 
         std::array< float, P >& policies ) override;
     size_t move_to_policy_index( Move const& ) const override;
-    void serialize_game( 
+    void serialize_state( 
         Game const&,
         std::array< float, G >& game_state_player1,
         std::array< float, G >& game_state_player2 ) const override;
@@ -102,6 +102,7 @@ using Player = ::alphazero::Player< Move, State, G, P >;
 namespace training {
 
 using SelfPlay = ::alphazero::training::SelfPlay< Move, State, G, P >;
+using Position = ::alphazero::training::Position< G, P >;
 
 } // namespace training {
 
