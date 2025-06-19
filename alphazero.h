@@ -5,14 +5,12 @@
 #include "node.h"
 
 #include <random>
-#include <iostream> // debug
 
 namespace alphazero
 {
 
 namespace detail 
 {
-
     template< typename MoveT, typename StateT >
     struct Value
     {
@@ -27,9 +25,8 @@ namespace detail
         // policy probalities (priors) of choosing this move
         float nn_policy = 0.0; 
         // 1 for win, 0.5 for draw, 0 for loss
-        // value of the game outcome: -1 loss, 0 draw, 1 win from the perspective
+        // value sum of the game outcomes: -1 loss, 0 draw, 1 win from the perspective
         // of the current player
-        float nn_value = 0.0; 
         float nn_value_sum = 0.0;
     };
 
@@ -152,7 +149,8 @@ protected:
             std::log( (parent_visits + c_base + 1) / c_base) + c_init;
         float q = 0.0;
         if (value.visits != 0)
-            q = value.nn_value_sum / value.visits;
+            // switch sign because value is from the child's perspective
+            q = -value.nn_value_sum / value.visits;
         const float p = value.nn_policy;
             
         return q + c * p * std::sqrt( parent_visits / (value.visits + 1));
@@ -160,19 +158,6 @@ protected:
 
     NodeType& select( NodeType& node )
     {  
-        std::array< size_t, P > debug_visits;
-        std::array< float, P > debug_nn_policy;
-        std::array< float, P > debug_q;
-        std::array< float, P > debug_cbs;
-        for (auto& child : this->root->get_children())
-        {
-            debug_visits[data.move_to_policy_index( child.get_value().move )] = child.get_value().visits;
-            debug_nn_policy[data.move_to_policy_index( child.get_value().move )] = child.get_value().nn_policy;
-            debug_q[data.move_to_policy_index( child.get_value().move )] = 
-                child.get_value().visits ? child.get_value().nn_value_sum / child.get_value().visits : 0.0f;
-            debug_cbs[data.move_to_policy_index( child.get_value().move )] = ucb( child.get_value(), node.get_value().visits );
-        }
-
         return *std::ranges::max_element( 
             node.get_children(),
             [this, parent_visits = node.get_value().visits]
@@ -201,7 +186,7 @@ protected:
             }
 
         std::array< float, P > policies;
-        value.nn_value = data.predict( value.game, policies ); 
+        const float nn_value = data.predict( value.game, policies ); 
 
         // convert logits of legal moves to probabilities with softmax 
         // and save in children
@@ -216,11 +201,8 @@ protected:
         // normalize
         for (auto& child : node.get_children())
             child.get_value().nn_policy /= policy_sum;
-        std::array< float, P > debug;
-        for (auto& child : node.get_children())
-            debug[data.move_to_policy_index( child.get_value().move )] = child.get_value().nn_policy;
 
-        return value.nn_value;
+        return nn_value;
     }
 
     float simulation( NodeType& node )
@@ -296,14 +278,10 @@ public:
              game_result = this->root->get_value().game_result)
             choose_move();
 
-        float target_value = 0.0f;
-        if (game_result == GameResult::Player1Win)
-            target_value = -1.0f;
-        else if (game_result == GameResult::Player2Win)
-            target_value = 1.0f;
-
         for (auto& position : positions)
-            position.target_value = target_value;
+            position.target_value = detail::game_result_2_score(
+                game_result, 
+                position.current_player < 0.5f ? Player1 : Player2 );
     }
 protected:
     // promise: root node is expanded
@@ -313,10 +291,6 @@ protected:
         if (this->root->get_children().empty())
             this->nn_eval( *this->root );
 
-        std::array< float, P > debug;
-        for (auto& child : this->root->get_children())
-            debug[this->data.move_to_policy_index( child.get_value().move )] = child.get_value().nn_policy;
-
         // add noise for root node
         for (auto& child : this->root->get_children())
         {
@@ -324,10 +298,6 @@ protected:
             policy *= 1.0 - dirichlet_epsilon;
             policy += gamma_dist( this->data.g ) * dirichlet_epsilon;
         }
-
-        std::array< float, P > debug2;
-        for (auto& child : this->root->get_children())
-            debug2[this->data.move_to_policy_index( child.get_value().move )] = child.get_value().nn_policy;
     }
 
     MoveT choose_move() override

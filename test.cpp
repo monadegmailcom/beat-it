@@ -1000,7 +1000,7 @@ void alphazero_training()
     const float c_init = 1.25; 
     const size_t simulations = 100;
     const float dirichlet_alpha = 0.3;
-    const float dirichlet_epsilon = 0.0; // 0.25;
+    const float dirichlet_epsilon = 0.25;
     const size_t opening_moves = 0; // 1;
     vector< ttt::alphazero::training::Position > positions;
 
@@ -1048,7 +1048,8 @@ int main()
         test::montecarlo_minimax_uttt_match();
         test::uttt_multimatch_alphazero_vs_minimax();
         */
-        test::alphazero_training();
+        test::uttt_multimatch_alphazero_vs_minimax();
+//        test::alphazero_training();
 
         cout << "\neverything ok" << endl;    
         return 0;
