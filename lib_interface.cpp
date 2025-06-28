@@ -37,14 +37,17 @@ extern "C" {
  *        and provides pointers to it via the data_pointers_out struct. The memory is managed
  *        by the library.
  * 
- * This function is designed to be called from a foreign language interface like Python's ctypes.
+ * This function is designed to be called from a foreign language interface like Python's ctypes. The model
+ * is passed as an in-memory buffer.
  * 
- * @param model_path Path to the TorchScript model file.
+ * @param model_data Pointer to the in-memory TorchScript model data.
+ * @param model_data_len Length of the model data in bytes.
  * @param data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
  * @return The number of game positions actually generated. Returns a negative value on error.
  */
 int run_ttt_selfplay(
-    const char* model_path,
+    const char* model_data,
+    int32_t model_data_len,
     int8_t current_player, // 0: player 1, 1: player 2
     float c_base, // 19652
     float c_init, // 1.25
@@ -62,7 +65,7 @@ int run_ttt_selfplay(
         using Data = ttt::alphazero::libtorch::Data;
 
         // 1. Setup the game and data structures
-        Data data(g, node_allocator, model_path);
+        Data data(g, node_allocator, model_data, model_data_len);
 
         Game initial_game( 
             static_cast< PlayerIndex >( current_player ), ttt::empty_state );

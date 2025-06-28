@@ -87,21 +87,22 @@ void Data::serialize_state(
 
 namespace libtorch {
 
-Data::Data( mt19937& g, NodeAllocator& allocator, string const& model_path )
-    : ttt::alphazero::Data( g, allocator ), 
-      module( torch::jit::load( model_path )) 
+Data::Data( mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len )
+    : ttt::alphazero::Data( g, allocator ),
+      model_data( std::string( model_data, model_data_len )),
+      module( torch::jit::load( model_data ))
 {
     module.eval();
 
     if (torch::cuda::is_available()) 
     {
-        cout << "CUDA is available! Moving model to GPU." << std::endl;
+        cout << "CUDA is available! Moving model to GPU." << endl;
         device = torch::kCUDA;
         module.to( torch::kCUDA );
     } 
     else 
     {
-        cout << "CUDA not available. Using CPU." << std::endl;
+        cout << "CUDA not available. Using CPU." << endl;
         device = torch::kCPU;
     }
 }
