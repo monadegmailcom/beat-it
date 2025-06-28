@@ -847,9 +847,7 @@ struct MockTTTNN : public MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt:
     }
     void serialize_state( 
         ttt::Game const&,
-        std::array< float, ttt::alphazero::G >& game_state_player1,
-        std::array< float, ttt::alphazero::G >& game_state_player2 ) const override {}
-
+        std::array< float, ttt::alphazero::G >& ) const override {}
 };
 
 void alphazero_ttt_match()
@@ -931,8 +929,7 @@ struct MockUTTTNN : public MockNN< uttt::Move, uttt::State, uttt::alphazero::G, 
 
     void serialize_state( 
         uttt::Game const&,
-        std::array< float, uttt::alphazero::G >& game_state_player1,
-        std::array< float, uttt::alphazero::G >& game_state_player2 ) const override {}
+        std::array< float, uttt::alphazero::G >& ) const override {}
 
 };
 
@@ -1010,7 +1007,7 @@ void alphazero_training()
         dirichlet_epsilon, simulations, opening_moves,
         data, positions );
 
-    selfplay.run( game );
+    selfplay.run();
 }
 
 } // namespace test {

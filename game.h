@@ -5,7 +5,7 @@
 #include <optional>
 #include <vector>
 
-enum PlayerIndex
+enum PlayerIndex : uint8_t
 {
     Player1 = 0,
     Player2

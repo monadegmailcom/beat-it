@@ -6,8 +6,8 @@ CC=g++
 HOMEBREW=/opt/homebrew/Cellar
 
 BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
+LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
 #GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
-#GPERF_PATH=$(HOMEBREW)/gperftools/2.16
 
 PROJECT_ROOT=$(shell pwd)
 
@@ -15,9 +15,9 @@ PROJECT_ROOT=$(shell pwd)
 UNIVERSAL_FLAGS=
 
 INCLUDE=-isystem$(BOOST_PATH)/include/ \
-#		-isystem$(GRAPHVIZ_PATH)/include 
-LINK=
-#-L$(GPERF_PATH)/lib -lprofiler
+		-isystem$(LIBTORCH_PATH)/include/ \
+		-isystem$(LIBTORCH_PATH)/include/torch/csrc/api/include/
+LINK=-L$(LIBTORCH_PATH)/lib -Wl,-rpath,$(LIBTORCH_PATH)/lib -ltorch -ltorch_cpu -lc10
 # -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
 #	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
@@ -37,7 +37,7 @@ ifeq ($(MAKECMDGOALS), beat-it)
 endif
 
 $(info OPT=$(OPT))
-FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -c
+FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -fPIC -c
 
 # Automatically reference all local .cpp files
 SOURCES=$(wildcard *.cpp) $(wildcard games/*.cpp)
@@ -48,12 +48,16 @@ $(info DEPS=$(DEPS))
 
 MAIN_OBJS=$(filter-out $(ODIR)/test.o, $(OBJS))
 TEST_OBJS=$(filter-out $(ODIR)/main.o, $(OBJS))
+SHARED_OBJS=$(filter-out $(ODIR)/main.o $(ODIR)/test.o, $(OBJS))
 
 beat-it: $(MAIN_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/beat-it $(MAIN_OBJS) $(LINK)
 
 test: $(TEST_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/test $(TEST_OBJS) $(LINK)
+
+shared: $(SHARED_OBJS)
+	$(CC) $(UNIVERSAL_FLAGS) -shared -o $(ODIR)/libalphazero.so $(SHARED_OBJS) $(LINK)
 
 $(ODIR)/%.o: %.cpp | $(ODIR)
 	$(CC) $(FLAGS) -MMD -MP -c $< -o $@

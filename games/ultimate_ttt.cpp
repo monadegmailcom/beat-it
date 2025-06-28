@@ -153,8 +153,7 @@ size_t Data::move_to_policy_index( Move const& move ) const
 
 void Data::serialize_state( 
     Game const&,
-    array< float, G >& game_state_player1,
-    array< float, G >& game_state_player2 ) const
+    array< float, G >& game_state_players ) const
 {}
 
 } // namespace alphazero {

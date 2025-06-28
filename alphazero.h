@@ -58,8 +58,7 @@ struct Data
     // promise: write serialized game into passed arrays
     virtual void serialize_state( 
         Game< MoveT, StateT > const&,
-        std::array< float, G >& game_state_player1,
-        std::array< float, G >& game_state_player2 ) const = 0;
+        std::array< float, G >& game_state_players ) const = 0;
 
     std::mt19937& g;
     NodeAllocator< MoveT, StateT >& allocator;
@@ -242,11 +241,10 @@ namespace training {
 template< size_t G, size_t P >
 struct Position
 {
-    std::array< float, G > game_state_player1;
-    std::array< float, G > game_state_player2;
+    std::array< float, G > game_state_players;
     std::array< float, P > target_policy;
     float target_value = 0.0f;
-    float current_player = 0.0f; // cast from PlayerIndex 0 and 1, player next to move
+    PlayerIndex current_player;
 };
 
 template< typename MoveT, typename StateT, size_t G, size_t P >
@@ -270,18 +268,17 @@ public:
       opening_moves( opening_moves ), dirichlet_epsilon( dirichlet_epsilon ), 
       gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ) {}
 
-    void run( Base::GameType const& game )
+    void run()
     {
         GameResult game_result;
-        for (game_result = game.result();
+        for (game_result = this->root->get_value().game.result();
              game_result == GameResult::Undecided;
              game_result = this->root->get_value().game_result)
             choose_move();
 
         for (auto& position : positions)
             position.target_value = detail::game_result_2_score(
-                game_result, 
-                position.current_player < 0.5f ? Player1 : Player2 );
+                game_result, position.current_player );
     }
 protected:
     // promise: root node is expanded
@@ -332,14 +329,12 @@ protected:
         positions.emplace_back();
         PositionType& position = positions.back();
 
-        position.current_player = static_cast< float >( 
-            this->root->get_value().game.current_player_index());
+        position.current_player = this->root->get_value().game.current_player_index();
 
         // append serialized game state
         this->data.serialize_state( 
             this->root->get_value().game, 
-            position.game_state_player1,
-            position.game_state_player2 );
+            position.game_state_players );
         
         size_t sum_visits = 0;
         for (auto const& child : this->root->get_children())
@@ -364,19 +359,25 @@ protected:
     {
         // sample from children in opening phase by visit distribution
         // so we are more versatile in the opening
-        size_t visits = 0;
+        size_t total_visits = 0;
         for (auto const& child : this->root->get_children())
-            visits += child.get_value().visits;
-        int r = this->data.g() % visits;
+            total_visits += child.get_value().visits;
+
+        if (!total_visits)
+            throw std::runtime_error( "no opening move choosen");
+
+        std::uniform_int_distribution< size_t > dist(0, total_visits - 1);
+        size_t r = dist(this->data.g);
+
         for (auto itr = this->root->get_children().begin(); 
                 itr != this->root->get_children().end(); ++itr)
         {
-            r -= itr->get_value().visits;
-            if (r < 0)
+            if (r < itr->get_value().visits)
                 return itr;
+            r -= itr->get_value().visits;
         }
 
-        return this->root->get_children().end();
+        return this->root->get_children().begin(); // Fallback, should ideally not be reached
     }
 
     size_t opening_moves;

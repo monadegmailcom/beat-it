@@ -69,27 +69,77 @@ size_t Data::move_to_policy_index( Move const& move ) const
 
 void Data::serialize_state( 
     Game const& game,
-    array< float, G >& game_state_player1,
-    array< float, G >& game_state_player2 ) const
+    array< float, G >& game_state_players ) const
 {
     auto const& state = game.get_state();
-    for (size_t i = 0; i != G; ++i)
-        if (state[i] == Symbol::Empty)
-        {
-            game_state_player1[i] = 0.0;    
-            game_state_player2[i] = 0.0;    
-        }
-        else if (state[i] == Symbol::Player1)
-        {
-            game_state_player1[i] = 1.0;    
-            game_state_player2[i] = 0.0;    
-        }
-        else if (state[i] == Symbol::Player2)
-        {
-            game_state_player1[i] = 0.0;    
-            game_state_player2[i] = 1.0;    
-        }
+
+    game_state_players.fill( 0.0f );
+    const ttt::Symbol player_symbol = player_index_to_symbol( 
+        game.current_player_index());
+    const ttt::Symbol opponent_symbol = player_index_to_symbol( 
+        toggle( game.current_player_index()));
+    for (size_t i = 0; i != 9; ++i)
+        if (state[i] == player_symbol)
+            game_state_players[i] = 1.0;    
+        else if (state[i] == opponent_symbol)
+            game_state_players[i + 9] = 1.0f;    
 }
+
+namespace libtorch {
+
+Data::Data( mt19937& g, NodeAllocator& allocator, string const& model_path )
+    : ttt::alphazero::Data( g, allocator ), 
+      module( torch::jit::load( model_path )) 
+{
+    module.eval();
+
+    if (torch::cuda::is_available()) 
+    {
+        cout << "CUDA is available! Moving model to GPU." << std::endl;
+        device = torch::kCUDA;
+        module.to( torch::kCUDA );
+    } 
+    else 
+    {
+        cout << "CUDA not available. Using CPU." << std::endl;
+        device = torch::kCPU;
+    }
+}
+
+float Data::predict( 
+    Game const& game, 
+    std::array< float, P >& policies )
+{   
+    array< float, G > game_state_players;
+    serialize_state( game, game_state_players );
+
+    torch::Tensor input_tensor = torch::from_blob(
+            game_state_players.data(),
+            {1, static_cast<long>(G)}, // Shape: [Batch=1, Features=G]
+            torch::kFloat32 // Assuming float32 input
+        ).to( device ); // Move to the appropriate device (CPU/GPU)
+
+    torch::jit::IValue output_ivalue = module.forward( { input_tensor } );
+    auto output_tuple = output_ivalue.toTuple();
+    
+    // extract policies
+    torch::Tensor policy_logits_tensor =
+        output_tuple->elements()[1].toTensor().to( torch::kCPU ); // Move to CPU for access
+    if (policy_logits_tensor.numel() != P)
+        throw runtime_error( "policy tensor size mismatch" );
+    policy_logits_tensor = policy_logits_tensor.contiguous();
+    float* const policy_data_ptr = policy_logits_tensor.data_ptr<float>();
+    copy( policy_data_ptr, policy_data_ptr + P, policies.begin());
+          
+    // extract target value
+    torch::Tensor value_tensor =
+        output_tuple->elements()[0].toTensor().to( torch::kCPU ); // Move to CPU for access
+    if (value_tensor.numel() != 1) 
+        throw runtime_error( "value tensor is not a scalar" );
+    return value_tensor.item< float >();
+}
+
+} // namespace libtorch
 
 namespace training {
 

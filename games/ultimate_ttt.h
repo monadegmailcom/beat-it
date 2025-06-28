@@ -90,7 +90,7 @@ namespace alphazero {
 
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
-const size_t G = 81;
+const size_t G = 2 * 81;
 const size_t P = 81;
 
 struct Data : public ::alphazero::Data< Move, State, G, P >
@@ -104,8 +104,7 @@ struct Data : public ::alphazero::Data< Move, State, G, P >
     size_t move_to_policy_index( Move const& ) const override;
     void serialize_state( 
         Game const&,
-        std::array< float, G >& game_state_player1,
-        std::array< float, G >& game_state_player2 ) const override;
+        std::array< float, G >& game_state_players ) const override;
 };
 
 using Player = ::alphazero::Player< Move, State, G, P >;

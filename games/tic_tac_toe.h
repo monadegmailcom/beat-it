@@ -2,6 +2,9 @@
 #include "../montecarlo.h"
 #include "../alphazero.h"
 
+#include <torch/script.h> // Main LibTorch header for loading models
+#include <torch/torch.h>
+
 #include <array>
 #include <iostream>
 
@@ -79,7 +82,7 @@ namespace alphazero {
 
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
-const size_t G = 9;
+const size_t G = 2 * 9;
 const size_t P = 9;
 
 struct Data : public ::alphazero::Data< Move, State, G, P >
@@ -93,11 +96,24 @@ struct Data : public ::alphazero::Data< Move, State, G, P >
     size_t move_to_policy_index( Move const& ) const override;
     void serialize_state( 
         Game const&,
-        std::array< float, G >& game_state_player1,
-        std::array< float, G >& game_state_player2 ) const override;
+        std::array< float, G >& ) const override;
 };
 
 using Player = ::alphazero::Player< Move, State, G, P >;
+
+namespace libtorch {
+
+struct Data : public ttt::alphazero::Data
+{
+    Data( std::mt19937& g, NodeAllocator& allocator, std::string const& model_path );
+    
+    float predict( Game const&, std::array< float, P >& policies ) override;
+
+    torch::jit::script::Module module; // The loaded TorchScript model
+    torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
+}; 
+
+} // namespace libtorch
 
 namespace training {
 
