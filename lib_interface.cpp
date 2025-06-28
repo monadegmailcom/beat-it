@@ -59,21 +59,17 @@ int run_ttt_selfplay(
 {
     try 
     {
-        // Use aliases for Tic-Tac-Toe specific types for clarity
-        using Game = ttt::Game;
-        using SelfPlay = ttt::alphazero::training::SelfPlay;
-        using Data = ttt::alphazero::libtorch::Data;
-
         // 1. Setup the game and data structures
-        Data data(g, node_allocator, model_data, model_data_len);
+        ttt::alphazero::libtorch::Data data(
+            g, node_allocator, model_data, model_data_len);
 
-        Game initial_game( 
+        ttt::Game initial_game( 
             static_cast< PlayerIndex >( current_player ), ttt::empty_state );
 
         positions.clear();
 
         // 2. Run self-play to generate training data
-        SelfPlay self_play(
+        ttt::alphazero::training::SelfPlay self_play(
             initial_game, c_base, c_init, dirichlet_alpha, dirichlet_epsilon, simulations, 
             opening_moves, data, positions );
         self_play.run();
