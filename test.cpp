@@ -656,7 +656,7 @@ void montecarlo_minimax_ttt_match()
     const size_t rounds = 100;
     match.play_match( 
         game, 
-        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 800, data1 ); }, 
+        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 400, data1 ); }, 
         [&game, &data2]() { return new ttt::minimax::Player( game, 2, data2 ); }, 
         rounds );
 
@@ -1010,6 +1010,49 @@ void alphazero_training()
     selfplay.run();
 }
 
+void ttt_alphazero_nn_vs_minimax()
+{
+    cout << __func__ << endl;
+
+    std::mt19937 g( seed );
+    ttt::alphazero::NodeAllocator node_allocator;
+    const std::string model_path = "ttt_model_final.pt"; // Path to the model saved by Python
+
+    // 2. Create the data object by loading the model from the file
+    // This uses the new file-based constructor we added.
+    ttt::alphazero::libtorch::Data nn_data(g, node_allocator, model_path);
+    std::cout << "Successfully loaded model from " << model_path << std::endl;
+
+    ttt::minimax::Data data( g );
+    ttt::Game game( Player1, ttt::empty_state );
+
+    MultiMatch< ttt::Move, ttt::State > match;
+    const size_t rounds = 100;
+    match.play_match( 
+        game, 
+        [&game, &nn_data]() { return new ttt::alphazero::Player( game, 19652, 1.25, 400, nn_data); }, 
+        [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
+        rounds );
+
+    if (verbose)
+        cout 
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "draws: " << match.draws << '\n'
+            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data.eval_calls << '\n'
+            << "fst/snd player duration ratio: "
+            << double( chrono::duration_cast< std::chrono::microseconds >( 
+                    match.fst_player_duration ).count()) / 
+               chrono::duration_cast< std::chrono::microseconds >( 
+                    match.snd_player_duration ).count() << '\n' << endl;
+
+    assert (match.draws > 0);
+
+}
+
 } // namespace test {
 
 int main()
@@ -1044,9 +1087,10 @@ int main()
         test::ttt_multimatch_alphazero_vs_minimax();
         test::montecarlo_minimax_uttt_match();
         test::uttt_multimatch_alphazero_vs_minimax();
+        test::alphazero_training();
         */
-        test::uttt_multimatch_alphazero_vs_minimax();
-//        test::alphazero_training();
+        test::montecarlo_minimax_ttt_match();
+        test::ttt_alphazero_nn_vs_minimax();
 
         cout << "\neverything ok" << endl;    
         return 0;

@@ -106,11 +106,12 @@ namespace libtorch {
 
 struct Data : public ttt::alphazero::Data
 {
+    Data( std::mt19937& g, NodeAllocator& allocator, const std::string& model_path );
     Data( std::mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len );
     
     float predict( Game const&, std::array< float, P >& policies ) override;
 
-    std::istringstream model_data;
+    std::istringstream model_data_stream;
     torch::jit::script::Module module; // The loaded TorchScript model
     torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
 }; 

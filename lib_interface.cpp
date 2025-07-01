@@ -2,6 +2,7 @@
 #include <vector>
 #include <iostream>
 #include <algorithm>
+#include <memory>
 #include <cstdint>
 
 using namespace std;
@@ -9,13 +10,17 @@ using namespace std;
 // static global variables keeps them local to this compile unit
 
 // A static buffer to hold the self-play data. This avoids repeated allocations/deallocations
+// the selfplay_data_buffer has a different memory layout than the 
+// incrementally generated positions. so we need a copy:
+// four arrays with positions.size() entries:
+// 1. games states, 2.  policies targets, 3. value targets, 4: player indices
 static vector< uint8_t > selfplay_data_buffer;
 
 static mt19937 g( random_device{}());
 static ttt::alphazero::NodeAllocator node_allocator;
 
-// the selfplay_data_buffer has a different memory layout than the 
-// incrementally generated positions. so we need another variable.
+static unique_ptr< ttt::alphazero::libtorch::Data > libtorch_data;
+
 static vector< ttt::alphazero::training::Position > positions;
 
 // A struct to define the layout of the data pointers. This must be mirrored in Python.
@@ -32,6 +37,31 @@ struct DataPointers {
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
 
+int set_model( const char* model_data, int32_t model_data_len)
+{
+    try 
+    {
+        if (torch::cuda::is_available()) 
+            cout << "CUDA is available! Moving model to GPU." << endl;
+        else 
+            cout << "CUDA not available. Using CPU." << endl;
+
+        libtorch_data.reset( new ttt::alphazero::libtorch::Data( 
+            g, node_allocator, model_data, model_data_len ));
+        return 0;
+    } 
+    catch (exception const& e) 
+    {
+        cerr << "C++ Exception caught: " << e.what() << endl;
+        return -1;
+    } 
+    catch (...) 
+    {
+        cerr << "C++ Unknown exception caught." << endl;
+        return -2;
+    }
+}
+
 /**
  * @brief Runs one self-play game for Tic-Tac-Toe. Allocates memory for the training data
  *        and provides pointers to it via the data_pointers_out struct. The memory is managed
@@ -40,14 +70,10 @@ extern "C" {
  * This function is designed to be called from a foreign language interface like Python's ctypes. The model
  * is passed as an in-memory buffer.
  * 
- * @param model_data Pointer to the in-memory TorchScript model data.
- * @param model_data_len Length of the model data in bytes.
  * @param data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
  * @return The number of game positions actually generated. Returns a negative value on error.
  */
 int run_ttt_selfplay(
-    const char* model_data,
-    int32_t model_data_len,
     int8_t current_player, // 0: player 1, 1: player 2
     float c_base, // 19652
     float c_init, // 1.25
@@ -59,9 +85,8 @@ int run_ttt_selfplay(
 {
     try 
     {
-        // 1. Setup the game and data structures
-        ttt::alphazero::libtorch::Data data(
-            g, node_allocator, model_data, model_data_len);
+        if (!libtorch_data)
+            throw runtime_error( "no model loaded" );
 
         ttt::Game initial_game( 
             static_cast< PlayerIndex >( current_player ), ttt::empty_state );
@@ -71,7 +96,7 @@ int run_ttt_selfplay(
         // 2. Run self-play to generate training data
         ttt::alphazero::training::SelfPlay self_play(
             initial_game, c_base, c_init, dirichlet_alpha, dirichlet_epsilon, simulations, 
-            opening_moves, data, positions );
+            opening_moves, *libtorch_data, positions );
         self_play.run();
 
         // 3. Calculate memory layout and resize the static buffer

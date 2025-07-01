@@ -3,5 +3,6 @@ local_files/
 obj/
 gui/
 .vscode/
+.venv/
 .DS_Store
 .swp

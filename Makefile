@@ -32,7 +32,8 @@ ifeq ($(MAKECMDGOALS), test)
     OPT=$(DEBUG)
 endif
 
-ifeq ($(MAKECMDGOALS), beat-it)
+# Set OPT for release targets
+ifneq ($(filter beat-it shared,$(MAKECMDGOALS)),)
     OPT=$(RELEASE)
 endif
 
@@ -68,4 +69,4 @@ $(ODIR):
 -include $(DEPS)
 
 clean:
-	rm -f $(ODIR)/*.o $(ODIR)/games/*.o $(ODIR)/beat-it $(ODIR)/test $(ODIR)/*.d $(ODIR)/games/*.d
+	rm -f $(ODIR)/*.o $(ODIR)/games/*.o $(ODIR)/beat-it $(ODIR)/test $(ODIR)/libalphazero.so $(ODIR)/*.d $(ODIR)/games/*.d
