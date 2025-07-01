@@ -1,6 +1,8 @@
 *~
 local_files/
+runs/
 obj/
+models/
 gui/
 .vscode/
 .venv/

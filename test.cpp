@@ -1016,7 +1016,7 @@ void ttt_alphazero_nn_vs_minimax()
 
     std::mt19937 g( seed );
     ttt::alphazero::NodeAllocator node_allocator;
-    const std::string model_path = "ttt_model_final.pt"; // Path to the model saved by Python
+    const std::string model_path = "models/ttt_model_final.pt"; // Path to the model saved by Python
 
     // 2. Create the data object by loading the model from the file
     // This uses the new file-based constructor we added.

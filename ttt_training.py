@@ -6,6 +6,7 @@ import numpy as np
 import os
 import ctypes
 import io
+from torch.utils.tensorboard import SummaryWriter
 
 G_SIZE = 18  # 2 planes * 9 cells
 P_SIZE = 9   # 9 possible moves
@@ -189,6 +190,12 @@ if __name__ == '__main__':
         # Model
         model = TicTacToeCNN(input_channels=input_channels, board_size=board_size, num_actions=num_actions).to(device)
 
+        # --- TensorBoard Setup ---
+        # This will create a 'runs' directory to store the logs
+        writer = SummaryWriter('runs/ttt_alphazero_experiment_1')
+        # Log the model graph
+        writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
+
         # Optimizer
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
@@ -282,6 +289,12 @@ if __name__ == '__main__':
                 avg_value_loss = total_epoch_value_loss / len(dataloader)
                 print(f"Epoch [{epoch+1}/{epochs_per_iteration}], Avg Loss: {avg_epoch_loss:.4f}, Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}")
 
+            # Log metrics to TensorBoard at the end of each training iteration
+            # We use the iteration number as the global step for the x-axis.
+            writer.add_scalar('Loss/Total', avg_epoch_loss, iteration)
+            writer.add_scalar('Loss/Policy', avg_policy_loss, iteration)
+            writer.add_scalar('Loss/Value', avg_value_loss, iteration)
+
         print("\nTraining finished.")
 
         # --- Compare final model predictions with MCTS targets ---
@@ -312,12 +325,16 @@ if __name__ == '__main__':
                     print(f" {j}   |   {target_policy[j]:.4f}    |  {pred_policy_probs[j]:.4f}")
 
         # --- Save the final trained model to a file ---
-        final_model_path = "ttt_model_final.pt"
+        final_model_path = "models/ttt_model_final.pt"
         print(f"\nSaving final trained model to {final_model_path}...")
         # We need to script it before saving, ensuring it's in eval mode
         final_scripted_model = torch.jit.script(model)
         final_scripted_model.save(final_model_path)
         print("Model saved successfully.")
+
+        # Close the TensorBoard writer
+        writer.close()
+
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")

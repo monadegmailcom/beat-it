@@ -1,0 +1,21 @@
+digraph selfplay
+{
+    sp_g [label=<sp, g>]
+    sp_g -> g [label=<g>]
+    sp_g -> sp [label=<sp>]
+    sp_g -> lp [label=<run>]
+    g [label=<Game>, shape=box]
+    sp [label=<Selfplay>, shape=box]
+    p [label=<Position>, shape=box]
+    p -> lf [label=<channel player 1>]
+    p -> lf2 [label=<channel player 2>]
+    p -> lf3 [label=<target policies>]
+    p -> f [label=<target value>]
+    p -> f2 [label=<current player>]
+    f [label=<float>]
+    f2 [label=<float>]
+    lp [label=<[Position]>]
+    lf [label=<[float]>]
+    lf2 [label=<[float]>]
+    lf3 [label=<[float]>]
+}
