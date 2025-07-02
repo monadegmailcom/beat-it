@@ -20,7 +20,7 @@ on the mac make the gatekeeper happy
     ```bash
     make shared && python ttt_training.py
     ```
-3.  **Monitor with TensorBoard (in a separate terminal):**
+3.  **Monitor with TensorBoard (in a separate terminal inside the virtual environment):**
     ```bash
     tensorboard --logdir=runs
     ```

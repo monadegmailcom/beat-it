@@ -1030,7 +1030,7 @@ void ttt_alphazero_nn_vs_minimax()
     const size_t rounds = 100;
     match.play_match( 
         game, 
-        [&game, &nn_data]() { return new ttt::alphazero::Player( game, 19652, 1.25, 400, nn_data); }, 
+        [&game, &nn_data]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, nn_data); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
         rounds );
 

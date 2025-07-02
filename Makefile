@@ -1,13 +1,24 @@
 # or use gcc with CC=g++-11
 CC=g++
 
-# install some stuff with homebrew, clone raylib and raygui repo in the same directory level as this repo
-# build raylib with: make PLATFORM=PLATFORM_DESKTOP
-HOMEBREW=/opt/homebrew/Cellar
+# --- OS-Specific Configuration ---
+# Detect the operating system and set paths accordingly.
+UNAME_S=$(shell uname -s)
 
-BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
-LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
-#GRAPHVIZ_PATH=$(HOMEBREW)/graphviz/12.2.1
+ifeq ($(UNAME_S), Darwin)
+    # macOS specific paths
+    $(info Compiling on macOS (Darwin))
+    HOMEBREW=/opt/homebrew/Cellar
+    BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
+    LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
+else ifeq ($(UNAME_S), Linux)
+    # Linux specific paths
+    $(info Compiling on Linux)
+    BOOST_PATH=/usr
+    LIBTORCH_PATH=/usr/local/lib/python3.11/dist-packages/torch
+else
+    $(error Unknown OS "$(UNAME_S)". Please add a configuration for it in the Makefile.)
+endif
 
 PROJECT_ROOT=$(shell pwd)
 

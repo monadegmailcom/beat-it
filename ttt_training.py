@@ -21,7 +21,7 @@ class DataPointers(ctypes.Structure):
 
 def set_model(lib, model_data, model_data_len):
     # Define the function signatures for the C++ functions.
-    c_set_model = lib.set_model
+    c_set_model = lib.set_ttt_model
     c_set_model.restype = ctypes.c_int
     c_set_model.argtypes = [
         ctypes.c_char_p, # model_data
@@ -116,53 +116,94 @@ def print_board(state_vector, player_index):
     print(f"| {board[6]} | {board[7]} | {board[8]} |")
     print("-------------")
 
-# Neural Network Architecture
-class TicTacToeCNN(nn.Module):
-    def __init__(self, input_channels=2, board_size=3, num_actions=9):
-        super(TicTacToeCNN, self).__init__()
-        self.board_size = board_size
-        self.num_actions = num_actions
-
-        # Shared Body
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # 64 filters
-        self.bn2 = nn.BatchNorm2d(64)
-        # self.conv3 = nn.Conv2d(64, 128, kernel_size=3, padding=1) # Optional deeper layer
-        # self.bn3 = nn.BatchNorm2d(128)
-
-        # Calculate the flattened size after convolutions
-        # For a 3x3 board and the conv layers above, the output size remains 3x3
-        # If you add more conv layers or change padding/stride, this needs adjustment.
-        self.flattened_size = 64 * board_size * board_size # if using conv3: 128 * board_size * board_size
-
-        # Policy Head
-        self.fc_policy1 = nn.Linear(self.flattened_size, 128)
-        self.fc_policy2 = nn.Linear(128, num_actions)
-
-        # Value Head
-        self.fc_value1 = nn.Linear(self.flattened_size, 128)
-        self.fc_value2 = nn.Linear(128, 1) # Single scalar value
+class ResidualBlock(nn.Module):
+    """
+    The core building block of a ResNet. It contains a 'skip connection'
+    that adds the input of the block to its output. This helps combat
+    vanishing gradients and allows for much deeper networks.
+    """
+    def __init__(self, num_channels):
+        super(ResidualBlock, self).__init__()
+        self.conv1 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
+        self.bn1 = nn.BatchNorm2d(num_channels)
+        self.conv2 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
+        self.bn2 = nn.BatchNorm2d(num_channels)
 
     def forward(self, x):
-        # The input x from C++ is flat (batch, 18). Reshape it for the Conv2D layers.
-        x = x.view(-1, 2, self.board_size, self.board_size)
+        # The 'skip connection'
+        residual = x
+        # The main path
+        out = F.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        # Add the input to the output of the convolutions
+        out += residual
+        out = F.relu(out)
+        return out
 
-        # Shared body
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        # x = F.relu(self.bn3(self.conv3(x))) # if using conv3
-        x = x.view(-1, self.flattened_size)  # Flatten for the fully connected layers
+class AlphaZeroCNN(nn.Module):
+    def __init__(self, board_size, num_actions, input_channels, num_res_blocks, res_block_channels):
+        """
+        A configurable ResNet-based architecture inspired by AlphaZero.
 
-        # Policy head
-        policy = F.relu(self.fc_policy1(x))
-        policy = self.fc_policy2(policy) # Raw logits, softmax will be applied in loss or outside
+        Args:
+            board_size (int): The width and height of the board.
+            num_actions (int): The size of the policy output.
+            input_channels (int): Number of input planes. For UTTT, this could be:
+            num_res_blocks (int): The number of residual blocks in the network body.
+            res_block_channels (int): The number of channels used in the residual blocks.
+        """
+        super(AlphaZeroCNN, self).__init__()
+        self.board_size = board_size
+        self.num_actions = num_actions
+        self.input_channels = input_channels
 
-        # Value head
-        value = F.relu(self.fc_value1(x))
-        value = torch.tanh(self.fc_value2(value)) # Output between -1 and 1
+        # --- Network Body ---
+        # 1. An initial convolutional layer to transform the input planes to the desired channel depth.
+        self.initial_conv = nn.Sequential(
+            nn.Conv2d(input_channels, res_block_channels, kernel_size=3, padding=1, bias=False),
+            nn.BatchNorm2d(res_block_channels),
+            nn.ReLU(inplace=True)
+        )
 
-        return value, policy
+        # 2. A stack of residual blocks. This is the core of the network.
+        self.res_blocks = nn.Sequential(
+            *[ResidualBlock(res_block_channels) for _ in range(num_res_blocks)]
+        )
+
+        # --- Value Head (as in AlphaZero paper) ---
+        self.value_head = nn.Sequential(
+            nn.Conv2d(res_block_channels, 1, kernel_size=1, bias=False), # Reduce to 1 channel
+            nn.BatchNorm2d(1),
+            nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(1 * board_size * board_size, 256),
+            nn.ReLU(inplace=True),
+            nn.Linear(256, 1),
+            nn.Tanh() # Output value between -1 and 1
+        )
+
+        # --- Policy Head (as in AlphaZero paper) ---
+        self.policy_head = nn.Sequential(
+            nn.Conv2d(res_block_channels, 2, kernel_size=1, bias=False), # Reduce to 2 channels
+            nn.BatchNorm2d(2),
+            nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(2 * board_size * board_size, num_actions)
+        )
+
+    def forward(self, x):
+        # Input x from C++ is flat. Reshape it for the Conv2D layers.
+        x = x.view(-1, self.input_channels, self.board_size, self.board_size)
+        
+        # Pass through the initial convolution and the residual blocks
+        x = self.initial_conv(x)
+        x = self.res_blocks(x)
+
+        # The two heads operate on the output of the residual body
+        policy_logits = self.policy_head(x)
+        value = self.value_head(x)
+
+        return value, policy_logits
 
 # 2. Training Setup
 if __name__ == '__main__':
@@ -171,12 +212,15 @@ if __name__ == '__main__':
         alphazero_lib = ctypes.CDLL(lib_path)
         print(f"Successfully loaded shared library from: {lib_path}")
 
-        # Hyperparameters
-        input_channels = 2 # Player pieces, Opponent pieces
-        board_size = 3
-        num_actions = 9    # 3x3 board
+        # --- Game and Network Configuration ---
+        game_config = {
+            'board_size': 3,
+            'num_actions': 9,
+            'input_channels': 2, # Player pieces, Opponent pieces
+            'num_res_blocks': 1, # A smaller ResNet for a simple game like TTT
+            'res_block_channels': 64
+        }
         learning_rate = 0.0005
-        
         # Training loop hyperparameters
         training_iterations = 100
         games_per_iteration = 100 # Generate more data before training
@@ -188,11 +232,11 @@ if __name__ == '__main__':
         print(f"Using device: {device}")
 
         # Model
-        model = TicTacToeCNN(input_channels=input_channels, board_size=board_size, num_actions=num_actions).to(device)
+        model = AlphaZeroCNN(**game_config).to(device)
 
         # --- TensorBoard Setup ---
         # This will create a 'runs' directory to store the logs
-        writer = SummaryWriter('runs/ttt_alphazero_experiment_1')
+        writer = SummaryWriter('runs/ttt_alphazero_experiment_3')
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
@@ -297,6 +341,17 @@ if __name__ == '__main__':
 
         print("\nTraining finished.")
 
+        # --- Save the final trained model to a file --- 
+        final_model_path = "models/ttt_model_final.pt"
+        print(f"\nSaving final trained model to {final_model_path}...")
+        # We need to script it before saving, ensuring it's in eval mode
+        final_scripted_model = torch.jit.script(model)
+        final_scripted_model.save(final_model_path)
+        print("Model saved successfully.")
+
+        # Close the TensorBoard writer
+        writer.close()
+
         # --- Compare final model predictions with MCTS targets ---
         print("\n--- Comparing final model predictions with MCTS targets ---")
         model.eval() # Set model to evaluation mode
@@ -321,20 +376,8 @@ if __name__ == '__main__':
                 print("---------------------------------")
                 print("Move | MCTS Target | NN Predicted ")
                 print("---------------------------------")
-                for j in range(num_actions):
+                for j in range(game_config['num_actions']):
                     print(f" {j}   |   {target_policy[j]:.4f}    |  {pred_policy_probs[j]:.4f}")
-
-        # --- Save the final trained model to a file ---
-        final_model_path = "models/ttt_model_final.pt"
-        print(f"\nSaving final trained model to {final_model_path}...")
-        # We need to script it before saving, ensuring it's in eval mode
-        final_scripted_model = torch.jit.script(model)
-        final_scripted_model.save(final_model_path)
-        print("Model saved successfully.")
-
-        # Close the TensorBoard writer
-        writer.close()
-
 
     except Exception as e:
         print(f"\nAn error occurred: {e}")

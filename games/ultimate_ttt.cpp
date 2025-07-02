@@ -152,9 +152,51 @@ size_t Data::move_to_policy_index( Move const& move ) const
 }
 
 void Data::serialize_state( 
-    Game const&,
+    Game const& game,
     array< float, G >& game_state_players ) const
-{}
+{
+    auto const& state = game.get_state();
+    const PlayerIndex current_player = game.current_player_index();
+    const ttt::Symbol player_symbol = ttt::player_index_to_symbol(current_player);
+    const ttt::Symbol opponent_symbol = ttt::player_index_to_symbol(toggle(current_player));
+
+    game_state_players.fill(0.0f);
+
+    // Define pointers to the start of each 81-cell plane for clarity
+    float* plane1_player_pieces = game_state_players.data();
+    float* plane2_opponent_pieces = plane1_player_pieces + 81;
+    float* plane3_valid_sub_board = plane2_opponent_pieces + 81;
+    float* plane4_player_indicator = plane3_valid_sub_board + 81;
+
+    // --- Plane 1 & 2: Player and Opponent Pieces ---
+    for (size_t i = 0; i != 9; ++i) 
+    {
+        auto& small_state = state.small_states[i];
+        for (size_t j = 0; j != 9; ++j)             
+        {
+            if (small_state[j] == player_symbol)
+                plane1_player_pieces[i*9+j] = 1.0f;
+            else if (small_state[j] == opponent_symbol)
+                plane2_opponent_pieces[i*9+j] = 1.0f;
+        }
+    }
+    // --- Plane 3: Valid Sub-board ---
+    if (state.next_big_move == ttt::no_move) // Can play anywhere
+        fill( plane3_valid_sub_board, plane3_valid_sub_board + 81, 1.0f );
+    else // Constrained to a single sub-board
+    {
+        const size_t start_index = state.next_big_move * 9;
+        fill( plane3_valid_sub_board + start_index, plane3_valid_sub_board + start_index + 9, 1.0f);
+    }
+
+    // --- Plane 4: Player-to-Move Indicator ---
+    // A constant plane indicating whose turn it is (1.0 for P1, 0.0 for P2).
+    // All input planes must have the same spatial dimensions for the Conv2d layers.
+    // This provides global context to the local convolutional kernels, a technique
+    // from the AlphaGo Zero paper.
+    if (current_player == PlayerIndex::Player1)
+        std::fill(plane4_player_indicator, plane4_player_indicator + 81, 1.0f);
+}
 
 } // namespace alphazero {
 

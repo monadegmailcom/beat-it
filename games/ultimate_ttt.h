@@ -90,7 +90,7 @@ namespace alphazero {
 
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
-const size_t G = 2 * 81;
+const size_t G = 4 * 81;
 const size_t P = 81;
 
 struct Data : public ::alphazero::Data< Move, State, G, P >

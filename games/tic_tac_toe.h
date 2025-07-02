@@ -2,12 +2,8 @@
 #include "../montecarlo.h"
 #include "../alphazero.h"
 
-#include <torch/script.h> // Main LibTorch header for loading models
-#include <torch/torch.h>
-
 #include <array>
 #include <iostream>
-#include <sstream>
 
 namespace ttt
 {
@@ -104,16 +100,18 @@ using Player = ::alphazero::Player< Move, State, G, P >;
 
 namespace libtorch {
 
+struct Impl;
+
 struct Data : public ttt::alphazero::Data
 {
     Data( std::mt19937& g, NodeAllocator& allocator, const std::string& model_path );
     Data( std::mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len );
+    ~Data();
+    Data(Data&&);
     
     float predict( Game const&, std::array< float, P >& policies ) override;
-
-    std::istringstream model_data_stream;
-    torch::jit::script::Module module; // The loaded TorchScript model
-    torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
+    
+    std::unique_ptr< Impl > impl;
 }; 
 
 } // namespace libtorch

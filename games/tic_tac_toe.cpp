@@ -1,8 +1,12 @@
 #include "tic_tac_toe.h"
 
+#include <torch/script.h> // Main LibTorch header for loading models
+#include <torch/torch.h>
+
 #include <iostream>
 #include <algorithm>
 #include <cmath>
+#include <sstream>
 
 using namespace std;
 
@@ -13,7 +17,6 @@ const array< Move, 3 > wins[8] =
 { { 0, 1, 2 }, { 3, 4, 5 }, { 6, 7, 8 }, // rows
   { 0, 3, 6 }, { 1, 4, 7 }, { 2, 5, 8 }, // columns
   { 0, 4, 8 }, { 2, 4, 6 } }; // diagonals
-
 
 namespace minimax {
 double score( State const& state )
@@ -87,36 +90,48 @@ void Data::serialize_state(
 
 namespace libtorch {
 
+struct Impl
+{
+    Impl( const char* model_data, size_t model_data_len )
+        : model_data_stream( std::string( model_data, model_data_len)),
+          module( torch::jit::load( model_data_stream ))
+    { init(); }
+
+    Impl( const std::string& model_path )
+        : module( torch::jit::load( model_path ))
+    { init(); }
+
+    void init()
+    {
+        module.eval();
+
+        if (torch::cuda::is_available()) 
+        {
+            device = torch::kCUDA;
+            module.to( torch::kCUDA );
+        } 
+        else 
+            device = torch::kCPU;
+    }
+
+
+    istringstream model_data_stream;
+    torch::jit::script::Module module; // The loaded TorchScript model
+    torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
+};
+
 Data::Data( mt19937& g, NodeAllocator& allocator, const std::string& model_path )
     : ttt::alphazero::Data( g, allocator ),
-      module( torch::jit::load( model_path ))
-{
-    module.eval();
-
-    if (torch::cuda::is_available()) 
-    {
-        device = torch::kCUDA;
-        module.to( torch::kCUDA );
-    } 
-    else 
-        device = torch::kCPU;
-}
+      impl( make_unique< Impl >( model_path ))
+{}
 
 Data::Data( mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len )
     : ttt::alphazero::Data( g, allocator ),
-      model_data_stream( std::string( model_data, model_data_len )),
-      module( torch::jit::load( model_data_stream ))
-{
-    module.eval();
+      impl( make_unique< Impl >(model_data, model_data_len))
+{}
 
-    if (torch::cuda::is_available()) 
-    {
-        device = torch::kCUDA;
-        module.to( torch::kCUDA );
-    } 
-    else 
-        device = torch::kCPU;
-}
+Data::~Data() = default;
+Data::Data(Data&&) = default;
 
 float Data::predict( 
     Game const& game, 
@@ -129,9 +144,9 @@ float Data::predict(
             game_state_players.data(),
             {1, static_cast<long>(G)}, // Shape: [Batch=1, Features=G]
             torch::kFloat32 // Assuming float32 input
-        ).to( device ); // Move to the appropriate device (CPU/GPU)
+        ).to( impl->device ); // Move to the appropriate device (CPU/GPU)
 
-    torch::jit::IValue output_ivalue = module.forward( { input_tensor } );
+    torch::jit::IValue output_ivalue = impl->module.forward( { input_tensor } );
     auto output_tuple = output_ivalue.toTuple();
     
     // extract policies
