@@ -10,11 +10,12 @@ ifeq ($(UNAME_S), Darwin)
     $(info Compiling on macOS (Darwin))
     HOMEBREW=/opt/homebrew/Cellar
     BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
+	BOOST_INCLUDE_PATH=-isystem$(BOOST_PATH)/include/
     LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
 else ifeq ($(UNAME_S), Linux)
     # Linux specific paths
     $(info Compiling on Linux)
-    BOOST_PATH=/usr
+    BOOST_INCLUDE_PATH=
     LIBTORCH_PATH=/usr/local/lib/python3.11/dist-packages/torch
 else
     $(error Unknown OS "$(UNAME_S)". Please add a configuration for it in the Makefile.)
@@ -25,12 +26,10 @@ PROJECT_ROOT=$(shell pwd)
 #UNIVERSAL_FLAGS = -arch arm64 -arch x86_64
 UNIVERSAL_FLAGS=
 
-INCLUDE=-isystem$(BOOST_PATH)/include/ \
+INCLUDE=$(BOOST_INCLUDE_PATH) \
 		-isystem$(LIBTORCH_PATH)/include/ \
 		-isystem$(LIBTORCH_PATH)/include/torch/csrc/api/include/
 LINK=-L$(LIBTORCH_PATH)/lib -Wl,-rpath,$(LIBTORCH_PATH)/lib -ltorch -ltorch_cpu -lc10
-# -L$(GRAPHVIZ_PATH)/lib -lgvc -lcgraph \
-#	 -L$(BOOST_PATH)/lib/ -lboost_filesystem
 
 #DEBUG=-g
 DEBUG=-g -O3
