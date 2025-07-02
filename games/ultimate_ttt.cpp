@@ -59,7 +59,8 @@ Move HumanPlayer::choose_move()
         }
 
         const Move move = Move {ttt::Move( big_move ), ttt::Move( small_move )};
-        if (!ranges::contains( valid_moves.begin(), valid_moves.end(), move))
+        if (std::find( valid_moves.begin(), valid_moves.end(), move)
+            == valid_moves.end())
         {
             cout << "not a valid move" << endl;
             continue;

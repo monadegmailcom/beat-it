@@ -153,11 +153,13 @@ void nim_game()
     {
         auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, nim::Move{ 1, 2 } };
         auto valid_move = game.begin();
-        assert (ranges::contains(moves.begin(), moves.end(), *valid_move ));
+        assert (std::find(moves.begin(), moves.end(), *valid_move)
+            != moves.end());
         moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
         ++valid_move;
 
-        assert (ranges::contains(moves.begin(), moves.end(), *valid_move));
+        assert (std::find(moves.begin(), moves.end(), *valid_move)
+            != moves.end());
         moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
         ++valid_move;
 
@@ -556,8 +558,9 @@ void montecarlo_player()
     assert (root.get_value().move == ttt::Move( 4 ));
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves( game.begin(), game.end() );
-    
-    assert (ranges::contains( valid_moves, move ));
+
+    assert (std::find(valid_moves.begin(), valid_moves.end(), move)
+        != valid_moves.end());
 }
 
 void montecarlo_ttt_human()

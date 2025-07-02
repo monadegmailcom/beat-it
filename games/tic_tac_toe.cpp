@@ -204,7 +204,8 @@ Move HumanPlayer::choose_move()
             continue;
         }
 
-        if (!ranges::contains( valid_moves.begin(), valid_moves.end(), Move( move )))
+        if (std::find( valid_moves.begin(), valid_moves.end(), Move( move ))
+            == valid_moves.end())
         {
             cout << "not a valid move" << endl;
             continue;
