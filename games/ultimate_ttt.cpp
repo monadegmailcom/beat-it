@@ -88,23 +88,28 @@ double score_function( uttt::State const& state, double weight )
     double score = 0.0;
     for (auto const& win : ttt::wins)
     {
+        bool skip_win = false;
         uint8_t player1_points = 0;
         uint8_t player2_points = 0;
         for (auto const& index : win)
         {
             const GameResult result = state.big_state[index];
             if (result == GameResult::Draw)
-                goto continue_outer_loop;
+            {
+                skip_win = true;
+                break;
+            }
             if (result == GameResult::Player1Win)
                 ++player1_points;
             else if (result == GameResult::Player2Win)
                 ++player2_points;
         }
+        if (skip_win)
+            continue;
         if (player1_points == 0)
             score += player2_points;
         else if (player2_points == 0)
             score -= player1_points;
-        continue_outer_loop:
     }
 
     score *= weight;
