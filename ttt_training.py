@@ -6,9 +6,10 @@ import numpy as np
 import os
 import ctypes
 import io
+import time
 from torch.utils.tensorboard import SummaryWriter
 
-G_SIZE = 18  # 2 planes * 9 cells
+G_SIZE = 27  # 3 planes * 9 cells
 P_SIZE = 9   # 9 possible moves
 
 class DataPointers(ctypes.Structure):
@@ -40,7 +41,7 @@ def get_selfplay_data_from_cpp(lib, config: dict):
     c_run_selfplay = lib.run_ttt_selfplay
     c_run_selfplay.restype = ctypes.c_int
     c_run_selfplay.argtypes = [
-        ctypes.c_int8, # current_player
+        ctypes.c_int32, # runs
         ctypes.c_float, # c_base
         ctypes.c_float, # c_init
         ctypes.c_float, # dirichlet_alpha
@@ -54,7 +55,7 @@ def get_selfplay_data_from_cpp(lib, config: dict):
     data_pointers = DataPointers()
     
     num_positions = c_run_selfplay(
-        config['current_player'],
+        config['runs'],
         config['c_base'],
         config['c_init'],
         config['dirichlet_alpha'],
@@ -88,26 +89,28 @@ def get_selfplay_data_from_cpp(lib, config: dict):
 
     return result
 
-def print_board(state_vector, player_index):
+def print_board(state_vector):
     """
     Prints a 3x3 Tic-Tac-Toe board from a serialized state vector.
-    The state is always from the perspective of the current player.
+    The state vector has 3 planes: X pieces, O pieces, and player-to-move.
     """
     board = [' '] * 9
-    current_player_symbol = 'X' if player_index == 0 else 'O'
-    opponent_symbol = 'O' if player_index == 0 else 'X'
 
-    # First 9 elements are the current player's pieces
+    # Plane 1: 'X' pieces (Player 1)
     for i in range(9):
         if state_vector[i] == 1.0:
-            board[i] = current_player_symbol
+            board[i] = 'X'
     
-    # Next 9 elements are the opponent's pieces
+    # Plane 2: 'O' pieces (Player 2)
     for i in range(9):
         if state_vector[i + 9] == 1.0:
-            board[i] = opponent_symbol
+            board[i] = 'O'
 
-    print(f"Turn to move: {current_player_symbol}")
+    # Plane 3: Player-to-move
+    # The third plane is all 1.0s if X is to move, all 0.0s if O is to move.
+    turn_to_move_symbol = 'X' if state_vector[18] == 1.0 else 'O'
+
+    print(f"Turn to move: {turn_to_move_symbol}")
     print("-------------")
     print(f"| {board[0]} | {board[1]} | {board[2]} |")
     print("-------------")
@@ -139,6 +142,52 @@ class ResidualBlock(nn.Module):
         out += residual
         out = F.relu(out)
         return out
+
+class TicTacToeCNN(nn.Module):
+    def __init__(self, input_channels=3, board_size=3, num_actions=9):
+        super(TicTacToeCNN, self).__init__()
+        self.board_size = board_size
+        self.num_actions = num_actions
+        self.input_channels = input_channels
+
+        # Shared Body
+        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # 64 filters
+        self.bn2 = nn.BatchNorm2d(64)
+
+        # Calculate the flattened size after convolutions
+        # For a 3x3 board and the conv layers above, the output size remains 3x3
+        # If you add more conv layers or change padding/stride, this needs adjustment.
+        self.flattened_size = 64 * board_size * board_size
+
+        # Policy Head
+        self.fc_policy1 = nn.Linear(self.flattened_size, 128)
+        self.fc_policy2 = nn.Linear(128, num_actions)
+
+        # Value Head
+        self.fc_value1 = nn.Linear(self.flattened_size, 128)
+        self.fc_value2 = nn.Linear(128, 1) # Single scalar value
+
+    def forward(self, x):
+        # The input x from C++ is flat (batch, 18). Reshape it for the Conv2D layers.
+        x = x.view(-1, self.input_channels, self.board_size, self.board_size)
+
+        # Shared body
+        x = F.relu(self.bn1(self.conv1(x)))
+        x = F.relu(self.bn2(self.conv2(x)))
+        # x = F.relu(self.bn3(self.conv3(x))) # if using conv3
+        x = x.view(-1, self.flattened_size)  # Flatten for the fully connected layers
+
+        # Policy head
+        policy = F.relu(self.fc_policy1(x))
+        policy = self.fc_policy2(policy) # Raw logits, softmax will be applied in loss or outside
+
+        # Value head
+        value = F.relu(self.fc_value1(x))
+        value = torch.tanh(self.fc_value2(value)) # Output between -1 and 1
+
+        return value, policy
 
 class AlphaZeroCNN(nn.Module):
     def __init__(self, board_size, num_actions, input_channels, num_res_blocks, res_block_channels):
@@ -216,7 +265,7 @@ if __name__ == '__main__':
         game_config = {
             'board_size': 3,
             'num_actions': 9,
-            'input_channels': 2, # Player pieces, Opponent pieces
+            'input_channels': 3, # X pieces, O pieces, player-to-move
             'num_res_blocks': 1, # A smaller ResNet for a simple game like TTT
             'res_block_channels': 64
         }
@@ -232,11 +281,12 @@ if __name__ == '__main__':
         print(f"Using device: {device}")
 
         # Model
-        model = AlphaZeroCNN(**game_config).to(device)
+        # model = AlphaZeroCNN(**game_config).to(device)
+        model = TicTacToeCNN( game_config['input_channels'], game_config['board_size'], game_config['num_actions']).to(device)
 
         # --- TensorBoard Setup ---
         # This will create a 'runs' directory to store the logs
-        writer = SummaryWriter('runs/ttt_alphazero_experiment_3')
+        writer = SummaryWriter('runs/ttt_alphazero_experiment_5')
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
@@ -244,13 +294,14 @@ if __name__ == '__main__':
         optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
         # Configuration for the self-play run
-        base_self_play_config = {
+        self_play_config = {
+            'runs': games_per_iteration,
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
             'dirichlet_epsilon': 0.25,
             'simulations': 100,
-            'opening_moves': 1
+            'opening_moves': 0
         }
 
         for iteration in range(training_iterations):
@@ -266,38 +317,28 @@ if __name__ == '__main__':
 
             # Self-Play Phase: Generate data from multiple games
             print("--- Generating self-play data ---")
-            # Use lists to accumulate data from each game. This is memory efficient.
-            iteration_states, iteration_policies, iteration_values, iteration_indices = [], [], [], []
+            
+            start_time = time.time()
+            new_data = get_selfplay_data_from_cpp(alphazero_lib, self_play_config)
+            duration = time.time() - start_time
 
-            for i in range(games_per_iteration):
-                # Alternate the starting player to get more diverse game data
-                self_play_config = base_self_play_config.copy()
-                self_play_config['current_player'] = i % 2 
-
-                new_data = get_selfplay_data_from_cpp(alphazero_lib, self_play_config)
-
-                if new_data:
-                    # Copy the data from the C++ view into a new Python-managed array
-                    # and append it to the list. This is the essential, safe copy point.
-                    iteration_states.append(new_data['game_states'].copy())
-                    iteration_policies.append(new_data['policy_targets'].copy())
-                    iteration_values.append(new_data['value_targets'].copy())
-                    iteration_indices.append(new_data['player_indices'].copy())
-  
-            if not iteration_states:
+            if not new_data:
                 print("No data generated in this iteration. Skipping training.")
                 continue
 
-            # After collecting all data, concatenate the lists of arrays into single,
-            # large NumPy arrays. This is far more efficient than appending in a loop.
-            all_states = np.concatenate(iteration_states)
-            all_policies = np.concatenate(iteration_policies)
-            all_values = np.concatenate(iteration_values)
-            all_player_indices = np.concatenate(iteration_indices)
-            print(f"Generated {len(all_states)} total positions from {games_per_iteration} games.")
+            # Copy the data from the C++ view into new Python-managed NumPy arrays.
+            # This is an essential step. The pointers from C++ are only valid until
+            # the next call to the library. .copy() creates a new array owned by Python.
+            all_states = new_data['game_states'].copy()
+            all_policies = new_data['policy_targets'].copy()
+            all_values = new_data['value_targets'].copy()
+            all_player_indices = new_data['player_indices'].copy()
+            print(f"Generated {len(all_states)} positions from {games_per_iteration} games in {duration:.2f} seconds.")
 
             # 2. Training Phase
             print("--- Training the model ---")
+            start_time = time.time()
+
             states_tensor = torch.from_numpy(all_states).float()
             policy_targets_tensor = torch.from_numpy(all_policies).float()
             value_targets_tensor = torch.from_numpy(all_values).float()
@@ -333,16 +374,27 @@ if __name__ == '__main__':
                 avg_value_loss = total_epoch_value_loss / len(dataloader)
                 print(f"Epoch [{epoch+1}/{epochs_per_iteration}], Avg Loss: {avg_epoch_loss:.4f}, Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}")
 
+            duration = time.time() - start_time
+            print(f"Epochs completed in {duration:.2f} seconds.")
+
             # Log metrics to TensorBoard at the end of each training iteration
             # We use the iteration number as the global step for the x-axis.
             writer.add_scalar('Loss/Total', avg_epoch_loss, iteration)
             writer.add_scalar('Loss/Policy', avg_policy_loss, iteration)
             writer.add_scalar('Loss/Value', avg_value_loss, iteration)
 
-        print("\nTraining finished.")
+            # Log weights and gradients for each layer
+            for name, param in model.named_parameters():
+                if param.grad is not None:
+                    writer.add_histogram(f'Weights/{name}', param.data, iteration)
+                    writer.add_histogram(f'Gradients/{name}', param.grad, iteration)
+
+        print("\nTraining finished")
 
         # --- Save the final trained model to a file --- 
         final_model_path = "models/ttt_model_final.pt"
+        # Ensure the parent directory exists before saving
+        os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
         print(f"\nSaving final trained model to {final_model_path}...")
         # We need to script it before saving, ensuring it's in eval mode
         final_scripted_model = torch.jit.script(model)
@@ -361,7 +413,6 @@ if __name__ == '__main__':
             for i in range(num_comparisons):
                 state_tensor_for_model = states_tensor[i].unsqueeze(0).to(device)
                 state_vector_for_print = states_tensor[i].numpy()
-                player_index = all_player_indices[i]
                 target_policy = policy_targets_tensor[i].numpy()
                 target_value = value_targets_tensor[i].item()
 
@@ -371,7 +422,7 @@ if __name__ == '__main__':
                 pred_value = pred_value.item()
 
                 print(f"\n========== Position {i+1} ==========")
-                print_board(state_vector_for_print, player_index)
+                print_board(state_vector_for_print)
                 print(f"Value Target: {target_value: .4f}  |  Predicted: {pred_value: .4f}")
                 print("---------------------------------")
                 print("Move | MCTS Target | NN Predicted ")

@@ -79,7 +79,7 @@ namespace alphazero {
 
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
-const size_t G = 2 * 9;
+const size_t G = 3 * 9;
 const size_t P = 9;
 
 struct Data : public ::alphazero::Data< Move, State, G, P >
@@ -108,7 +108,9 @@ struct Data : public ttt::alphazero::Data
     Data( std::mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len );
     ~Data();
     Data(Data&&);
-    
+    Data( Data const& ) = delete;
+    Data& operator=( Data const& ) = delete;
+
     float predict( Game const&, std::array< float, P >& policies ) override;
     
     std::unique_ptr< Impl > impl;

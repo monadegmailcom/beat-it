@@ -1031,6 +1031,27 @@ void ttt_alphazero_nn_vs_minimax()
 
     MultiMatch< ttt::Move, ttt::State > match;
     const size_t rounds = 100;
+
+    // debug
+    vector< ttt::alphazero::training::Position > positions;
+    PlayerIndex player_index = Player1;
+    // Pre-allocating memory is crucial for performance. It prevents the vector
+    // from performing slow reallocations as it grows, which keeps the main thread responsive.
+    positions.reserve(rounds * 9); // 100 games, max 9 moves per game.
+    for (auto runs = 100;runs;--runs)
+    {
+        cout << "run " << runs << endl;
+        // 2. Run self-play to generate training data
+        ttt::alphazero::training::SelfPlay self_play(
+            ttt::Game( player_index, ttt::empty_state ), 19652, 1.25, 0.3,
+            0.25, 
+            100, 1, nn_data, positions );
+        self_play.run();
+        player_index = toggle( player_index );
+    }
+    return;
+    //end debug
+
     match.play_match( 
         game, 
         [&game, &nn_data]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, nn_data); }, 
@@ -1092,7 +1113,6 @@ int main()
         test::uttt_multimatch_alphazero_vs_minimax();
         test::alphazero_training();
         */
-        test::montecarlo_minimax_ttt_match();
         test::ttt_alphazero_nn_vs_minimax();
 
         cout << "\neverything ok" << endl;    

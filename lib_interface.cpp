@@ -83,7 +83,7 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
  returns the number of game positions actually generated. Returns a negative value on error.
  */
 int run_ttt_selfplay(
-    int8_t current_player, // 0: player 1, 1: player 2
+    int32_t runs, // number of runs
     float c_base, // 19652
     float c_init, // 1.25
     float dirichlet_alpha, // 0.3
@@ -97,16 +97,18 @@ int run_ttt_selfplay(
         if (!ttt::libtorch_data)
             throw runtime_error( "no model loaded" );
 
-        ttt::Game initial_game( 
-            static_cast< PlayerIndex >( current_player ), ttt::empty_state );
-
         ttt::positions.clear();
+        PlayerIndex player_index = Player1;
 
-        // 2. Run self-play to generate training data
-        ttt::alphazero::training::SelfPlay self_play(
-            initial_game, c_base, c_init, dirichlet_alpha, dirichlet_epsilon, 
-            simulations, opening_moves, *ttt::libtorch_data, ttt::positions );
-        self_play.run();
+        for (;runs;--runs)
+        {
+            // 2. Run self-play to generate training data
+            ttt::alphazero::training::SelfPlay self_play(
+                ttt::Game( player_index, ttt::empty_state ), c_base, c_init, dirichlet_alpha, dirichlet_epsilon, 
+                simulations, opening_moves, *ttt::libtorch_data, ttt::positions );
+            self_play.run();
+            player_index = toggle( player_index );
+        }
 
         // 3. Calculate memory layout and resize the static buffer
         const size_t num_positions = ttt::positions.size();

@@ -270,15 +270,16 @@ public:
 
     void run()
     {
+        const size_t prev_size = positions.size();
         GameResult game_result;
         for (game_result = this->root->get_value().game.result();
              game_result == GameResult::Undecided;
              game_result = this->root->get_value().game_result)
             choose_move();
 
-        for (auto& position : positions)
-            position.target_value = detail::game_result_2_score(
-                game_result, position.current_player );
+        for (auto itr = positions.begin() + prev_size; itr != positions.end(); ++itr)
+            itr->target_value = detail::game_result_2_score(
+                game_result, itr->current_player );
     }
 protected:
     // promise: root node is expanded

@@ -163,27 +163,25 @@ void Data::serialize_state(
 {
     auto const& state = game.get_state();
     const PlayerIndex current_player = game.current_player_index();
-    const ttt::Symbol player_symbol = ttt::player_index_to_symbol(current_player);
-    const ttt::Symbol opponent_symbol = ttt::player_index_to_symbol(toggle(current_player));
 
     game_state_players.fill(0.0f);
 
     // Define pointers to the start of each 81-cell plane for clarity
-    float* plane1_player_pieces = game_state_players.data();
-    float* plane2_opponent_pieces = plane1_player_pieces + 81;
-    float* plane3_valid_sub_board = plane2_opponent_pieces + 81;
+    float* plane1_x_pieces = game_state_players.data();
+    float* plane2_o_pieces = plane1_x_pieces + 81;
+    float* plane3_valid_sub_board = plane2_o_pieces + 81;
     float* plane4_player_indicator = plane3_valid_sub_board + 81;
 
-    // --- Plane 1 & 2: Player and Opponent Pieces ---
+    // --- Plane 1 & 2: 'X' and 'O' pieces (absolute representation) ---
     for (size_t i = 0; i != 9; ++i) 
     {
         auto& small_state = state.small_states[i];
         for (size_t j = 0; j != 9; ++j)             
         {
-            if (small_state[j] == player_symbol)
-                plane1_player_pieces[i*9+j] = 1.0f;
-            else if (small_state[j] == opponent_symbol)
-                plane2_opponent_pieces[i*9+j] = 1.0f;
+            if (small_state[j] == ttt::Symbol::Player1) // 'X'
+                plane1_x_pieces[i*9+j] = 1.0f;
+            else if (small_state[j] == ttt::Symbol::Player2) // 'O'
+                plane2_o_pieces[i*9+j] = 1.0f;
         }
     }
     // --- Plane 3: Valid Sub-board ---

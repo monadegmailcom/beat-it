@@ -75,17 +75,27 @@ void Data::serialize_state(
     array< float, G >& game_state_players ) const
 {
     auto const& state = game.get_state();
-
     game_state_players.fill( 0.0f );
-    const ttt::Symbol player_symbol = player_index_to_symbol( 
-        game.current_player_index());
-    const ttt::Symbol opponent_symbol = player_index_to_symbol( 
-        toggle( game.current_player_index()));
-    for (size_t i = 0; i != 9; ++i)
-        if (state[i] == player_symbol)
-            game_state_players[i] = 1.0;    
-        else if (state[i] == opponent_symbol)
-            game_state_players[i + 9] = 1.0f;    
+
+    // Pointers to each 9-cell plane for clarity
+    float* plane1_x_pieces = game_state_players.data();
+    float* plane2_o_pieces = plane1_x_pieces + 9;
+    float* plane3_player_indicator = plane2_o_pieces + 9;
+
+    // --- Plane 1 & 2: 'X' and 'O' pieces (absolute representation) ---
+    for (size_t i = 0; i < 9; ++i) {
+        if (state[i] == Symbol::Player1) { // Player1 is 'X'
+            plane1_x_pieces[i] = 1.0f;
+        } else if (state[i] == Symbol::Player2) { // Player2 is 'O'
+            plane2_o_pieces[i] = 1.0f;
+        }
+    }
+
+    // --- Plane 3: Player-to-Move Indicator ---
+    // A constant plane indicating whose turn it is (1.0 for P1, 0.0 for P2).
+    // This provides global context and ensures a consistent input structure for the JIT.
+    if (game.current_player_index() == PlayerIndex::Player1)
+        std::fill(plane3_player_indicator, plane3_player_indicator + 9, 1.0f);
 }
 
 namespace libtorch {
@@ -113,7 +123,6 @@ struct Impl
         else 
             device = torch::kCPU;
     }
-
 
     istringstream model_data_stream;
     torch::jit::script::Module module; // The loaded TorchScript model

@@ -12,11 +12,15 @@ ifeq ($(UNAME_S), Darwin)
     BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
 	BOOST_INCLUDE_PATH=-isystem$(BOOST_PATH)/include/
     LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
+	CXX_ABI_FLAGS=
 else ifeq ($(UNAME_S), Linux)
     # Linux specific paths
     $(info Compiling on Linux)
     BOOST_INCLUDE_PATH=
     LIBTORCH_PATH=/usr/local/lib/python3.11/dist-packages/torch
+    # Pre-built PyTorch binaries for Linux are often compiled with the old C++ ABI.
+    # This flag ensures our code is compatible, preventing linker errors.
+    CXX_ABI_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=0
 else
     $(error Unknown OS "$(UNAME_S)". Please add a configuration for it in the Makefile.)
 endif
@@ -48,7 +52,7 @@ ifneq ($(filter beat-it shared,$(MAKECMDGOALS)),)
 endif
 
 $(info OPT=$(OPT))
-FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) -fPIC -c
+FLAGS=-std=c++23 -Wall -pedantic $(OPT) $(UNIVERSAL_FLAGS) $(INCLUDE) $(CXX_ABI_FLAGS) -fPIC -c
 
 # Automatically reference all local .cpp files
 SOURCES=$(wildcard *.cpp) $(wildcard games/*.cpp)
