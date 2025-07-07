@@ -21,11 +21,17 @@ static vector< uint8_t > selfplay_data_buffer;
 
 static mt19937 g( random_device{}());
 
+// A thread-safe container for collecting training data from multiple threads.
+struct ThreadSafePositions {
+    std::vector<alphazero::training::Position> positions;
+    std::mutex mtx;
+};
+
 namespace ttt {
 
 static alphazero::NodeAllocator node_allocator;
 static unique_ptr< alphazero::libtorch::Data > libtorch_data;
-static vector< alphazero::training::Position > positions;
+static ThreadSafePositions positions_collector;
 static const size_t data_pointers_size = 
     (alphazero::G + alphazero::P + 1) * sizeof( float ) + sizeof( int32_t );
 
@@ -97,21 +103,41 @@ int run_ttt_selfplay(
         if (!ttt::libtorch_data)
             throw runtime_error( "no model loaded" );
 
-        ttt::positions.clear();
-        PlayerIndex player_index = Player1;
+        ttt::positions_collector.positions.clear();
+        
+        // Determine the number of parallel games to run.
+        const unsigned int num_threads = std::thread::hardware_concurrency();
+        cout << "Running self-play on " << num_threads << " threads." << endl;
+        std::vector<std::thread> workers;
 
-        for (;runs;--runs)
-        {
-            // 2. Run self-play to generate training data
-            ttt::alphazero::training::SelfPlay self_play(
-                ttt::Game( player_index, ttt::empty_state ), c_base, c_init, dirichlet_alpha, dirichlet_epsilon, 
-                simulations, opening_moves, *ttt::libtorch_data, ttt::positions );
-            self_play.run();
-            player_index = toggle( player_index );
+        for (unsigned int i = 0; i < num_threads; ++i) {
+            workers.emplace_back([&, runs_per_thread = runs / num_threads, start_player = (i % 2 == 0 ? Player1 : Player2)]() {
+                PlayerIndex player_index = start_player;
+                std::vector<alphazero::training::Position> local_positions;
+                local_positions.reserve(runs_per_thread * 9);
+
+                for (int j = 0; j < runs_per_thread; ++j) {
+                    ttt::alphazero::training::SelfPlay self_play(
+                        ttt::Game(player_index, ttt::empty_state), c_base, c_init, dirichlet_alpha, dirichlet_epsilon,
+                        simulations, opening_moves, *ttt::libtorch_data, local_positions);
+                    self_play.run();
+                    player_index = toggle(player_index);
+                }
+
+                // Lock the mutex and append the locally generated data to the global collector.
+                std::lock_guard<std::mutex> lock(ttt::positions_collector.mtx);
+                ttt::positions_collector.positions.insert(
+                    ttt::positions_collector.positions.end(),
+                    std::make_move_iterator(local_positions.begin()),
+                    std::make_move_iterator(local_positions.end())
+                );
+            });
         }
 
+        for (auto& worker : workers) worker.join();
+
         // 3. Calculate memory layout and resize the static buffer
-        const size_t num_positions = ttt::positions.size();
+        const size_t num_positions = ttt::positions_collector.positions.size();
 
         selfplay_data_buffer.resize( num_positions * ttt::data_pointers_size);
 
@@ -132,7 +158,7 @@ int run_ttt_selfplay(
         // 5. Copy the generated data into the contiguous out buffer
         for (size_t i = 0; i < num_positions; ++i) 
         {
-            const auto& pos = ttt::positions[i];
+            const auto& pos = ttt::positions_collector.positions[i];
             ranges::copy( pos.game_state_players, data_pointers_out->game_states + i * ttt::alphazero::G);
             ranges::copy( pos.target_policy, data_pointers_out->policy_targets + i * ttt::alphazero::P);
             data_pointers_out->value_targets[i] = pos.target_value;

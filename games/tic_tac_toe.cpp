@@ -7,6 +7,12 @@
 #include <algorithm>
 #include <cmath>
 #include <sstream>
+#include <thread>
+#include <mutex>
+#include <condition_variable>
+#include <future>
+#include <queue>
+#include <atomic>
 
 using namespace std;
 
@@ -100,6 +106,102 @@ void Data::serialize_state(
 
 namespace libtorch {
 
+const size_t MAX_BATCH_SIZE = 128;
+const std::chrono::milliseconds BATCH_TIMEOUT(5);
+
+using PredictionResult = std::pair<float, std::array<float, P>>;
+
+struct InferenceRequest {
+    std::array<float, G> state;
+    std::promise<PredictionResult> promise;
+};
+
+// This class manages a dedicated thread for running batched model inference.
+class InferenceManager {
+public:
+    InferenceManager(torch::jit::script::Module& module, torch::Device device)
+        : module(module), device(device), stop_flag(false) {
+        inference_thread = std::thread(&InferenceManager::inference_loop, this);
+    }
+
+    ~InferenceManager() {
+        stop_flag = true;
+        cv.notify_one();
+        if (inference_thread.joinable()) {
+            inference_thread.join();
+        }
+    }
+
+    // This is called by worker threads to queue a request for inference.
+    std::future<PredictionResult> queue_request(std::array<float, G>&& state) {
+        std::promise<PredictionResult> promise;
+        auto future = promise.get_future();
+        {
+            std::lock_guard<std::mutex> lock(queue_mutex);
+            request_queue.push({std::move(state), std::move(promise)});
+        }
+        cv.notify_one();
+        return future;
+    }
+
+private:
+    void inference_loop() {
+        while (!stop_flag) {
+            std::vector<InferenceRequest> batch;
+            {
+                std::unique_lock<std::mutex> lock(queue_mutex);
+                // Wait until the queue has items or a timeout occurs.
+                // The timeout is crucial to process incomplete batches with low latency.
+                cv.wait_for(lock, BATCH_TIMEOUT, [this] { return !request_queue.empty() || stop_flag; });
+
+                if (stop_flag) return;
+
+                // Pull requests from the queue to form a batch.
+                while (!request_queue.empty() && batch.size() < MAX_BATCH_SIZE) {
+                    batch.push_back(std::move(request_queue.front()));
+                    request_queue.pop();
+                }
+            }
+
+            if (batch.empty()) continue;
+
+            // Prepare the batch tensor for the model.
+            std::vector<torch::Tensor> batch_tensors;
+            batch_tensors.reserve(batch.size());
+            for (const auto& req : batch) {
+                batch_tensors.push_back(torch::from_blob(
+                    const_cast<float*>(req.state.data()), {G}, torch::kFloat32));
+            }
+            torch::Tensor input_batch = torch::stack(batch_tensors).to(device);
+
+            // Run inference on the entire batch at once.
+            torch::jit::IValue output_ivalue = module.forward({input_batch});
+            auto output_tuple = output_ivalue.toTuple();
+            torch::Tensor value_batch = output_tuple->elements()[0].toTensor().to(torch::kCPU);
+            torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to(torch::kCPU);
+
+            // Distribute the results back to the waiting threads.
+            for (size_t i = 0; i < batch.size(); ++i) {
+                std::array<float, P> policy_result;
+                float* policy_ptr = policy_batch[i].data_ptr<float>();
+                std::copy(policy_ptr, policy_ptr + P, policy_result.begin());
+                
+                float value_result = value_batch[i].item<float>();
+
+                batch[i].promise.set_value({value_result, policy_result});
+            }
+        }
+    }
+
+    torch::jit::script::Module& module;
+    torch::Device device;
+    std::thread inference_thread;
+    std::queue<InferenceRequest> request_queue;
+    std::mutex queue_mutex;
+    std::condition_variable cv;
+    std::atomic<bool> stop_flag;
+};
+
 struct Impl
 {
     Impl( const char* model_data, size_t model_data_len )
@@ -127,6 +229,7 @@ struct Impl
     istringstream model_data_stream;
     torch::jit::script::Module module; // The loaded TorchScript model
     torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
+    std::unique_ptr<InferenceManager> inference_manager;
 };
 
 Data::Data( mt19937& g, NodeAllocator& allocator, const std::string& model_path )
@@ -146,33 +249,16 @@ float Data::predict(
     Game const& game, 
     std::array< float, P >& policies )
 {   
+    // This method is now a client of the InferenceManager.
+    // It queues a request and blocks until the result is ready.
     array< float, G > game_state_players;
     serialize_state( game, game_state_players );
 
-    torch::Tensor input_tensor = torch::from_blob(
-            game_state_players.data(),
-            {1, static_cast<long>(G)}, // Shape: [Batch=1, Features=G]
-            torch::kFloat32 // Assuming float32 input
-        ).to( impl->device ); // Move to the appropriate device (CPU/GPU)
+    auto future = impl->inference_manager->queue_request(std::move(game_state_players));
+    auto [value, policy_result] = future.get();
 
-    torch::jit::IValue output_ivalue = impl->module.forward( { input_tensor } );
-    auto output_tuple = output_ivalue.toTuple();
-    
-    // extract policies
-    torch::Tensor policy_logits_tensor =
-        output_tuple->elements()[1].toTensor().to( torch::kCPU ); // Move to CPU for access
-    if (policy_logits_tensor.numel() != P)
-        throw runtime_error( "policy tensor size mismatch" );
-    policy_logits_tensor = policy_logits_tensor.contiguous();
-    float* const policy_data_ptr = policy_logits_tensor.data_ptr<float>();
-    copy( policy_data_ptr, policy_data_ptr + P, policies.begin());
-          
-    // extract target value
-    torch::Tensor value_tensor =
-        output_tuple->elements()[0].toTensor().to( torch::kCPU ); // Move to CPU for access
-    if (value_tensor.numel() != 1) 
-        throw runtime_error( "value tensor is not a scalar" );
-    return value_tensor.item< float >();
+    policies = policy_result;
+    return value;
 }
 
 } // namespace libtorch
