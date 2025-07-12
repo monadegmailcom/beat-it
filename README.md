@@ -24,3 +24,22 @@ on the mac make the gatekeeper happy
     ```bash
     tensorboard --logdir=runs
     ```
+
+## Further potential optimizations
+
+1. use subnormal number optimization
+   1. ```cpp
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+#include <xmmintrin.h> // For SSE intrinsics to control floating-point behavior
+#endif
+```   
+   2. in the code before using libtorch
+   ```cpp
+#if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
+    // Enable Flush-to-Zero and Denormals-are-Zero modes for this inference thread.
+    // This can significantly speed up inference, especially with untrained
+    // models that might produce many subnormal floating-point values.
+    _mm_setcsr(_mm_getcsr() | 0x8040);
+#endif
+````
+   

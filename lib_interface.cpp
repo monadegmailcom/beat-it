@@ -82,10 +82,19 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
 {
     try 
     {
-        std::string content( model_data, model_data_len );
+        std::string content(model_data, model_data_len);
 
-        ttt::inference_manager.reset( new libtorch::InferenceManager( 
-            std::move( content ), ttt::alphazero::G, ttt::alphazero::P ));
+        if (!ttt::inference_manager)
+        {
+            // First time call: create the InferenceManager instance.
+            ttt::inference_manager.reset(new libtorch::InferenceManager(
+                std::move(content), ttt::alphazero::G, ttt::alphazero::P));
+        }
+        else
+        {
+            // Subsequent calls: update the model in-place for efficiency.
+            ttt::inference_manager->update_model(std::move(content));
+        }
 
         return 0;
     } 
@@ -201,6 +210,38 @@ int run_ttt_selfplay(
     {
         cerr << "C++ Unknown exception caught." << endl;
         return -2;
+    }
+}
+
+void cleanup_resources()
+{
+    try
+    {
+        // Explicitly destroy the inference manager. This is the most critical step,
+        // as it ensures the background inference thread is properly joined before
+        // the library is unloaded, preventing race conditions during shutdown.
+        if (ttt::inference_manager)
+        {
+            cout << "Cleaning up C++ inference manager..." << endl;
+            ttt::inference_manager.reset();
+        }
+
+        // Clear the thread-local storage list. This ensures all memory allocated
+        // by the list and its contents (like node allocators) is released.
+        if (!ttt::thread_local_storage_list.empty())
+        {
+            cout << "Cleaning up C++ thread local storage..." << endl;
+            ttt::thread_local_storage_list.clear();
+        }
+    }
+    catch (const exception& e)
+    {
+        // Log any errors during cleanup, but don't re-throw.
+        cerr << "Exception during C++ resource cleanup: " << e.what() << endl;
+    }
+    catch (...)
+    {
+        cerr << "Unknown exception during C++ resource cleanup." << endl;
     }
 }
 

@@ -7,6 +7,8 @@ import os
 import ctypes
 import io
 import time
+import threading
+import queue
 from torch.utils.tensorboard import SummaryWriter
 
 G_SIZE = 27  # 3 planes * 9 cells
@@ -120,6 +122,123 @@ def print_board(state_vector):
     print("-------------")
     print(f"| {board[6]} | {board[7]} | {board[8]} |")
     print("-------------")
+
+class ReplayBuffer:
+    """
+    A fixed-size circular buffer to store self-play experience for training.
+    It uses pre-allocated NumPy arrays for efficiency.
+    """
+    def __init__(self, capacity, g_size, p_size, device):
+        self.capacity = capacity
+        self.device = device
+        self.ptr = 0
+        self.size = 0
+        self.lock = threading.Lock()
+
+        # Pre-allocate memory for the buffer
+        self.states = np.zeros((capacity, g_size), dtype=np.float32)
+        self.policies = np.zeros((capacity, p_size), dtype=np.float32)
+        self.values = np.zeros((capacity,), dtype=np.float32)
+        self.player_indices = np.zeros((capacity,), dtype=np.int32)
+
+    def add(self, states, policies, values, player_indices):
+        """Adds a batch of new experience to the buffer."""
+        num_positions = len(states)
+        with self.lock:
+            if self.ptr + num_positions <= self.capacity:
+                # No wrap-around needed
+                self.states[self.ptr:self.ptr + num_positions] = states
+                self.policies[self.ptr:self.ptr + num_positions] = policies
+                self.values[self.ptr:self.ptr + num_positions] = values
+                self.player_indices[self.ptr:self.ptr + num_positions] = player_indices
+            else:
+                # Data wraps around the end of the buffer
+                space_left = self.capacity - self.ptr
+                self.states[self.ptr:] = states[:space_left]
+                self.policies[self.ptr:] = policies[:space_left]
+                self.values[self.ptr:] = values[:space_left]
+                self.player_indices[self.ptr:] = player_indices[:space_left]
+
+                remaining = num_positions - space_left
+                self.states[:remaining] = states[space_left:]
+                self.policies[:remaining] = policies[space_left:]
+                self.values[:remaining] = values[space_left:]
+                self.player_indices[:remaining] = player_indices[space_left:]
+
+            self.ptr = (self.ptr + num_positions) % self.capacity
+            self.size = min(self.size + num_positions, self.capacity)
+
+    def sample(self, batch_size):
+        """Samples a random batch of experience and moves it to the target device."""
+        with self.lock:
+            indices = np.random.randint(0, self.size, size=batch_size)
+            return (
+                torch.from_numpy(self.states[indices]).to(self.device),
+                torch.from_numpy(self.policies[indices]).to(self.device),
+                torch.from_numpy(self.values[indices]).to(self.device)
+            )
+
+    def __len__(self):
+        with self.lock:
+            return self.size
+
+class SelfPlayWorker(threading.Thread):
+    """
+    A dedicated thread to continuously generate self-play data in the background.
+    """
+    def __init__(self, lib, config, replay_buffer, model_queue):
+        super().__init__(daemon=True) # Daemon thread will exit when main program exits
+        self.lib = lib
+        self.config = config
+        self.replay_buffer = replay_buffer
+        self.model_queue = model_queue
+        self.stop_event = threading.Event()
+
+    def stop(self):
+        self.stop_event.set()
+
+    def run(self):
+        print("[Worker] Self-play worker thread started. Waiting for initial model...")
+        try:
+            # Block here ONLY ONCE to get the initial model from the trainer.
+            # This ensures we don't start generating data with an uninitialized model.
+            model_bytes = self.model_queue.get(block=True, timeout=60)
+            print("[Worker] Received initial model.")
+            set_model(self.lib, model_bytes, len(model_bytes))
+        except queue.Empty:
+            print("[Worker] Timed out waiting for initial model. Stopping.")
+            return
+        except Exception as e:
+            print(f"[Worker] Error receiving initial model: {e}")
+            return
+
+        while not self.stop_event.is_set():
+            try:
+                # 1. Check for an UPDATED model from the trainer (non-blocking).
+                try:
+                    new_model_bytes = self.model_queue.get_nowait()
+                    print("[Worker] Received updated model from trainer.")
+                    set_model(self.lib, new_model_bytes, len(new_model_bytes))
+                except queue.Empty:
+                    # No new model is available, so we continue generating data
+                    # with the current model. This is the expected behavior.
+                    pass
+                
+                # 2. Generate one batch of self-play data.
+                start_time = time.time()
+                new_data = get_selfplay_data_from_cpp(self.lib, self.config)
+                duration = time.time() - start_time
+                
+                if new_data:
+                    num_new_positions = len(new_data['game_states'])
+                    # The .copy() is crucial as the underlying buffer in C++ is temporary.
+                    self.replay_buffer.add(new_data['game_states'].copy(), new_data['policy_targets'].copy(),
+                                           new_data['value_targets'].copy(), new_data['player_indices'].copy())
+                    print(f"[Worker] Generated {num_new_positions} positions in {duration:.2f}s. Buffer size: {len(self.replay_buffer)}")
+            except Exception as e:
+                print(f"[Worker] Error in self-play worker: {e}")
+                break
+        print("[Worker] Self-play worker thread stopped.")
 
 class ResidualBlock(nn.Module):
     """
@@ -258,11 +377,10 @@ class AlphaZeroCNN(nn.Module):
 
 # 2. Training Setup
 if __name__ == '__main__':
+    lib_path = os.path.join('obj', 'libalphazero.so')
+    alphazero_lib = ctypes.CDLL(lib_path)
+    print(f"Successfully loaded shared library from: {lib_path}")
     try:
-        lib_path = os.path.join('obj', 'libalphazero.so')
-        alphazero_lib = ctypes.CDLL(lib_path)
-        print(f"Successfully loaded shared library from: {lib_path}")
-
         # --- Game and Network Configuration ---
         game_config = {
             'board_size': 3,
@@ -271,12 +389,15 @@ if __name__ == '__main__':
             'num_res_blocks': 1, # A smaller ResNet for a simple game like TTT
             'res_block_channels': 64
         }
-        learning_rate = 0.0005
         # Training loop hyperparameters
-        training_iterations = 100
-        games_per_iteration = 100 # Generate more data before training
-        epochs_per_iteration = 5 # Train for fewer epochs on the larger dataset
+        learning_rate = 0.0005
         batch_size = 64
+        total_training_steps = 10000 # Total number of optimization steps
+        model_update_freq_steps = 500 # How often to send the new model to the worker
+
+        # Replay Buffer hyperparameters
+        replay_buffer_size = 20000 # Max number of positions to store
+        min_replay_buffer_size = 1000 # Start training only after this many positions are stored
 
         # Device
         # Device selection: Prefer MPS on Apple Silicon, then CUDA, then CPU
@@ -294,9 +415,16 @@ if __name__ == '__main__':
         # model = AlphaZeroCNN(**game_config).to(device)
         model = TicTacToeCNN( game_config['input_channels'], game_config['board_size'], game_config['num_actions']).to(device)
 
+        # A thread-safe queue to pass the latest model from the trainer to the worker
+        model_queue = queue.Queue(maxsize=1)
+
+        # Replay Buffer
+        replay_buffer = ReplayBuffer(
+            replay_buffer_size, G_SIZE, P_SIZE, device)
+
         # --- TensorBoard Setup ---
         # This will create a 'runs' directory to store the logs
-        writer = SummaryWriter('runs/ttt_alphazero_experiment_5')
+        writer = SummaryWriter('runs/ttt_alphazero_experiment_6')
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
@@ -305,8 +433,8 @@ if __name__ == '__main__':
 
         # Configuration for the self-play run
         self_play_config = {
-            'threads': 2,
-            'runs': games_per_iteration,
+            'threads': 8,
+            'runs': 100, # Number of games to generate per worker cycle
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
@@ -315,95 +443,81 @@ if __name__ == '__main__':
             'opening_moves': 0
         }
 
-        for iteration in range(training_iterations):
-            print(f"\n===== Training Iteration {iteration + 1}/{training_iterations} =====")
-            
-            # Update the model for the next self-play phase
-            model.eval()
-            scripted_model = torch.jit.script(model)
-            buffer = io.BytesIO()
-            torch.jit.save(scripted_model, buffer)
-            model_bytes = buffer.getvalue()
-            set_model(alphazero_lib, model_bytes, len(model_bytes))
+        # --- Start the Self-Play Worker Thread ---
+        worker = SelfPlayWorker(alphazero_lib, self_play_config, replay_buffer, model_queue)
+        worker.start()
 
-            # Self-Play Phase: Generate data from multiple games
-            print("--- Generating self-play data ---")
-            
-            start_time = time.time()
-            new_data = get_selfplay_data_from_cpp(alphazero_lib, self_play_config)
-            duration = time.time() - start_time
+        # --- Main Training Loop ---
+        print("\n[Trainer] Starting main training loop.")
+        
+        # Put the initial random model on the queue for the worker to start generating data
+        model.eval()
+        scripted_model = torch.jit.script(model)
+        buffer = io.BytesIO()
+        torch.jit.save(scripted_model, buffer)
+        model_queue.put(buffer.getvalue())
 
-            if not new_data:
-                print("No data generated in this iteration. Skipping training.")
-                continue
+        # Wait for the replay buffer to have a minimum number of samples
+        while len(replay_buffer) < min_replay_buffer_size:
+            print(f"[Trainer] Waiting for replay buffer to fill... {len(replay_buffer)}/{min_replay_buffer_size}")
+            time.sleep(2)
 
-            # Copy the data from the C++ view into new Python-managed NumPy arrays.
-            # This is an essential step. The pointers from C++ are only valid until
-            # the next call to the library. .copy() creates a new array owned by Python.
-            all_states = new_data['game_states'].copy()
-            all_policies = new_data['policy_targets'].copy()
-            all_values = new_data['value_targets'].copy()
-            all_player_indices = new_data['player_indices'].copy()
-            print(f"Generated {len(all_states)} positions from {games_per_iteration} games in {duration:.2f} seconds.")
-
-            # 2. Training Phase
-            print("--- Training the model ---")
+        print("\n[Trainer] Buffer filled. Starting training steps.")
+        value_loss_fn = nn.MSELoss()
+        
+        for step in range(total_training_steps):
+            model.train()
             start_time = time.time()
 
-            states_tensor = torch.from_numpy(all_states).float()
-            policy_targets_tensor = torch.from_numpy(all_policies).float()
-            value_targets_tensor = torch.from_numpy(all_values).float()
+            # Sample a batch from the replay buffer
+            batch_states, batch_target_policies, batch_target_values = replay_buffer.sample(batch_size)
 
-            dataset = torch.utils.data.TensorDataset(states_tensor, policy_targets_tensor, value_targets_tensor)
-            dataloader = torch.utils.data.DataLoader(dataset, batch_size=batch_size, shuffle=True)
+            optimizer.zero_grad()
+            pred_values, pred_policy_logits = model(batch_states)
 
-            value_loss_fn = nn.MSELoss()
+            loss_policy = -torch.sum(batch_target_policies * F.log_softmax(pred_policy_logits, dim=1), dim=1).mean()
+            loss_value = value_loss_fn(pred_values.squeeze(-1), batch_target_values)
+            loss = loss_policy + loss_value
 
-            for epoch in range(epochs_per_iteration):
-                model.train()
-                total_epoch_loss, total_epoch_policy_loss, total_epoch_value_loss = 0, 0, 0
-                for batch_states, batch_target_policies, batch_target_values in dataloader:
-                    batch_states, batch_target_policies, batch_target_values = \
-                        batch_states.to(device), batch_target_policies.to(device), batch_target_values.to(device)
-
-                    optimizer.zero_grad()
-                    pred_values, pred_policy_logits = model(batch_states)
-
-                    loss_policy = -torch.sum(batch_target_policies * F.log_softmax(pred_policy_logits, dim=1), dim=1).mean()
-                    loss_value = value_loss_fn(pred_values.squeeze(-1), batch_target_values)
-                    total_loss = loss_policy + loss_value
-
-                    total_loss.backward()
-                    optimizer.step()
-
-                    total_epoch_loss += total_loss.item()
-                    total_epoch_policy_loss += loss_policy.item()
-                    total_epoch_value_loss += loss_value.item()
-
-                avg_epoch_loss = total_epoch_loss / len(dataloader)
-                avg_policy_loss = total_epoch_policy_loss / len(dataloader)
-                avg_value_loss = total_epoch_value_loss / len(dataloader)
-                print(f"Epoch [{epoch+1}/{epochs_per_iteration}], Avg Loss: {avg_epoch_loss:.4f}, Policy Loss: {avg_policy_loss:.4f}, Value Loss: {avg_value_loss:.4f}")
+            loss.backward()
+            optimizer.step()
 
             duration = time.time() - start_time
-            print(f"Epochs completed in {duration:.2f} seconds.")
 
-            # Log metrics to TensorBoard at the end of each training iteration
-            # We use the iteration number as the global step for the x-axis.
-            writer.add_scalar('Loss/Total', avg_epoch_loss, iteration)
-            writer.add_scalar('Loss/Policy', avg_policy_loss, iteration)
-            writer.add_scalar('Loss/Value', avg_value_loss, iteration)
+            # Log metrics to TensorBoard
+            if (step + 1) % 100 == 0: # Log every 100 steps
+                writer.add_scalar('Loss/Total', loss.item(), step)
+                writer.add_scalar('Loss/Policy', loss_policy.item(), step)
+                writer.add_scalar('Loss/Value', loss_value.item(), step)
+                writer.add_scalar('Performance/Training_Step_Time_ms', duration * 1000, step)
+                print(f"[Trainer] Step {step+1}/{total_training_steps} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
 
-            # Log weights and gradients for each layer
-            for name, param in model.named_parameters():
-                if param.grad is not None:
-                    writer.add_histogram(f'Weights/{name}', param.data, iteration)
-                    writer.add_histogram(f'Gradients/{name}', param.grad, iteration)
+            # Periodically update the model for the self-play worker
+            if (step + 1) % model_update_freq_steps == 0:
+                print(f"\n[Trainer] Step {step+1}: Updating model for self-play worker.")
+                model.eval()
+                scripted_model = torch.jit.script(model)
+                buffer = io.BytesIO()
+                torch.jit.save(scripted_model, buffer)
+                
+                # Clear the queue and put the new model. This prevents the queue from
+                # filling up if the trainer is faster than the worker, ensuring the
+                # worker always gets the latest model.
+                with model_queue.mutex:
+                    model_queue.queue.clear()
+                model_queue.put_nowait(buffer.getvalue())
+
+            # Log weights and gradients periodically
+            if (step + 1) % 500 == 0:
+                for name, param in model.named_parameters():
+                    if param.grad is not None:
+                        writer.add_histogram(f'Weights/{name}', param.data, step)
+                        writer.add_histogram(f'Gradients/{name}', param.grad, step)
 
         print("\nTraining finished")
 
         # --- Save the final trained model to a file --- 
-        final_model_path = "models/ttt_model_final.pt"
+        final_model_path = "models/ttt_model_final_6.pt"
         # Ensure the parent directory exists before saving
         os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
         print(f"\nSaving final trained model to {final_model_path}...")
@@ -414,32 +528,21 @@ if __name__ == '__main__':
 
         # Close the TensorBoard writer
         writer.close()
-
-        # --- Compare final model predictions with MCTS targets ---
-        print("\n--- Comparing final model predictions with MCTS targets ---")
-        model.eval() # Set model to evaluation mode
-        with torch.no_grad():
-            # Let's compare the first few positions to see how well the model learned
-            num_comparisons = min(len(states_tensor), 10) # Compare up to 10 positions
-            for i in range(num_comparisons):
-                state_tensor_for_model = states_tensor[i].unsqueeze(0).to(device)
-                state_vector_for_print = states_tensor[i].numpy()
-                target_policy = policy_targets_tensor[i].numpy()
-                target_value = value_targets_tensor[i].item()
-
-                # Get model prediction
-                pred_value, pred_policy_logits = model(state_tensor_for_model)
-                pred_policy_probs = F.softmax(pred_policy_logits, dim=1).squeeze(0).cpu().numpy()
-                pred_value = pred_value.item()
-
-                print(f"\n========== Position {i+1} ==========")
-                print_board(state_vector_for_print)
-                print(f"Value Target: {target_value: .4f}  |  Predicted: {pred_value: .4f}")
-                print("---------------------------------")
-                print("Move | MCTS Target | NN Predicted ")
-                print("---------------------------------")
-                for j in range(game_config['num_actions']):
-                    print(f" {j}   |   {target_policy[j]:.4f}    |  {pred_policy_probs[j]:.4f}")
-
     except Exception as e:
         print(f"\nAn error occurred: {e}")
+    finally:
+        # --- Explicit C++ Resource Cleanup ---
+        # This is crucial to prevent crashes on exit. We must explicitly tell the
+        # C++ library to shut down its background threads and release resources
+        # before the Python interpreter unloads the library.
+        if 'worker' in locals() and worker.is_alive():
+            print("\n[Trainer] Stopping self-play worker...")
+            worker.stop()
+            worker.join()
+
+        print("\nCleaning up C++ resources...")
+        cleanup_func = alphazero_lib.cleanup_resources
+        cleanup_func.restype = None
+        cleanup_func.argtypes = []
+        cleanup_func()
+        print("C++ cleanup complete.")

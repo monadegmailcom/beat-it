@@ -29,6 +29,8 @@ public:
 
     ~InferenceManager(); 
 
+    void update_model(std::string&& new_model_data);
+
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
     // memory for predicted policies is provided by the caller.
@@ -51,6 +53,7 @@ private:
     torch::Device device;
     std::queue< InferenceRequest > request_queue;
     std::mutex queue_mutex;
+    std::mutex module_update_mutex;
     std::condition_variable cv;
     std::atomic< bool > stop_flag;
     std::vector<size_t> batch_sizes_log;

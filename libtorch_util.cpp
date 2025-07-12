@@ -117,6 +117,23 @@ float InferenceManager::predict_sync(float const* state, float* policies)
     return value_tensor[0].item<float>();
 }
 
+void InferenceManager::update_model(std::string&& new_model_data)
+{
+    // Load the new model from the byte stream into a temporary object.
+    std::istringstream new_model_stream(std::move(new_model_data));
+    auto new_module = torch::jit::load(new_model_stream);
+    new_module.to(device);
+    new_module.eval();
+
+    // Lock and swap the new model into place. This is much more efficient
+    // than destroying and recreating the entire InferenceManager.
+    {
+        lock_guard< mutex > lock( module_update_mutex);
+        module = new_module;
+    }
+    std::cout << "InferenceManager model updated in-place." << std::endl;
+}
+
 void InferenceManager::inference_loop() 
 {
     vector< InferenceRequest > batch;
@@ -158,9 +175,15 @@ void InferenceManager::inference_loop()
             batch_tensors.push_back( torch::from_blob( 
                 const_cast< float* >( req.state ), state_size, torch::kFloat32));
         torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
+        
+        torch::jit::IValue output_ivalue;
+        {
+            // Lock the module while running inference to prevent it from being
+            // swapped out by an update call from another thread mid-operation.
+            lock_guard< mutex > lock( module_update_mutex);
+            output_ivalue = module.forward({input_batch});
+        }
 
-        // Run inference on the entire batch at once.
-        torch::jit::IValue output_ivalue = module.forward({input_batch});
         auto output_tuple = output_ivalue.toTuple();
         torch::Tensor value_batch = output_tuple->elements()[0].toTensor().to( torch::kCPU);
         torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to( torch::kCPU);

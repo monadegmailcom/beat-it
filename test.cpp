@@ -889,7 +889,7 @@ void ttt_alphazero_nn_vs_minimax()
 
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::NodeAllocator allocator;
-    ifstream stream( "models/ttt_model_final.pt", ios::binary );
+    ifstream stream( "models/ttt_model_final_6.pt", ios::binary );
     if (!stream.is_open()) 
         throw std::runtime_error("Could not open file");
 
@@ -972,7 +972,7 @@ int main()
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
         */
-        test::alphazero_training();
+        test::ttt_alphazero_nn_vs_minimax();
 
         cout << "\neverything ok" << endl;    
         return 0;
