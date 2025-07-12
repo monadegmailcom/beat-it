@@ -3,6 +3,7 @@
 #include <map>
 #include <iomanip>
 #include <string>
+#include <boost/json.hpp>
 
 using namespace std;
 
@@ -11,12 +12,33 @@ namespace libtorch {
 InferenceManager::InferenceManager( 
     std::string&& model_data , size_t state_size, size_t policies_size,
     size_t max_batch_size, std::chrono::milliseconds batch_timeout )
-: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ),
-  state_size( state_size ), policies_size( policies_size ), 
-  model_data_stream( model_data ),
-  module( torch::jit::load( model_data_stream )), device( torch::kCPU), stop_flag( false ), 
-  inference_future( async( &InferenceManager::inference_loop, this ))
+: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
+  policies_size( policies_size ), model_data_stream( std::move(model_data) ), 
+  device( torch::kCPU), stop_flag( false )
 {
+    torch::jit::ExtraFilesMap extra_files;
+    module = torch::jit::load(model_data_stream, extra_files);
+
+    // Check if metadata exists and parse it using Boost.JSON
+    if (extra_files.count("metadata.json")) 
+    {
+        try 
+        {
+            metadata = boost::json::parse(extra_files.at("metadata.json"));
+            std::cout << "Successfully loaded and parsed model metadata with Boost.JSON." << std::endl;
+        } 
+        catch (const boost::system::system_error& e) {
+            std::cerr << "Warning: Could not parse model metadata.json with Boost.JSON: " << e.what() << std::endl;
+            // Initialize with an empty object to avoid errors on access
+            metadata = boost::json::object();
+        }
+    } 
+    else 
+    {
+        std::cout << "Warning: No metadata.json found in the model file." << std::endl;
+        metadata = boost::json::object();
+    }
+
     module.eval();
     
     // Check for available hardware backends, preferring MPS on Apple Silicon, then CUDA.
@@ -40,6 +62,9 @@ InferenceManager::InferenceManager(
     }
 
     module.to(device);
+
+    // Start the inference loop thread after everything is initialized.
+    inference_future = async( &InferenceManager::inference_loop, this );
 }
 
 InferenceManager::~InferenceManager() 
@@ -86,6 +111,11 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
     return future;
 }
 
+const boost::json::value& InferenceManager::get_metadata() const
+{
+    return metadata;
+}
+
 float InferenceManager::predict_sync(float const* state, float* policies)
 {
     // This function is designed to be called directly from a worker thread.
@@ -121,15 +151,31 @@ void InferenceManager::update_model(std::string&& new_model_data)
 {
     // Load the new model from the byte stream into a temporary object.
     std::istringstream new_model_stream(std::move(new_model_data));
-    auto new_module = torch::jit::load(new_model_stream);
+    torch::jit::ExtraFilesMap extra_files;
+    auto new_module = torch::jit::load(new_model_stream, extra_files);
     new_module.to(device);
     new_module.eval();
+
+    boost::json::value new_metadata;
+    if (extra_files.count("metadata.json")) 
+    {
+        try 
+        {
+            new_metadata = boost::json::parse(extra_files.at("metadata.json"));
+        } 
+        catch (const boost::system::system_error& e) 
+        {
+            std::cerr << "Warning: Could not parse metadata in updated model: " << e.what() << std::endl;
+            new_metadata = boost::json::object();
+        }
+    }
 
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
     {
         lock_guard< mutex > lock( module_update_mutex);
         module = new_module;
+        metadata = std::move(new_metadata);
     }
     std::cout << "InferenceManager model updated in-place." << std::endl;
 }

@@ -10,6 +10,7 @@
 #include "minimax-tree.h"
 #include "alphazero.h"
 #include "libtorch_util.h"
+#include <boost/json.hpp>
 
 using namespace std;
 
@@ -796,6 +797,7 @@ struct ThreadLocalStorage
     // Each thread needs its own random number generator as std::mt19937 is not thread-safe.
     // Seed with a random device to ensure different threads have different sequences.
     mt19937 g = mt19937( random_device{}());
+    ttt::alphazero::NodeAllocator node_allocator;
 
     vector< ::alphazero::training::Position< ttt::alphazero::G, ttt::alphazero::P > > positions;
     future< void > selfplay_future;   
@@ -808,7 +810,6 @@ struct ThreadLocalStorage
 };
 
 void selfplay_worker( 
-    ttt::alphazero::NodeAllocator& node_allocator,
     ThreadLocalStorage& local_storage,
     libtorch::InferenceManager& inference_manager,
     size_t runs_per_thread,
@@ -824,7 +825,7 @@ void selfplay_worker(
     for (; runs_per_thread; --runs_per_thread) 
     {
         ttt::alphazero::libtorch::Player player( ttt::Game( player_index, ttt::empty_state ), c_base, c_init,
-            simulations, node_allocator, inference_manager );
+            simulations, local_storage.node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, dirichlet_alpha, dirichlet_epsilon,
             opening_moves, local_storage.g, local_storage.positions );
@@ -837,10 +838,10 @@ void alphazero_training()
 {
     cout << __func__ << endl;
 
-    // build inference manager ->
-    ifstream stream( "models/ttt_model_final.pt", ios::binary );
+    const std::string model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
+    ifstream stream( model_path, ios::binary );
     if (!stream.is_open()) 
-        throw std::runtime_error("Could not open file");
+        throw std::runtime_error("Could not open file: " + model_path);
 
     std::string content((std::istreambuf_iterator<char>( stream )),
                          std::istreambuf_iterator<char>());
@@ -848,16 +849,23 @@ void alphazero_training()
     libtorch::InferenceManager inference_manager( 
         std::move( content ), ttt::alphazero::G, ttt::alphazero::P,
         128, chrono::milliseconds( 5 ) );
-    // <-
 
-    const float c_base = 19652;
-    const float c_init = 1.25; 
-    const size_t simulations = 100;
-    const float dirichlet_alpha = 0.3;
-    const float dirichlet_epsilon = 0.25;
-    const size_t opening_moves = 0; // 1;
-    const size_t threads = 8; // concurrency
-    const size_t rounds = 100;
+    // Extract hyperparameters from the loaded model's metadata
+    const auto& metadata = inference_manager.get_metadata();
+    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
+        throw std::runtime_error("Model metadata is missing or incomplete in " + model_path);
+    }
+    const auto& sp_config = metadata.at("self_play_config").as_object();
+    cout << "Loaded hyperparameters from model: " << sp_config << endl;
+
+    const float c_base = sp_config.contains("c_base") ? boost::json::value_to<float>(sp_config.at("c_base")) : 19652.0f;
+    const float c_init = sp_config.contains("c_init") ? boost::json::value_to<float>(sp_config.at("c_init")) : 1.25f;
+    const size_t simulations = sp_config.contains("simulations") ? boost::json::value_to<size_t>(sp_config.at("simulations")) : 100;
+    const float dirichlet_alpha = sp_config.contains("dirichlet_alpha") ? boost::json::value_to<float>(sp_config.at("dirichlet_alpha")) : 0.3f;
+    const float dirichlet_epsilon = sp_config.contains("dirichlet_epsilon") ? boost::json::value_to<float>(sp_config.at("dirichlet_epsilon")) : 0.25f;
+    const size_t opening_moves = sp_config.contains("opening_moves") ? boost::json::value_to<size_t>(sp_config.at("opening_moves")) : 0;
+    const size_t threads = sp_config.contains("threads") ? boost::json::value_to<size_t>(sp_config.at("threads")) : 8;
+    const size_t rounds = sp_config.contains("runs") ? boost::json::value_to<size_t>(sp_config.at("runs")) : 100;
     const size_t runs_per_thread = rounds / threads;
 
     vector< ThreadLocalStorage > local_storages;
@@ -866,10 +874,9 @@ void alphazero_training()
         local_storages.emplace_back();
 
     cout << "start " << threads << " worker thread "  << endl;
-    ttt::alphazero::NodeAllocator node_allocator;
     for (auto& tls : local_storages)
         tls.selfplay_future = async( selfplay_worker,
-            ref( node_allocator ), ref( tls ), ref(inference_manager), runs_per_thread, c_base, c_init,
+            ref( tls ), ref(inference_manager), runs_per_thread, c_base, c_init,
             dirichlet_alpha, dirichlet_epsilon, simulations, opening_moves );
 
     cout << "wait for all threads to finish..." << endl;
@@ -887,11 +894,10 @@ void ttt_alphazero_nn_vs_minimax()
 {
     cout << __func__ << endl;
 
-    ttt::Game game( Player1, ttt::empty_state );
-    ttt::alphazero::NodeAllocator allocator;
-    ifstream stream( "models/ttt_model_final_6.pt", ios::binary );
+    const std::string model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
+    ifstream stream( model_path, ios::binary );
     if (!stream.is_open()) 
-        throw std::runtime_error("Could not open file");
+        throw std::runtime_error("Could not open file: " + model_path);
 
     std::string content((std::istreambuf_iterator<char>( stream )),
                          std::istreambuf_iterator<char>());
@@ -899,10 +905,20 @@ void ttt_alphazero_nn_vs_minimax()
     libtorch::InferenceManager inference_manager( 
         std::move( content ), ttt::alphazero::G, ttt::alphazero::P );
 
-    const float c_base = 19652;
-    const float c_init = 1.25; 
-    const size_t simulations = 100;
+    // Extract hyperparameters from the loaded model's metadata
+    const auto& metadata = inference_manager.get_metadata();
+    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
+        throw std::runtime_error("Model metadata is missing or incomplete in " + model_path);
+    }
+    const auto& sp_config = metadata.at("self_play_config").as_object();
+    cout << "Loaded hyperparameters from model: " << sp_config << endl;
 
+    const float c_base = sp_config.contains("c_base") ? boost::json::value_to<float>(sp_config.at("c_base")) : 19652.0f;
+    const float c_init = sp_config.contains("c_init") ? boost::json::value_to<float>(sp_config.at("c_init")) : 1.25f;
+    const size_t simulations = sp_config.contains("simulations") ? boost::json::value_to<size_t>(sp_config.at("simulations")) : 100;
+
+    ttt::Game game( Player1, ttt::empty_state );
+    ttt::alphazero::NodeAllocator allocator;
     mt19937 g( seed );
     ttt::minimax::Data data( g );
 
@@ -932,7 +948,6 @@ void ttt_alphazero_nn_vs_minimax()
                     match.snd_player_duration ).count() << '\n' << endl;
 
     assert (match.draws > 0);
-
 }
 
 } // namespace test {

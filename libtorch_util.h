@@ -8,6 +8,7 @@
 #include <condition_variable>
 #include <atomic>
 #include <vector>
+#include <boost/json.hpp>
 
 namespace libtorch {
 
@@ -29,6 +30,8 @@ public:
 
     ~InferenceManager(); 
 
+    const boost::json::value& get_metadata() const;
+
     void update_model(std::string&& new_model_data);
 
     // This is called by worker threads to queue a request for inference.
@@ -49,6 +52,7 @@ private:
     size_t policies_size;
     std::vector< torch::Tensor > batch_tensors;
     std::istringstream model_data_stream;
+    boost::json::value metadata;
     torch::jit::script::Module module; // The loaded TorchScript model
     torch::Device device;
     std::queue< InferenceRequest > request_queue;
