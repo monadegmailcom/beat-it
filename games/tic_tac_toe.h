@@ -5,6 +5,11 @@
 #include <array>
 #include <iostream>
 
+// forward decl so we do not have to include libtorch_helper.h here
+namespace libtorch {
+class InferenceManager;
+} // namespace libtorch {
+
 namespace ttt
 {
 
@@ -82,49 +87,36 @@ using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 const size_t G = 3 * 9;
 const size_t P = 9;
 
-struct Data : public ::alphazero::Data< Move, State, G, P >
-{
-    Data( std::mt19937& g, NodeAllocator& allocator )
-    : ::alphazero::Data< Move, State, G, P >( g, allocator ) {}
-
-    float predict( 
-        Game const&, 
-        std::array< float, P >& policies ) override;
-    size_t move_to_policy_index( Move const& ) const override;
-    void serialize_state( 
-        Game const&,
-        std::array< float, G >& ) const override;
-};
-
-using Player = ::alphazero::Player< Move, State, G, P >;
-
 namespace libtorch {
 
-struct Impl;
-
-struct Data : public ttt::alphazero::Data
+class Player : public ::alphazero::Player< Move, State, G, P >
 {
-    Data( std::mt19937& g, NodeAllocator& allocator, const std::string& model_path );
-    Data( std::mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len );
-    ~Data();
-    Data(Data&&);
-    Data( Data const& ) = delete;
-    Data& operator=( Data const& ) = delete;
+public:
+    Player( 
+        Game const& game, 
+        float c_base,
+        float c_init,
+        size_t simulations,
+        NodeAllocator& allocator,
+        ::libtorch::InferenceManager& inference_manager )
+    : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator),
+      inference_manager( inference_manager ) {}
+protected:
+    ::libtorch::InferenceManager& inference_manager;
 
-    float predict( Game const&, std::array< float, P >& policies ) override;
-    
-    std::unique_ptr< Impl > impl;
-}; 
+    std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
+    std::array< float, G > serialize_state( Game const& ) const override;
+    size_t move_to_policy_index( Move const& ) const override;
+};
 
-} // namespace libtorch
+} // namespace libtorch {
 
 namespace training {
 
-using SelfPlay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 using Position = ::alphazero::training::Position< G, P >;
+using SelfPlay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 
 } // namespace training {
-
 } // namespace alphazero {
 
 namespace console

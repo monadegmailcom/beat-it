@@ -1,18 +1,9 @@
 #include "tic_tac_toe.h"
-
-#include <torch/script.h> // Main LibTorch header for loading models
-#include <torch/torch.h>
+#include "../libtorch_util.h"
 
 #include <iostream>
 #include <algorithm>
 #include <cmath>
-#include <sstream>
-#include <thread>
-#include <mutex>
-#include <condition_variable>
-#include <future>
-#include <queue>
-#include <atomic>
 
 using namespace std;
 
@@ -52,36 +43,17 @@ double score( State const& state )
 
 namespace alphazero {
 
-float Data::predict( Game const& game, array< float, P >& policies )
-{
-    // for debug purposes use score function for prediction
+namespace libtorch {
 
-    // initialize policies to 0.0
-    policies.fill ( 0.0f );
-
-    // transform scores to increasing values from worst to best
-    const float f = game.current_player_index() == PlayerIndex::Player1 
-        ? -1.0f
-        : 1.0f;
-    for (auto move : game)
-        policies[move_to_policy_index( move )] = f * static_cast< float >( minimax::score( 
-            game.apply( move ).get_state()));
-
-    // transform score to target value from -1 (loss) to 1 (win)
-    return tanh( f * static_cast< float >( minimax::score( game.get_state())));
-}
-
-size_t Data::move_to_policy_index( Move const& move ) const
+size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
 }
 
-void Data::serialize_state( 
-    Game const& game,
-    array< float, G >& game_state_players ) const
+array< float, G > Player::serialize_state( Game const& game ) const
 {
     auto const& state = game.get_state();
-    game_state_players.fill( 0.0f );
+    array< float, G > game_state_players = { 0.0f };
 
     // Pointers to each 9-cell plane for clarity
     float* plane1_x_pieces = game_state_players.data();
@@ -102,170 +74,29 @@ void Data::serialize_state(
     // This provides global context and ensures a consistent input structure for the JIT.
     if (game.current_player_index() == PlayerIndex::Player1)
         std::fill(plane3_player_indicator, plane3_player_indicator + 9, 1.0f);
+
+    return game_state_players;
 }
 
-namespace libtorch {
-
-const size_t MAX_BATCH_SIZE = 128;
-const std::chrono::milliseconds BATCH_TIMEOUT(5);
-
-using PredictionResult = std::pair<float, std::array<float, P>>;
-
-struct InferenceRequest {
-    std::array<float, G> state;
-    std::promise<PredictionResult> promise;
-};
-
-// This class manages a dedicated thread for running batched model inference.
-class InferenceManager {
-public:
-    InferenceManager(torch::jit::script::Module& module, torch::Device device)
-        : module(module), device(device), stop_flag(false) {
-        inference_thread = std::thread(&InferenceManager::inference_loop, this);
-    }
-
-    ~InferenceManager() {
-        stop_flag = true;
-        cv.notify_one();
-        if (inference_thread.joinable()) {
-            inference_thread.join();
-        }
-    }
-
-    // This is called by worker threads to queue a request for inference.
-    std::future<PredictionResult> queue_request(std::array<float, G>&& state) {
-        std::promise<PredictionResult> promise;
-        auto future = promise.get_future();
-        {
-            std::lock_guard<std::mutex> lock(queue_mutex);
-            request_queue.push({std::move(state), std::move(promise)});
-        }
-        cv.notify_one();
-        return future;
-    }
-
-private:
-    void inference_loop() {
-        while (!stop_flag) {
-            std::vector<InferenceRequest> batch;
-            {
-                std::unique_lock<std::mutex> lock(queue_mutex);
-                // Wait until the queue has items or a timeout occurs.
-                // The timeout is crucial to process incomplete batches with low latency.
-                cv.wait_for(lock, BATCH_TIMEOUT, [this] { return !request_queue.empty() || stop_flag; });
-
-                if (stop_flag) return;
-
-                // Pull requests from the queue to form a batch.
-                while (!request_queue.empty() && batch.size() < MAX_BATCH_SIZE) {
-                    batch.push_back(std::move(request_queue.front()));
-                    request_queue.pop();
-                }
-            }
-
-            if (batch.empty()) continue;
-
-            // Prepare the batch tensor for the model.
-            std::vector<torch::Tensor> batch_tensors;
-            batch_tensors.reserve(batch.size());
-            for (const auto& req : batch) {
-                batch_tensors.push_back(torch::from_blob(
-                    const_cast<float*>(req.state.data()), {G}, torch::kFloat32));
-            }
-            torch::Tensor input_batch = torch::stack(batch_tensors).to(device);
-
-            // Run inference on the entire batch at once.
-            torch::jit::IValue output_ivalue = module.forward({input_batch});
-            auto output_tuple = output_ivalue.toTuple();
-            torch::Tensor value_batch = output_tuple->elements()[0].toTensor().to(torch::kCPU);
-            torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to(torch::kCPU);
-
-            // Distribute the results back to the waiting threads.
-            for (size_t i = 0; i < batch.size(); ++i) {
-                std::array<float, P> policy_result;
-                float* policy_ptr = policy_batch[i].data_ptr<float>();
-                std::copy(policy_ptr, policy_ptr + P, policy_result.begin());
-                
-                float value_result = value_batch[i].item<float>();
-
-                batch[i].promise.set_value({value_result, policy_result});
-            }
-        }
-    }
-
-    torch::jit::script::Module& module;
-    torch::Device device;
-    std::thread inference_thread;
-    std::queue<InferenceRequest> request_queue;
-    std::mutex queue_mutex;
-    std::condition_variable cv;
-    std::atomic<bool> stop_flag;
-};
-
-struct Impl
-{
-    Impl( const char* model_data, size_t model_data_len )
-        : model_data_stream( std::string( model_data, model_data_len)),
-          module( torch::jit::load( model_data_stream ))
-    { init(); }
-
-    Impl( const std::string& model_path )
-        : module( torch::jit::load( model_path ))
-    { init(); }
-
-    void init()
-    {
-        module.eval();
-
-        if (torch::cuda::is_available()) 
-        {
-            device = torch::kCUDA;
-            module.to( torch::kCUDA );
-        } 
-        else 
-            device = torch::kCPU;
-    }
-
-    istringstream model_data_stream;
-    torch::jit::script::Module module; // The loaded TorchScript model
-    torch::Device device = torch::kCPU;  // Device to run inference on (CPU or CUDA)
-    std::unique_ptr<InferenceManager> inference_manager;
-};
-
-Data::Data( mt19937& g, NodeAllocator& allocator, const std::string& model_path )
-    : ttt::alphazero::Data( g, allocator ),
-      impl( make_unique< Impl >( model_path ))
-{}
-
-Data::Data( mt19937& g, NodeAllocator& allocator, const char* model_data, size_t model_data_len )
-    : ttt::alphazero::Data( g, allocator ),
-      impl( make_unique< Impl >(model_data, model_data_len))
-{}
-
-Data::~Data() = default;
-Data::Data(Data&&) = default;
-
-float Data::predict( 
-    Game const& game, 
-    std::array< float, P >& policies )
+pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
 {   
     // This method is now a client of the InferenceManager.
     // It queues a request and blocks until the result is ready.
-    array< float, G > game_state_players;
-    serialize_state( game, game_state_players );
 
-    auto future = impl->inference_manager->queue_request(std::move(game_state_players));
-    auto [value, policy_result] = future.get();
+    // provide the buffer to copy predicted policies into
+    array< float, P > policies;
 
-    policies = policy_result;
-    return value;
+    // --- Batched/Asynchronous implementation (original) ---
+    auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
+    auto value = future.get(); // blocking call
+
+    // --- Synchronous/Direct implementation (for comparison) ---
+    // auto value = inference_manager.predict_sync( game_state_players.data(), policies.data());
+
+    return make_pair(value, policies);
 }
 
 } // namespace libtorch
-
-namespace training {
-
-} // namespace training {
 } // namespace alphazero {
 
 Symbol player_index_to_symbol( PlayerIndex player_index )

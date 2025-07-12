@@ -2,6 +2,11 @@
 
 #include <iostream>
 
+// forward decl so we do not have to include libtorch_helper.h here
+namespace libtorch {
+class InferenceManager;
+} // namespace libtorch {
+
 namespace uttt
 {
 
@@ -93,21 +98,24 @@ using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 const size_t G = 4 * 81;
 const size_t P = 81;
 
-struct Data : public ::alphazero::Data< Move, State, G, P >
+class Player : public ::alphazero::Player< Move, State, G, P >
 {
-    Data( std::mt19937& g, NodeAllocator& allocator )
-    : ::alphazero::Data< Move, State, G, P >( g, allocator ) {}
+    Player( 
+        Game const& game, 
+        float c_base,
+        float c_init,
+        size_t simulations,
+        NodeAllocator& allocator,
+        ::libtorch::InferenceManager& inference_manager )
+    : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator),
+      inference_manager( inference_manager ) {}
 
-    float predict( 
-        Game const&,
-        std::array< float, P >& policies ) override;
+    std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
+    std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;
-    void serialize_state( 
-        Game const&,
-        std::array< float, G >& game_state_players ) const override;
+protected:
+    ::libtorch::InferenceManager& inference_manager;
 };
-
-using Player = ::alphazero::Player< Move, State, G, P >;
 
 namespace training {
 

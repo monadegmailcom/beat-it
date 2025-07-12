@@ -1,6 +1,7 @@
 #include <iostream>
 #include <exception>
 #include <cassert>
+#include <fstream>
 
 #include "games/nim.h"
 #include "games/ultimate_ttt.h"
@@ -8,6 +9,7 @@
 #include "montecarlo.h"
 #include "minimax-tree.h"
 #include "alphazero.h"
+#include "libtorch_util.h"
 
 using namespace std;
 
@@ -524,20 +526,20 @@ void montecarlo_node()
 
     using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
 
-    Node< Value >* node = new (allocator.allocate()) Node< Value >( 
+    Node< Value >* node = new (allocator.allocate(1)) Node< Value >( 
                      Value( game, ttt::no_move ), allocator );
     assert (node->get_children().size() == 0);
     assert (node_count( *node) == 1);
 
     for (auto const& move : game)
         node->get_children().push_front( 
-            *(new (allocator.allocate()) Node< Value >( 
+            *(new (allocator.allocate(1)) Node< Value >( 
                 Value( game.apply( move ), move), allocator )));
 
     assert (node->get_children().size() == 9);
     assert (node_count( *node) == 10);
     node->~Node();
-    allocator.deallocate( node );
+    allocator.deallocate( node, 1);
 }
 
 void montecarlo_player()
@@ -789,212 +791,64 @@ void uttt_match_mm_vs_tree_mm()
     assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
-template< typename MoveT, typename StateT, size_t G, size_t P >
-struct MockNN : public alphazero::Data< MoveT, StateT, G, P >
+struct ThreadLocalStorage
 {
-    MockNN( 
-        mt19937& g, 
-        alphazero::NodeAllocator< MoveT, StateT >& allocator,
-        float exploration,
-        size_t simulations )
-    : alphazero::Data< MoveT, StateT, G, P >( g, allocator ), 
-      mc_data( g, mc_allocator ),
-      exploration( exploration ), simulations( simulations )
-    {}
+    // Each thread needs its own random number generator as std::mt19937 is not thread-safe.
+    // Seed with a random device to ensure different threads have different sequences.
+    mt19937 g = mt19937( random_device{}());
 
-    float predict( 
-        Game< MoveT, StateT > const& game,
-        array< float, P >& policies ) override
-    {
-        using Value = montecarlo::detail::Value< MoveT, StateT >;
-        using Node = Node< Value >;
-        NodePtr< Value > root( 
-            new (this->mc_allocator.allocate()) Node( Value( game, MoveT()), this->mc_allocator ),
-            [this](auto ptr) { deallocate( this->mc_allocator, ptr ); });
+    vector< ::alphazero::training::Position< ttt::alphazero::G, ttt::alphazero::P > > positions;
+    future< void > selfplay_future;   
 
-        for (size_t i = simulations; i != 0; --i)
-            montecarlo::detail::simulation( *root, mc_data, exploration );
-
-        policies.fill( 0.0f );        
-        if (root->get_children().empty())
-            throw runtime_error( "no children for policy vector");
-        if (root->get_value().visits <= 1)
-            for (auto const& child : root->get_children())
-                policies[this->move_to_policy_index( child.get_value().move )] =
-                    1.0 / root->get_children().size();
-        else
-            for (auto const& child : root->get_children())
-                policies[this->move_to_policy_index( child.get_value().move )] = 
-                    static_cast< float >( child.get_value().visits ) 
-                        / (root->get_value().visits - 1);
-        // transform value from [0, 1] to [-1, 1]
-        return 2 * root->get_value().points / root->get_value().visits - 1;
-    }
-
-    montecarlo::NodeAllocator< MoveT, StateT > mc_allocator;
-    montecarlo::Data< MoveT, StateT > mc_data;
-    float exploration;
-    size_t simulations;
+    ThreadLocalStorage() = default;
+    ThreadLocalStorage(const ThreadLocalStorage&) = delete;
+    ThreadLocalStorage& operator=(const ThreadLocalStorage&) = delete;
+    ThreadLocalStorage(ThreadLocalStorage&&) = default;
+    ThreadLocalStorage& operator=(ThreadLocalStorage&&) = default;
 };
 
-struct MockTTTNN : public MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt::alphazero::P >
+void selfplay_worker( 
+    ttt::alphazero::NodeAllocator& node_allocator,
+    ThreadLocalStorage& local_storage,
+    libtorch::InferenceManager& inference_manager,
+    size_t runs_per_thread,
+    float c_base,
+    float c_init,
+    float dirichlet_alpha,
+    float dirichlet_epsilon,
+    int32_t simulations,
+    int32_t opening_moves )
 {
-    MockTTTNN( 
-        mt19937& g, 
-        alphazero::NodeAllocator< ttt::Move, ttt::State >& allocator )
-        : MockNN< ttt::Move, ttt::State, ttt::alphazero::G, ttt::alphazero::P >( g, allocator, 0.4, 100 ) {}
-
-    size_t move_to_policy_index( ttt::Move const& move ) const override
+    PlayerIndex player_index = PlayerIndex::Player1;
+    local_storage.positions.clear();
+    for (; runs_per_thread; --runs_per_thread) 
     {
-        return size_t( move );
+        ttt::alphazero::libtorch::Player player( ttt::Game( player_index, ttt::empty_state ), c_base, c_init,
+            simulations, node_allocator, inference_manager );
+        alphazero::training::SelfPlay self_play(
+            player, dirichlet_alpha, dirichlet_epsilon,
+            opening_moves, local_storage.g, local_storage.positions );
+        self_play.run();
+        player_index = toggle(player_index);
     }
-    void serialize_state( 
-        ttt::Game const&,
-        std::array< float, ttt::alphazero::G >& ) const override {}
-};
-
-void alphazero_ttt_match()
-{
-    cout << __func__ << endl;
-
-    mt19937 g( seed );
-
-    ttt::alphazero::NodeAllocator allocator;
-    MockTTTNN mock_nn( g, allocator );
-
-    const float exploration = .4;;
-    const float c_base = 19652;
-    const float c_init = 1.25; 
-    const size_t simulations = 100;
-    ttt::Game game( Player1, ttt::empty_state );
-    ttt::alphazero::Player player1( 
-        game, c_base, c_init, simulations, mock_nn);
-
-    ttt::montecarlo::NodeAllocator mc_allocator;
-    ttt::montecarlo::Data mc_data( g, mc_allocator );
-    ttt::montecarlo::Player player2( 
-        game, exploration, simulations, mc_data );
-
-    Match< ttt::Move, ttt::State > match;
-    std::chrono::microseconds player1_duration {0};
-    std::chrono::microseconds player2_duration {0};
-    match.play( game, player1, player1_duration, player2, player2_duration );    
-}
-
-void ttt_multimatch_alphazero_vs_minimax()
-{
-    if (extensive)
-        cout << __func__ << endl;
-    else
-    {
-        cout << __func__ << " (extensive mode off)" << endl;
-        return;
-    }
-
-    mt19937 g( seed );
-
-    ttt::alphazero::NodeAllocator allocator;
-    MockTTTNN mock_nn( g, allocator );
-
-    ttt::minimax::Data data( g );
-    ttt::Game game( Player1, ttt::empty_state );
-
-    MultiMatch< ttt::Move, ttt::State > match;
-    const size_t rounds = 100;
-    match.play_match( 
-        game, 
-        [&game, &mock_nn]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, mock_nn); }, 
-        [&game, &data]() { return new ttt::minimax::Player( game, 2, data ); }, 
-        rounds );
-
-    if (verbose)
-        cout 
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data.eval_calls << endl;
-
-    assert (match.draws > 0);
-}
-
-struct MockUTTTNN : public MockNN< uttt::Move, uttt::State, uttt::alphazero::G, uttt::alphazero::P >
-{
-    MockUTTTNN( 
-        mt19937& g, 
-        uttt::alphazero::NodeAllocator& allocator )
-        : MockNN< uttt::Move, uttt::State, uttt::alphazero::G, uttt::alphazero::P >( g, allocator, 0.4, 100 ) {}
-
-    size_t move_to_policy_index( uttt::Move const& move ) const override
-    {
-        return size_t( move.big_move * 9 + move.small_move );
-    }
-
-    void serialize_state( 
-        uttt::Game const&,
-        std::array< float, uttt::alphazero::G >& ) const override {}
-
-};
-
-void uttt_multimatch_alphazero_vs_minimax()
-{
-    if (extensive)
-        cout << __func__ << endl;
-    else
-    {
-        cout << __func__ << " (extensive mode off)" << endl;
-        return;
-    }
-
-    mt19937 g( seed );
-
-    uttt::alphazero::NodeAllocator allocator;
-    MockUTTTNN mock_nn( g, allocator );
-
-    uttt::minimax::Data data( g );
-    uttt::Game game( Player1, uttt::empty_state );
-
-    MultiMatch< uttt::Move, uttt::State > match;
-    const size_t rounds = 100;
-    const size_t simulations = 100;
-    const float exploration = 0.4;
-    const size_t depth = 2;
-    const double factor = 9.0;
-    match.play_match( 
-        game, 
-        [&game, &mock_nn]() { return new uttt::alphazero::Player( game, 19652, 1.25, simulations, mock_nn); }, 
-        [&game, factor, &data]() { return new uttt::minimax::Player( game, factor, depth, data ); }, 
-        rounds );
-
-    if (verbose)
-        cout 
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "fst player simulations: " << simulations << '\n'
-            << "fst player exploration: " << exploration << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
-            << "snd player depth: " << depth << '\n'
-            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data.eval_calls << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n' 
-            << "fst/snd player duration ratio: " 
-            << double( chrono::duration_cast< std::chrono::microseconds >( 
-                    match.fst_player_duration ).count()) / 
-               chrono::duration_cast< std::chrono::microseconds >( 
-                    match.snd_player_duration ).count() << endl;
-
-    assert (match.draws > 0);
 }
 
 void alphazero_training()
 {
     cout << __func__ << endl;
 
-    mt19937 g( seed );
+    // build inference manager ->
+    ifstream stream( "models/ttt_model_final.pt", ios::binary );
+    if (!stream.is_open()) 
+        throw std::runtime_error("Could not open file");
 
-    ttt::alphazero::NodeAllocator allocator;
-    ttt::alphazero::Data data( g, allocator );
+    std::string content((std::istreambuf_iterator<char>( stream )),
+                         std::istreambuf_iterator<char>());
+
+    libtorch::InferenceManager inference_manager( 
+        std::move( content ), ttt::alphazero::G, ttt::alphazero::P,
+        128, chrono::milliseconds( 5 ) );
+    // <-
 
     const float c_base = 19652;
     const float c_init = 1.25; 
@@ -1002,59 +856,63 @@ void alphazero_training()
     const float dirichlet_alpha = 0.3;
     const float dirichlet_epsilon = 0.25;
     const size_t opening_moves = 0; // 1;
-    vector< ttt::alphazero::training::Position > positions;
+    const size_t threads = 8; // concurrency
+    const size_t rounds = 100;
+    const size_t runs_per_thread = rounds / threads;
 
-    ttt::Game game( Player1, ttt::empty_state );
-    ttt::alphazero::training::SelfPlay selfplay( 
-        game, c_base, c_init, dirichlet_alpha,
-        dirichlet_epsilon, simulations, opening_moves,
-        data, positions );
+    vector< ThreadLocalStorage > local_storages;
+    local_storages.reserve(threads);
+    for (size_t i = 0; i < threads; ++i)
+        local_storages.emplace_back();
 
-    selfplay.run();
+    cout << "start " << threads << " worker thread "  << endl;
+    ttt::alphazero::NodeAllocator node_allocator;
+    for (auto& tls : local_storages)
+        tls.selfplay_future = async( selfplay_worker,
+            ref( node_allocator ), ref( tls ), ref(inference_manager), runs_per_thread, c_base, c_init,
+            dirichlet_alpha, dirichlet_epsilon, simulations, opening_moves );
+
+    cout << "wait for all threads to finish..." << endl;
+
+    size_t total_positions = 0;
+    for (auto& tls : local_storages) 
+    {
+        tls.selfplay_future.wait();
+        total_positions += tls.positions.size();
+    }
+    cout << "total positions: " << total_positions << endl;
 }
 
 void ttt_alphazero_nn_vs_minimax()
 {
     cout << __func__ << endl;
 
-    std::mt19937 g( seed );
-    ttt::alphazero::NodeAllocator node_allocator;
-    const std::string model_path = "models/ttt_model_final.pt"; // Path to the model saved by Python
-
-    // 2. Create the data object by loading the model from the file
-    // This uses the new file-based constructor we added.
-    ttt::alphazero::libtorch::Data nn_data(g, node_allocator, model_path);
-    std::cout << "Successfully loaded model from " << model_path << std::endl;
-
-    ttt::minimax::Data data( g );
     ttt::Game game( Player1, ttt::empty_state );
+    ttt::alphazero::NodeAllocator allocator;
+    ifstream stream( "models/ttt_model_final.pt", ios::binary );
+    if (!stream.is_open()) 
+        throw std::runtime_error("Could not open file");
+
+    std::string content((std::istreambuf_iterator<char>( stream )),
+                         std::istreambuf_iterator<char>());
+
+    libtorch::InferenceManager inference_manager( 
+        std::move( content ), ttt::alphazero::G, ttt::alphazero::P );
+
+    const float c_base = 19652;
+    const float c_init = 1.25; 
+    const size_t simulations = 100;
+
+    mt19937 g( seed );
+    ttt::minimax::Data data( g );
 
     MultiMatch< ttt::Move, ttt::State > match;
     const size_t rounds = 100;
 
-    // debug
-    vector< ttt::alphazero::training::Position > positions;
-    PlayerIndex player_index = Player1;
-    // Pre-allocating memory is crucial for performance. It prevents the vector
-    // from performing slow reallocations as it grows, which keeps the main thread responsive.
-    positions.reserve(rounds * 9); // 100 games, max 9 moves per game.
-    for (auto runs = 100;runs;--runs)
-    {
-        cout << "run " << runs << endl;
-        // 2. Run self-play to generate training data
-        ttt::alphazero::training::SelfPlay self_play(
-            ttt::Game( player_index, ttt::empty_state ), 19652, 1.25, 0.3,
-            0.25, 
-            100, 1, nn_data, positions );
-        self_play.run();
-        player_index = toggle( player_index );
-    }
-    return;
-    //end debug
-
     match.play_match( 
         game, 
-        [&game, &nn_data]() { return new ttt::alphazero::Player( game, 19652, 1.25, 100, nn_data); }, 
+        [&]() { return new ttt::alphazero::libtorch::Player( 
+            game, c_base, c_init, simulations, allocator, inference_manager ); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
         rounds );
 
@@ -1112,8 +970,9 @@ int main()
         test::montecarlo_minimax_uttt_match();
         test::uttt_multimatch_alphazero_vs_minimax();
         test::alphazero_training();
-        */
         test::ttt_alphazero_nn_vs_minimax();
+        */
+        test::alphazero_training();
 
         cout << "\neverything ok" << endl;    
         return 0;

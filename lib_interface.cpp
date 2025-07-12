@@ -1,12 +1,7 @@
 #include "games/tic_tac_toe.h" // Includes alphazero.h etc.
-#include <vector>
-#include <iostream>
-#include <algorithm>
-#include <memory>
-#include <cstdint>
+#include "libtorch_util.h"
 
-#include <torch/script.h> // Main LibTorch header for loading models
-#include <torch/torch.h>
+#include <list>
 
 using namespace std;
 
@@ -19,21 +14,56 @@ using namespace std;
 // 1. games states, 2.  policies targets, 3. value targets, 4: player indices
 static vector< uint8_t > selfplay_data_buffer;
 
-static mt19937 g( random_device{}());
-
-// A thread-safe container for collecting training data from multiple threads.
-struct ThreadSafePositions {
-    std::vector<alphazero::training::Position> positions;
-    std::mutex mtx;
-};
-
 namespace ttt {
 
-static alphazero::NodeAllocator node_allocator;
-static unique_ptr< alphazero::libtorch::Data > libtorch_data;
-static ThreadSafePositions positions_collector;
-static const size_t data_pointers_size = 
-    (alphazero::G + alphazero::P + 1) * sizeof( float ) + sizeof( int32_t );
+struct ThreadLocalStorage
+{
+    // This struct is not copyable because each instance owns unique resources
+    // (random generator, memory pool) that should not be shared across threads
+    // or copied unintentionally.
+    ThreadLocalStorage() = default;
+    ThreadLocalStorage(const ThreadLocalStorage&) = delete;
+    ThreadLocalStorage& operator=(const ThreadLocalStorage&) = delete;
+    ThreadLocalStorage(ThreadLocalStorage&&) = default;
+    ThreadLocalStorage& operator=(ThreadLocalStorage&&) = default;
+
+    // Each thread needs its own random number generator and memory pool allocator.
+    mt19937 g{random_device{}()};
+    vector< ::alphazero::training::Position< alphazero::G, alphazero::P > > positions;
+    alphazero::NodeAllocator node_allocator;
+    future< void > selfplay_future;   
+};
+
+static unique_ptr< libtorch::InferenceManager > inference_manager;
+// use list to prevent reallocations when appending
+static list< ThreadLocalStorage > thread_local_storage_list;
+static const size_t data_pointers_size = (alphazero::G + alphazero::P + 1) * sizeof( float ) + sizeof( int32_t );
+
+// run self play in worker thread
+void selfplay_worker( 
+    ThreadLocalStorage& local_storage,
+    libtorch::InferenceManager& inference_manager,
+    size_t runs_per_thread,
+    float c_base,
+    float c_init,
+    float dirichlet_alpha,
+    float dirichlet_epsilon,
+    int32_t simulations,
+    int32_t opening_moves )
+{
+    PlayerIndex player_index = PlayerIndex::Player1;
+    local_storage.positions.clear();
+    for (; runs_per_thread; --runs_per_thread) 
+    {
+        alphazero::libtorch::Player player( Game( player_index, empty_state ), c_base, c_init,
+            simulations, local_storage.node_allocator, inference_manager );
+        alphazero::training::SelfPlay self_play(
+            player, dirichlet_alpha, dirichlet_epsilon,
+            opening_moves, local_storage.g, local_storage.positions );
+        self_play.run();
+        player_index = toggle(player_index);
+    }
+}
 
 } // namespace ttt {
 
@@ -45,14 +75,6 @@ struct DataPointers {
     int32_t* player_indices = nullptr; // 1 int32_t
 };
 
-void check_cuda()
-{
-    if (torch::cuda::is_available()) 
-        cout << "CUDA is available! Moving model to GPU." << endl;
-    else 
-        cout << "CUDA not available. Using CPU." << endl;
-}
-
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
 
@@ -60,9 +82,11 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
 {
     try 
     {
-        check_cuda();
-        ttt::libtorch_data.reset( new ttt::alphazero::libtorch::Data( 
-            g, ttt::node_allocator, model_data, model_data_len ));
+        std::string content( model_data, model_data_len );
+
+        ttt::inference_manager.reset( new libtorch::InferenceManager( 
+            std::move( content ), ttt::alphazero::G, ttt::alphazero::P ));
+
         return 0;
     } 
     catch (exception const& e) 
@@ -78,9 +102,9 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
 }
 
 /*
- Runs one self-play game for Tic-Tac-Toe. Allocates memory for the training data
- and provides pointers to it via the data_pointers_out struct. The memory is managed
- by the library.
+ Runs some self-play games for Tic-Tac-Toe with some worker threads. 
+ Allocates memory for the training data and provides pointers to it via 
+ the data_pointers_out struct. The memory is managed by the library.
   
  This function is designed to be called from a foreign language interface like Python's ctypes. The model
  is passed as an in-memory buffer.
@@ -89,6 +113,7 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
  returns the number of game positions actually generated. Returns a negative value on error.
  */
 int run_ttt_selfplay(
+    int32_t threads, // number of worker threads
     int32_t runs, // number of runs
     float c_base, // 19652
     float c_init, // 1.25
@@ -100,74 +125,74 @@ int run_ttt_selfplay(
 {
     try 
     {
-        if (!ttt::libtorch_data)
+        if (!threads)
+            throw invalid_argument( "threads must be > 0" );
+             
+        const auto [runs_per_thread, rem_runs] = ldiv( runs, threads );
+
+        //const unsigned int num_threads = std::thread::hardware_concurrency();
+        if (threads > ttt::thread_local_storage_list.size())
+            ttt::thread_local_storage_list.resize( threads );
+
+        // add remainder runs to the first one, so we add up to original number of runs
+        size_t rpt = runs_per_thread + rem_runs;
+
+        if (!ttt::inference_manager)
             throw runtime_error( "no model loaded" );
-
-        ttt::positions_collector.positions.clear();
         
-        // Determine the number of parallel games to run.
-        const unsigned int num_threads = std::thread::hardware_concurrency();
-        cout << "Running self-play on " << num_threads << " threads." << endl;
-        std::vector<std::thread> workers;
-
-        for (unsigned int i = 0; i < num_threads; ++i) {
-            workers.emplace_back([&, runs_per_thread = runs / num_threads, start_player = (i % 2 == 0 ? Player1 : Player2)]() {
-                PlayerIndex player_index = start_player;
-                std::vector<alphazero::training::Position> local_positions;
-                local_positions.reserve(runs_per_thread * 9);
-
-                for (int j = 0; j < runs_per_thread; ++j) {
-                    ttt::alphazero::training::SelfPlay self_play(
-                        ttt::Game(player_index, ttt::empty_state), c_base, c_init, dirichlet_alpha, dirichlet_epsilon,
-                        simulations, opening_moves, *ttt::libtorch_data, local_positions);
-                    self_play.run();
-                    player_index = toggle(player_index);
-                }
-
-                // Lock the mutex and append the locally generated data to the global collector.
-                std::lock_guard<std::mutex> lock(ttt::positions_collector.mtx);
-                ttt::positions_collector.positions.insert(
-                    ttt::positions_collector.positions.end(),
-                    std::make_move_iterator(local_positions.begin()),
-                    std::make_move_iterator(local_positions.end())
-                );
-            });
+        for (auto itr = ttt::thread_local_storage_list.begin(); 
+             itr != ttt::thread_local_storage_list.end(); ++itr) 
+        {
+            itr->selfplay_future = async( ttt::selfplay_worker,
+                ref(*itr), ref(*ttt::inference_manager), rpt, c_base, c_init,
+                dirichlet_alpha, dirichlet_epsilon, simulations, opening_moves );
+            rpt = runs_per_thread;
         }
 
-        for (auto& worker : workers) worker.join();
+        // wait until all worker threads are done and accumulate total positions
+        size_t total_positions = 0;
+        for (auto& tls : ttt::thread_local_storage_list) 
+        {
+            tls.selfplay_future.wait();
+            total_positions += tls.positions.size();
+        }
 
-        // 3. Calculate memory layout and resize the static buffer
-        const size_t num_positions = ttt::positions_collector.positions.size();
+        selfplay_data_buffer.resize( total_positions * ttt::data_pointers_size);
 
-        selfplay_data_buffer.resize( num_positions * ttt::data_pointers_size);
-
-        // 4. Get pointers to the start of each section in the buffer
+        // Get pointers to the start of each section in the buffer
         float* current_ptr = reinterpret_cast< float*>( selfplay_data_buffer.data());
 
         data_pointers_out->game_states = current_ptr;
-        current_ptr += num_positions * ttt::alphazero::G;
+        current_ptr += total_positions * ttt::alphazero::G;
 
         data_pointers_out->policy_targets = current_ptr;
-        current_ptr += num_positions * ttt::alphazero::P;
+        current_ptr += total_positions * ttt::alphazero::P;
 
         data_pointers_out->value_targets = current_ptr;
-        current_ptr += num_positions;
+        current_ptr += total_positions;
 
         data_pointers_out->player_indices = reinterpret_cast< int32_t* >( current_ptr );
 
-        // 5. Copy the generated data into the contiguous out buffer
-        for (size_t i = 0; i < num_positions; ++i) 
-        {
-            const auto& pos = ttt::positions_collector.positions[i];
-            ranges::copy( pos.game_state_players, data_pointers_out->game_states + i * ttt::alphazero::G);
-            ranges::copy( pos.target_policy, data_pointers_out->policy_targets + i * ttt::alphazero::P);
-            data_pointers_out->value_targets[i] = pos.target_value;
-            data_pointers_out->player_indices[i] = static_cast< int32_t >( pos.current_player );
-        }
+        // Copy the generated data into the contiguous out buffer
+        size_t current_pos_idx = 0;
+        for (auto& tls : ttt::thread_local_storage_list)
+            for (const auto& pos : tls.positions)
+            {
+                ranges::copy( 
+                    pos.game_state_players, 
+                    data_pointers_out->game_states + current_pos_idx * ttt::alphazero::G);
+                ranges::copy( 
+                    pos.target_policy, 
+                    data_pointers_out->policy_targets + current_pos_idx * ttt::alphazero::P);
+                data_pointers_out->value_targets[current_pos_idx] = pos.target_value;
+                data_pointers_out->player_indices[current_pos_idx] = 
+                    static_cast< int32_t >( pos.current_player );
+                ++current_pos_idx;
+            }
 
-        return static_cast<int>( num_positions );
+        return static_cast<int>( total_positions );
     } 
-    catch (const std::exception& e) 
+    catch (const exception& e) 
     {
         cerr << "C++ Exception caught: " << e.what() << endl;
         return -1;

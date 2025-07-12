@@ -41,6 +41,7 @@ def get_selfplay_data_from_cpp(lib, config: dict):
     c_run_selfplay = lib.run_ttt_selfplay
     c_run_selfplay.restype = ctypes.c_int
     c_run_selfplay.argtypes = [
+        ctypes.c_int32, # threads
         ctypes.c_int32, # runs
         ctypes.c_float, # c_base
         ctypes.c_float, # c_init
@@ -55,6 +56,7 @@ def get_selfplay_data_from_cpp(lib, config: dict):
     data_pointers = DataPointers()
     
     num_positions = c_run_selfplay(
+        config['threads'],
         config['runs'],
         config['c_base'],
         config['c_init'],
@@ -277,8 +279,16 @@ if __name__ == '__main__':
         batch_size = 64
 
         # Device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"Using device: {device}")
+        # Device selection: Prefer MPS on Apple Silicon, then CUDA, then CPU
+        if torch.backends.mps.is_available():
+            device = torch.device("mps")
+            print("MPS is available! Using Apple Silicon GPU for training.")
+        elif torch.cuda.is_available():
+            device = torch.device("cuda")
+            print("CUDA is available! Using NVIDIA GPU for training.")
+        else:
+            device = torch.device("cpu")
+            print("No GPU backend found. Using CPU for training.")
 
         # Model
         # model = AlphaZeroCNN(**game_config).to(device)
@@ -295,6 +305,7 @@ if __name__ == '__main__':
 
         # Configuration for the self-play run
         self_play_config = {
+            'threads': 2,
             'runs': games_per_iteration,
             'c_base': 19652.0,
             'c_init': 1.25,

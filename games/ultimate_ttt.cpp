@@ -1,4 +1,6 @@
 #include "ultimate_ttt.h"
+#include "../libtorch_util.h"
+
 #include <algorithm>
 
 using namespace std;
@@ -147,24 +149,35 @@ double Player::score( Game const& game ) const
 
 namespace alphazero {
 
-float Data::predict( Game const& game, array< float, P >& policies )
-{
-    return 0.0;
+pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
+{   
+    // This method is now a client of the InferenceManager.
+    // It queues a request and blocks until the result is ready.
+
+    // provide the buffer to copy predicted policies into
+    array< float, P > policies;
+
+    // --- Batched/Asynchronous implementation (original) ---
+    // auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
+    // auto value = future.get(); // blocking call
+
+    // --- Synchronous/Direct implementation (for comparison) ---
+    auto value = inference_manager.predict_sync( game_state_players.data(), policies.data());
+
+    return make_pair(value, policies);
 }
 
-size_t Data::move_to_policy_index( Move const& move ) const
+size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move.big_move * 9 + move.small_move );
 }
 
-void Data::serialize_state( 
-    Game const& game,
-    array< float, G >& game_state_players ) const
+array< float, G > Player::serialize_state( Game const& game ) const
 {
     auto const& state = game.get_state();
-    const PlayerIndex current_player = game.current_player_index();
+    array< float, G > game_state_players = { 0.0f };
 
-    game_state_players.fill(0.0f);
+    const PlayerIndex current_player = game.current_player_index();
 
     // Define pointers to the start of each 81-cell plane for clarity
     float* plane1_x_pieces = game_state_players.data();
@@ -200,6 +213,8 @@ void Data::serialize_state(
     // from the AlphaGo Zero paper.
     if (current_player == PlayerIndex::Player1)
         std::fill(plane4_player_indicator, plane4_player_indicator + 81, 1.0f);
+
+    return game_state_players;
 }
 
 } // namespace alphazero {

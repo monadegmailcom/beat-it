@@ -50,13 +50,15 @@ template< typename MoveT, typename StateT >
 class Player : public ::Player< MoveT >
 {   
 public:
-    Player( 
+    Player(
         Game< MoveT, StateT > const& game, unsigned depth, Data< MoveT, StateT >& data ) 
     : depth( depth ), data( data ),
-      root( new (data.allocator.allocate()) 
+      root( new (data.allocator.allocate(1)) 
             Node< detail::Value< MoveT, StateT >>( 
                 detail::Value< MoveT, StateT >( game, MoveT()), data.allocator ),
-            [&data](auto ptr) { deallocate( data.allocator, ptr ); }
+            [&allocator = data.allocator](auto* ptr) { 
+                if (ptr) { ptr->~Node(); allocator.deallocate(ptr, 1); } 
+            }
           ) {}
 
     virtual double score( Game< MoveT, StateT > const&) const 
@@ -76,7 +78,7 @@ protected:
         Node< detail::Value< MoveT, StateT > >* new_root = nullptr;
 
         if (itr == root->get_children().end())
-            new_root = new (this->data.allocator.allocate()) 
+            new_root = new (this->data.allocator.allocate(1)) 
                    Node< detail::Value< MoveT, StateT >>( 
                         detail::Value< MoveT, StateT >(
                             root->get_value().game.apply( move ), move), 
@@ -136,7 +138,7 @@ protected:
 
             for (MoveT const& move : data.move_stack)
                 node.get_children().push_front( *(new 
-                    (data.allocator.allocate()) 
+                    (data.allocator.allocate(1)) 
                     Node( 
                         detail::Value< MoveT, StateT >( value.game.apply( move ), move ), 
                         data.allocator )));                            

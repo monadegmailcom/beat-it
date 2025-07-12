@@ -6,5 +6,6 @@ models/
 gui/
 .vscode/
 .venv/
+gdb-entitlement.xml
 .DS_Store
 .swp

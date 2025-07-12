@@ -93,8 +93,7 @@ Node< Value< MoveT, StateT >>& select(
     if (value.next_move_itr != value.game.end())
     {
         const MoveT move = *value.next_move_itr++;
-        auto child = new 
-            (node.get_allocator().allocate()) 
+        auto child = new (node.get_allocator().allocate(1)) 
             Node( 
                 Value( value.game.apply( move ), move ), 
                 node.get_allocator());                            
@@ -160,10 +159,12 @@ public:
         size_t simulations,
         Data< MoveT, StateT >& data )
     : data( data ), 
-      root( new (data.allocator.allocate()) 
+      root( new (data.allocator.allocate(1)) 
             Node< detail::Value< MoveT, StateT >>( 
                 detail::Value< MoveT, StateT >( game, MoveT()), data.allocator ),
-            [&data](auto ptr) { deallocate( data.allocator, ptr ); }
+            [&allocator = data.allocator](auto* ptr) { 
+                if (ptr) { ptr->~Node(); allocator.deallocate(ptr, 1); } 
+            }
           ),
       exploration( exploration ), simulations( simulations ) 
     {}
@@ -198,7 +199,7 @@ public:
         Node< detail::Value< MoveT, StateT >>* new_root = nullptr;
 
         if (itr == root->get_children().end())
-            new_root = new (this->data.allocator.allocate()) 
+            new_root = new (this->data.allocator.allocate(1)) 
                    Node< detail::Value< MoveT, StateT >>( 
                         detail::Value< MoveT, StateT >(
                             root->get_value().game.apply( move ), move), 

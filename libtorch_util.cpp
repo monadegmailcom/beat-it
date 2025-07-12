@@ -1,0 +1,180 @@
+#include "libtorch_util.h"
+
+#include <map>
+#include <iomanip>
+#include <string>
+
+using namespace std;
+
+namespace libtorch {
+
+InferenceManager::InferenceManager( 
+    std::string&& model_data , size_t state_size, size_t policies_size,
+    size_t max_batch_size, std::chrono::milliseconds batch_timeout )
+: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ),
+  state_size( state_size ), policies_size( policies_size ), 
+  model_data_stream( model_data ),
+  module( torch::jit::load( model_data_stream )), device( torch::kCPU), stop_flag( false ), 
+  inference_future( async( &InferenceManager::inference_loop, this ))
+{
+    module.eval();
+    
+    // Check for available hardware backends, preferring MPS on Apple Silicon, then CUDA.
+#if defined(__APPLE__) && defined(__aarch64__)
+    if (torch::mps::is_available()) 
+    {
+        std::cout << "MPS is available! Moving model to Apple Silicon GPU." << std::endl;
+        device = torch::kMPS;
+    } 
+    else
+#endif
+    if (torch::cuda::is_available()) 
+    {
+        std::cout << "CUDA is available! Moving model to NVIDIA GPU." << std::endl;
+        device = torch::kCUDA;
+    } 
+    else 
+    {
+        std::cout << "No GPU backend found. Using CPU." << std::endl;
+        device = torch::kCPU;
+    }
+
+    module.to(device);
+}
+
+InferenceManager::~InferenceManager() 
+{
+    stop_flag = true;
+    cv.notify_one();
+    if (inference_future.valid())
+        inference_future.wait();
+
+    if (batch_sizes_log.empty()) {
+        cout << "\n--- No inference batches were processed. ---" << endl;
+        return;
+    }
+
+    map<size_t, size_t> counts;
+    size_t max_count = 0;
+    for (size_t size : batch_sizes_log) {
+        counts[size]++;
+        if (counts[size] > max_count) {
+            max_count = counts[size];
+        }
+    }
+
+    const size_t max_bar_width = 50;
+    const double scale = (max_count > max_bar_width) ? static_cast<double>(max_bar_width) / max_count : 1.0;
+
+    cout << "\n--- Inference Batch Size Histogram ---" << endl;
+    cout << "Size | Freq.                                              | Count" << endl;
+    cout << "--------------------------------------------------------------------" << endl;
+    for (const auto& [size, count] : counts)
+        cout << setw(4) << size << " | " << left << setw(max_bar_width) << string(static_cast<size_t>(count * scale), '*') << " | " << count << endl;
+    cout << "--------------------------------------------------------------------" << endl;
+}
+
+future< float > InferenceManager::queue_request( float const* state, float* policies ) 
+{
+    promise< float > promise;
+    auto future = promise.get_future();
+    {
+        lock_guard< mutex > lock(queue_mutex);
+        request_queue.push( { state, policies, std::move( promise )});
+    }
+    cv.notify_one();
+    return future;
+}
+
+float InferenceManager::predict_sync(float const* state, float* policies)
+{
+    // This function is designed to be called directly from a worker thread.
+    // It bypasses the queueing mechanism for direct, synchronous inference.
+    // NOTE: This assumes that module.forward() is thread-safe for inference,
+    // which is generally true for PyTorch models in eval mode.
+
+    // 1. Create a 2D tensor of shape [1, state_size] from the raw pointer.
+    auto input_tensor = torch::from_blob(
+        const_cast<float*>(state), {1, (long)state_size}, torch::kFloat32);
+
+    // 2. Move tensor to the correct device.
+    input_tensor = input_tensor.to(device);
+
+    // 3. Run inference.
+    torch::jit::IValue output_ivalue = module.forward({input_tensor});
+    auto output_tuple = output_ivalue.toTuple();
+
+    // 4. Get results and move them to CPU.
+    // The output tensors will have a batch dimension of 1.
+    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to(torch::kCPU);
+    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to(torch::kCPU);
+
+    // 5. Copy policy data to the output buffer.
+    float* const policy_ptr = policy_tensor.data_ptr<float>();
+    std::copy(policy_ptr, policy_ptr + policies_size, policies);
+
+    // 6. Return the scalar value.
+    return value_tensor[0].item<float>();
+}
+
+void InferenceManager::inference_loop() 
+{
+    vector< InferenceRequest > batch;
+    while (!stop_flag) 
+    {
+        {
+            unique_lock< mutex > lock( queue_mutex );
+            // Wait until the queue has items or a timeout occurs.
+            // The timeout is crucial to process incomplete batches with low latency.
+            // lock is released while waiting
+            cv.wait_for( 
+                lock, 
+                batch_timeout, 
+                [this] () { return !request_queue.empty() || stop_flag; }
+                );
+
+            if (stop_flag) 
+                return;
+
+            // Pull requests from the queue to form a batch.
+            batch.clear();
+            while (!request_queue.empty() && batch.size() < max_batch_size) 
+            {
+                batch.push_back( std::move( request_queue.front()));
+                request_queue.pop();
+            }
+        }
+
+        if (batch.empty()) 
+            continue;
+
+        batch_sizes_log.push_back(batch.size());
+
+        // Prepare the batch tensor for the model.
+        batch_tensors.clear();
+        batch_tensors.reserve( batch.size());
+        for (auto& req : batch) 
+            // cast to void* because of legacy c interface
+            batch_tensors.push_back( torch::from_blob( 
+                const_cast< float* >( req.state ), state_size, torch::kFloat32));
+        torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
+
+        // Run inference on the entire batch at once.
+        torch::jit::IValue output_ivalue = module.forward({input_batch});
+        auto output_tuple = output_ivalue.toTuple();
+        torch::Tensor value_batch = output_tuple->elements()[0].toTensor().to( torch::kCPU);
+        torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to( torch::kCPU);
+
+        // Distribute the results back to the waiting threads.
+        for (size_t i = 0; i < batch.size(); ++i) 
+        {
+            // copy the policy items into the provided buffer from the request
+            float* const policy_ptr = policy_batch[i].data_ptr< float >();
+            copy( policy_ptr, policy_ptr + policies_size, batch[i].policies );
+            
+            batch[i].promise.set_value( value_batch[i].item< float >());
+        }
+    }
+}
+
+} // namespace libtorch {

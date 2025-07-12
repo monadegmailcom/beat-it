@@ -10,11 +10,13 @@
 template< typename ValueT >
 class Node;
 
+// using a null_mutex is not threadsafe, even if each pool_allocator is only
+// used by a single thread
 template< typename ValueT >
-using NodeAllocator = boost::fast_pool_allocator< 
-    Node< ValueT >,
-    boost::default_user_allocator_new_delete,
-    boost::details::pool::null_mutex >;
+using NodeAllocator = boost::pool_allocator< Node< ValueT >>;
+    //Node< ValueT >,
+   // boost::default_user_allocator_new_delete,
+   // boost::details::pool::null_mutex >;
 
 template< typename ValueT >
 class Node : public boost::intrusive::list_base_hook<>
@@ -26,16 +28,21 @@ public:
     Node( Node const& ) = delete;
     Node& operator=( Node const& ) = delete;
 
-    ~Node() 
+    // The destructor is responsible for cleaning up the entire subtree rooted at this node.
+    ~Node()
     {
-        // destruct all children and deallocate their memory
-        children.clear_and_dispose(
-            [this]( Node<ValueT>* child ) 
-            {
-                child->~Node(); // Explicitly call destructor
-                this->allocator.deallocate(child, 1); // Deallocate memory
-            }
-        );    
+        // To safely destroy children while iterating, we first move them to a
+        // temporary list. This unlinks them from `this->children`.
+        boost::intrusive::list<Node<ValueT>> children_to_delete;
+        children_to_delete.splice(children_to_delete.begin(), children);
+
+        // Now that the original `children` list is empty, we can safely dispose
+        // of the nodes in the temporary list. The disposer lambda will be called
+        // for each child, which in turn calls its destructor, leading to safe recursion.
+        children_to_delete.clear_and_dispose([this](auto child) {
+            child->~Node();
+            this->allocator.deallocate(child, 1);
+        });
     }
 
     NodeAllocator< ValueT >& get_allocator() { return allocator; }
@@ -54,21 +61,10 @@ private:
 template< typename ValueT >
 using NodePtr = std::unique_ptr< 
     Node< ValueT >, 
-    std::function< void (Node< ValueT >*) > >; // deallocator
-
+    std::function< void (Node< ValueT >*) > >; // Custom deleter
 
 template< typename ValueT >
 using List = boost::intrusive::list< Node< ValueT >>;
-
-template< typename ValueT >                               
-void deallocate( NodeAllocator< ValueT >& allocator, Node< ValueT >* ptr )
-{
-    if (ptr)
-    {
-        ptr->~Node< ValueT >(); // Call the destructor
-        allocator.deallocate( ptr ); // Deallocate memory
-    }
-}
 
 template< typename ValueT >
 size_t node_count( Node< ValueT > const& node )
