@@ -158,11 +158,10 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
     array< float, P > policies;
 
     // --- Batched/Asynchronous implementation (original) ---
-    // auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
-    // auto value = future.get(); // blocking call
+    auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
+    auto value = future.get(); // blocking call
 
     // --- Synchronous/Direct implementation (for comparison) ---
-    auto value = inference_manager.predict_sync( game_state_players.data(), policies.data());
 
     return make_pair(value, policies);
 }

@@ -37,39 +37,19 @@ def set_model(lib, model_data, model_data_len):
     if result < 0:
         raise RuntimeError(f"C++ function returned an error code: {result}")
     
-def get_selfplay_data_from_cpp(lib, config: dict):
+def get_selfplay_data_from_cpp(lib):
     """
     Calls the C++ shared library to run a self-play game and retrieve the data.
     """
     # Define the function signatures for the C++ functions.
     c_run_selfplay = lib.run_ttt_selfplay
     c_run_selfplay.restype = ctypes.c_int
-    c_run_selfplay.argtypes = [
-        ctypes.c_int32, # threads
-        ctypes.c_int32, # runs
-        ctypes.c_float, # c_base
-        ctypes.c_float, # c_init
-        ctypes.c_float, # dirichlet_alpha
-        ctypes.c_float, # dirichlet_epsilon
-        ctypes.c_int32, # simulations
-        ctypes.c_int32, # opening moves
-        ctypes.POINTER(DataPointers) # data_pointers_out
-    ]
+    c_run_selfplay.argtypes = [ctypes.POINTER(DataPointers)]
 
     # Create an instance of our struct and call the C++ function.
     data_pointers = DataPointers()
     
-    num_positions = c_run_selfplay(
-        config['threads'],
-        config['runs'],
-        config['c_base'],
-        config['c_init'],
-        config['dirichlet_alpha'],
-        config['dirichlet_epsilon'],
-        config['simulations'],
-        config['opening_moves'],
-        ctypes.byref(data_pointers)
-    )
+    num_positions = c_run_selfplay(ctypes.byref(data_pointers))
 
     if num_positions < 0:
         raise RuntimeError(f"C++ function returned an error code: {num_positions}")
@@ -101,6 +81,31 @@ def get_git_revision_hash() -> str:
         return subprocess.check_output(['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
     except Exception:
         return "N/A"
+
+def save_model_with_metadata(model, step, current_loss, game_config, self_play_config, training_hyperparams):
+    """Gathers metadata and saves the scripted model to an in-memory buffer."""
+    # 1. Gather all relevant metadata into a dictionary.
+    metadata = {
+        "model_architecture": model.__class__.__name__,
+        "training_steps": step,
+        "final_loss": current_loss.item() if current_loss is not None else None,
+        "hyperparameters": training_hyperparams,
+        "self_play_config": self_play_config,
+        "game_config": game_config,
+        "git_revision": get_git_revision_hash(),
+        "save_timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+    # 2. Convert the metadata to a JSON string.
+    metadata_json = json.dumps(metadata, indent=4)
+    extra_files = {'metadata.json': metadata_json}
+
+    # 3. Save the scripted model to an in-memory buffer
+    model.eval()
+    scripted_model = torch.jit.script(model)
+    buffer = io.BytesIO()
+    scripted_model.save(buffer, _extra_files=extra_files)
+    return buffer.getvalue(), metadata_json
 
 def print_board(state_vector):
     """
@@ -195,10 +200,9 @@ class SelfPlayWorker(threading.Thread):
     """
     A dedicated thread to continuously generate self-play data in the background.
     """
-    def __init__(self, lib, config, replay_buffer, model_queue):
+    def __init__(self, lib, replay_buffer, model_queue):
         super().__init__(daemon=True) # Daemon thread will exit when main program exits
         self.lib = lib
-        self.config = config
         self.replay_buffer = replay_buffer
         self.model_queue = model_queue
         self.stop_event = threading.Event()
@@ -251,7 +255,7 @@ class SelfPlayWorker(threading.Thread):
                 
                 # 2. Generate one batch of self-play data.
                 start_time = time.time()
-                new_data = get_selfplay_data_from_cpp(self.lib, self.config)
+                new_data = get_selfplay_data_from_cpp(self.lib)
                 duration = time.time() - start_time
                 
                 if new_data:
@@ -420,17 +424,17 @@ if __name__ == '__main__':
             'num_res_blocks': 1, # A smaller ResNet for a simple game like TTT
             'res_block_channels': 64
         }
-        # Training loop hyperparameters
-        learning_rate = 0.0005
-        batch_size = 64
-        log_freq_steps = 100 # How often to log training progress
-        total_training_steps = 10000 # Total number of optimization steps
-        model_update_freq_steps = 500 # How often to send the new model to the worker
-
-        # Replay Buffer hyperparameters
-        replay_buffer_size = 20000 # Max number of positions to store
-        min_replay_buffer_size = 1000 # Start training only after this many positions are stored
-        target_replay_ratio = 4.0 # S_pos_avg: avg times a position is sampled for training
+        # Group all training hyperparameters into a single dictionary for easy logging.
+        training_hyperparams = {
+            'learning_rate': 0.0005,
+            'batch_size': 64,
+            'log_freq_steps': 100,
+            'total_training_steps': 10000,
+            'model_update_freq_steps': 500,
+            'replay_buffer_size': 20000,
+            'min_replay_buffer_size': 1000,
+            'target_replay_ratio': 4.0,
+        }
 
         # Device
         # Device selection: Prefer MPS on Apple Silicon, then CUDA, then CPU
@@ -453,7 +457,7 @@ if __name__ == '__main__':
 
         # Replay Buffer
         replay_buffer = ReplayBuffer(
-            replay_buffer_size, G_SIZE, P_SIZE, device)
+            training_hyperparams['replay_buffer_size'], G_SIZE, P_SIZE, device)
 
         # --- TensorBoard Setup ---
         # Find a unique directory for this training run to avoid overwriting logs.
@@ -473,7 +477,7 @@ if __name__ == '__main__':
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
         # Optimizer
-        optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+        optimizer = optim.Adam(model.parameters(), lr=training_hyperparams['learning_rate'])
 
         # Configuration for the self-play run
         self_play_config = {
@@ -488,29 +492,34 @@ if __name__ == '__main__':
         }
 
         # --- Start the Self-Play Worker Thread ---
-        worker = SelfPlayWorker(alphazero_lib, self_play_config, replay_buffer, model_queue)
+        worker = SelfPlayWorker(alphazero_lib, replay_buffer, model_queue)
         worker.start()
 
         # --- Main Training Loop ---
         print("\n[Trainer] Starting main training loop.")
         
-        # Put the initial random model on the queue for the worker to start generating data
-        model.eval()
-        scripted_model = torch.jit.script(model)
-        buffer = io.BytesIO()
-        torch.jit.save(scripted_model, buffer)
-        model_queue.put(buffer.getvalue())
+        # Put the initial random model on the queue for the worker.
+        model_bytes, metadata_json = save_model_with_metadata(
+            model,
+            step=0,
+            current_loss=None,
+            game_config=game_config,
+            self_play_config=self_play_config,
+            training_hyperparams=training_hyperparams
+        )
+        model_queue.put(model_bytes)
 
         # Wait for the replay buffer to have a minimum number of samples
-        while len(replay_buffer) < min_replay_buffer_size:
-            print(f"[Trainer] Waiting for replay buffer to fill... {len(replay_buffer)}/{min_replay_buffer_size}")
+        while len(replay_buffer) < training_hyperparams['min_replay_buffer_size']:
+            print(f"[Trainer] Waiting for replay buffer to fill... {len(replay_buffer)}/{training_hyperparams['min_replay_buffer_size']}")
             time.sleep(2)
 
         print("\n[Trainer] Buffer filled. Starting training steps.")
         value_loss_fn = nn.MSELoss()
         
+        loss = None # Initialize loss to a default value
         step = 0
-        while step < total_training_steps:
+        while step < training_hyperparams['total_training_steps']:
             # Wait for the worker to generate some new data
             num_new_positions, total_duration, num_cycles = worker.get_and_reset_stats()
             if num_new_positions == 0:
@@ -519,11 +528,11 @@ if __name__ == '__main__':
 
             # Calculate how many training steps to perform for this new data
             # to maintain the target replay ratio.
-            steps_to_run = max(1, int((target_replay_ratio * num_new_positions) / batch_size))
+            steps_to_run = max(1, int((training_hyperparams['target_replay_ratio'] * num_new_positions) / training_hyperparams['batch_size']))
             print(f"[Trainer] Worker generated {num_new_positions} positions. Running {steps_to_run} training steps.")
 
             for _ in range(steps_to_run):
-                if step >= total_training_steps:
+                if step >= training_hyperparams['total_training_steps']:
                     break
 
                 model.train()
@@ -543,7 +552,7 @@ if __name__ == '__main__':
                 duration = time.time() - start_time
 
                 # Log metrics to TensorBoard periodically
-                if (step + 1) % log_freq_steps == 0:
+                if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
                     avg_selfplay_time = total_duration / num_cycles if num_cycles > 0 else 0.0
 
                     writer.add_scalar('Loss/Total', loss.item(), step)
@@ -551,18 +560,22 @@ if __name__ == '__main__':
                     writer.add_scalar('Loss/Value', loss_value.item(), step)
                     writer.add_scalar('Performance/Training_Step_Time_ms', duration * 1000, step)
                     writer.add_scalar('Performance/Avg_SelfPlay_Time_s', avg_selfplay_time, step)
-                    print(f"[Trainer] Step {step+1}/{total_training_steps} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
+                    print(f"[Trainer] Step {step+1}/{training_hyperparams['total_training_steps']} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
 
                 # Periodically update the model for the self-play worker
-                if (step + 1) % model_update_freq_steps == 0:
+                if (step + 1) % training_hyperparams['model_update_freq_steps'] == 0:
                     print(f"\n[Trainer] Step {step+1}: Updating model for self-play worker.")
-                    model.eval()
-                    scripted_model = torch.jit.script(model)
-                    buffer = io.BytesIO()
-                    torch.jit.save(scripted_model, buffer)
+                    model_bytes, _ = save_model_with_metadata(
+                        model,
+                        step=step + 1,
+                        current_loss=loss,
+                        game_config=game_config,
+                        self_play_config=self_play_config,
+                        training_hyperparams=training_hyperparams
+                    )
                     with model_queue.mutex:
                         model_queue.queue.clear()
-                    model_queue.put_nowait(buffer.getvalue())
+                    model_queue.put_nowait(model_bytes)
 
                 step += 1
 
@@ -575,37 +588,21 @@ if __name__ == '__main__':
         os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
         print(f"\nSaving final trained model to {final_model_path}...")
 
-        # 1. Gather all relevant metadata into a dictionary.
-        metadata = {
-            "model_architecture": model.__class__.__name__,
-            "training_steps": step,
-            "final_loss": loss.item() if 'loss' in locals() else None,
-            "hyperparameters": {
-                "learning_rate": learning_rate,
-                "batch_size": batch_size,
-                "total_training_steps": total_training_steps,
-                "model_update_freq_steps": model_update_freq_steps,
-                "replay_buffer_size": replay_buffer_size,
-                "min_replay_buffer_size": min_replay_buffer_size,
-                "target_replay_ratio": target_replay_ratio,
-            },
-            "self_play_config": self_play_config,
-            "game_config": game_config,
-            "git_revision": get_git_revision_hash(),
-            "save_timestamp_utc": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        }
+        model_bytes, metadata_json = save_model_with_metadata(
+            model,
+            step=step,
+            current_loss=loss,
+            game_config=game_config,
+            self_play_config=self_play_config,
+            training_hyperparams=training_hyperparams
+        )
 
-        # 2. Convert the metadata to a JSON string.
-        metadata_json = json.dumps(metadata, indent=4)
-        extra_files = {'metadata.json': metadata_json}
         print("Bundling metadata with the model:")
         print(metadata_json)
 
-        # 3. Save the scripted model with the metadata embedded in the archive.
-        # The C++ libtorch backend can still load this file directly, ignoring the extra data.
-        model.eval()
-        final_scripted_model = torch.jit.script(model)
-        final_scripted_model.save(final_model_path, _extra_files=extra_files)
+        # Save the final model bytes to a file.
+        with open(final_model_path, "wb") as f:
+            f.write(model_bytes)
         print("Model saved successfully.")
 
         # Close the TensorBoard writer

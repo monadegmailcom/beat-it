@@ -55,7 +55,7 @@ void selfplay_worker(
     local_storage.positions.clear();
     for (; runs_per_thread; --runs_per_thread) 
     {
-        alphazero::libtorch::Player player( Game( player_index, empty_state ), c_base, c_init,
+        alphazero::libtorch::async::Player player( Game( player_index, empty_state ), c_base, c_init,
             simulations, local_storage.node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, dirichlet_alpha, dirichlet_epsilon,
@@ -78,23 +78,20 @@ struct DataPointers {
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
 
-int set_ttt_model( const char* model_data, int32_t model_data_len)
+int set_ttt_model( const char* model_data, int32_t model_data_len )
 {
     try 
     {
         std::string content(model_data, model_data_len);
 
         if (!ttt::inference_manager)
-        {
             // First time call: create the InferenceManager instance.
             ttt::inference_manager.reset(new libtorch::InferenceManager(
-                std::move(content), ttt::alphazero::G, ttt::alphazero::P));
-        }
+                std::move(content), libtorch::check_device(),
+                ttt::alphazero::G, ttt::alphazero::P));
         else
-        {
             // Subsequent calls: update the model in-place for efficiency.
             ttt::inference_manager->update_model(std::move(content));
-        }
 
         return 0;
     } 
@@ -121,23 +118,33 @@ int set_ttt_model( const char* model_data, int32_t model_data_len)
  data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
  returns the number of game positions actually generated. Returns a negative value on error.
  */
-int run_ttt_selfplay(
-    int32_t threads, // number of worker threads
-    int32_t runs, // number of runs
-    float c_base, // 19652
-    float c_init, // 1.25
-    float dirichlet_alpha, // 0.3
-    float dirichlet_epsilon, // 0.25
-    int32_t simulations, // 100
-    int32_t opening_moves, // 1    
-    DataPointers* data_pointers_out ) 
+int run_ttt_selfplay(DataPointers* data_pointers_out)
 {
     try 
     {
-        if (!threads)
-            throw invalid_argument( "threads must be > 0" );
-             
-        const auto [runs_per_thread, rem_runs] = ldiv( runs, threads );
+        if (!ttt::inference_manager)
+            throw runtime_error( "no model loaded" );
+
+        // Extract hyperparameters from the loaded model's metadata
+        const auto& metadata = ttt::inference_manager->get_metadata();
+        if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
+            throw std::runtime_error("Model metadata is missing or incomplete.");
+        }
+        const auto& sp_config = metadata.at("self_play_config").as_object();
+
+        const int32_t threads = boost::json::value_to<int32_t>(sp_config.at("threads"));
+        const int32_t runs = boost::json::value_to<int32_t>(sp_config.at("runs"));
+        const float c_base = boost::json::value_to<float>(sp_config.at("c_base"));
+        const float c_init = boost::json::value_to<float>(sp_config.at("c_init"));
+        const float dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
+        const float dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
+        const int32_t simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
+        const int32_t opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
+
+        if (threads <= 0)
+            throw invalid_argument( "threads must be > 0 in model metadata" );
+        
+        const auto [runs_per_thread, rem_runs] = ldiv(runs, threads);
 
         //const unsigned int num_threads = std::thread::hardware_concurrency();
         if (threads > ttt::thread_local_storage_list.size())
@@ -146,9 +153,6 @@ int run_ttt_selfplay(
         // add remainder runs to the first one, so we add up to original number of runs
         size_t rpt = runs_per_thread + rem_runs;
 
-        if (!ttt::inference_manager)
-            throw runtime_error( "no model loaded" );
-        
         for (auto itr = ttt::thread_local_storage_list.begin(); 
              itr != ttt::thread_local_storage_list.end(); ++itr) 
         {

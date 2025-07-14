@@ -3,68 +3,62 @@
 #include <map>
 #include <iomanip>
 #include <string>
+#include <sstream>
+#include <fstream>
 #include <boost/json.hpp>
+#include <boost/json/src.hpp> // use header only version
 
 using namespace std;
 
 namespace libtorch {
 
-InferenceManager::InferenceManager( 
-    std::string&& model_data , size_t state_size, size_t policies_size,
-    size_t max_batch_size, std::chrono::milliseconds batch_timeout )
-: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
-  policies_size( policies_size ), model_data_stream( std::move(model_data) ), 
-  device( torch::kCPU), stop_flag( false )
+torch::Device check_device()
 {
-    torch::jit::ExtraFilesMap extra_files;
-    module = torch::jit::load(model_data_stream, extra_files);
-
-    // Check if metadata exists and parse it using Boost.JSON
-    if (extra_files.count("metadata.json")) 
-    {
-        try 
-        {
-            metadata = boost::json::parse(extra_files.at("metadata.json"));
-            std::cout << "Successfully loaded and parsed model metadata with Boost.JSON." << std::endl;
-        } 
-        catch (const boost::system::system_error& e) {
-            std::cerr << "Warning: Could not parse model metadata.json with Boost.JSON: " << e.what() << std::endl;
-            // Initialize with an empty object to avoid errors on access
-            metadata = boost::json::object();
-        }
-    } 
-    else 
-    {
-        std::cout << "Warning: No metadata.json found in the model file." << std::endl;
-        metadata = boost::json::object();
-    }
-
-    module.eval();
-    
     // Check for available hardware backends, preferring MPS on Apple Silicon, then CUDA.
-#if defined(__APPLE__) && defined(__aarch64__)
     if (torch::mps::is_available()) 
     {
-        std::cout << "MPS is available! Moving model to Apple Silicon GPU." << std::endl;
-        device = torch::kMPS;
+        cout << "MPS is available! Moving model to Apple Silicon GPU." << endl;
+        return torch::kMPS;
     } 
-    else
-#endif
-    if (torch::cuda::is_available()) 
+    else if (torch::cuda::is_available()) 
     {
-        std::cout << "CUDA is available! Moving model to NVIDIA GPU." << std::endl;
-        device = torch::kCUDA;
+        cout << "CUDA is available! Moving model to NVIDIA GPU." << endl;
+        return torch::kCUDA;
     } 
     else 
     {
-        std::cout << "No GPU backend found. Using CPU." << std::endl;
-        device = torch::kCPU;
+        cout << "No GPU backend found. Using CPU." << endl;
+        return torch::kCPU;
     }
+}
 
-    module.to(device);
+InferenceManager::InferenceManager( 
+    string&& model_data, torch::Device device, 
+    size_t state_size, size_t policies_size,
+    size_t max_batch_size, std::chrono::milliseconds batch_timeout )
+: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
+  policies_size( policies_size ), model_data_stream( std::move(model_data)), 
+  device( device ), stop_flag( false )
+{
+    torch::jit::ExtraFilesMap extra_files;
+    model = torch::jit::load( model_data_stream, device, extra_files );
+    metadata = boost::json::parse( extra_files.at( "metadata.json" ));
 
-    // Start the inference loop thread after everything is initialized.
-    inference_future = async( &InferenceManager::inference_loop, this );
+    initialize();
+}
+
+InferenceManager::InferenceManager(
+    const char* model_path, torch::Device device,
+    size_t state_size, size_t policies_size,
+    size_t max_batch_size, std::chrono::milliseconds batch_timeout)
+: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
+  policies_size( policies_size ), device( device ), stop_flag( false )
+{
+    torch::jit::ExtraFilesMap extra_files;
+    model = torch::jit::load( model_path, device, extra_files );  
+    metadata = boost::json::parse(extra_files.at("metadata.json"));
+
+    initialize();
 }
 
 InferenceManager::~InferenceManager() 
@@ -99,6 +93,14 @@ InferenceManager::~InferenceManager()
     cout << "--------------------------------------------------------------------" << endl;
 }
 
+void InferenceManager::initialize()
+{
+    model.eval();
+
+    // Start the inference loop thread after everything is initialized.
+    inference_future = async( &InferenceManager::inference_loop, this );
+}
+
 future< float > InferenceManager::queue_request( float const* state, float* policies ) 
 {
     promise< float > promise;
@@ -116,66 +118,20 @@ const boost::json::value& InferenceManager::get_metadata() const
     return metadata;
 }
 
-float InferenceManager::predict_sync(float const* state, float* policies)
+void InferenceManager::update_model( string&& new_model_data )
 {
-    // This function is designed to be called directly from a worker thread.
-    // It bypasses the queueing mechanism for direct, synchronous inference.
-    // NOTE: This assumes that module.forward() is thread-safe for inference,
-    // which is generally true for PyTorch models in eval mode.
-
-    // 1. Create a 2D tensor of shape [1, state_size] from the raw pointer.
-    auto input_tensor = torch::from_blob(
-        const_cast<float*>(state), {1, (long)state_size}, torch::kFloat32);
-
-    // 2. Move tensor to the correct device.
-    input_tensor = input_tensor.to(device);
-
-    // 3. Run inference.
-    torch::jit::IValue output_ivalue = module.forward({input_tensor});
-    auto output_tuple = output_ivalue.toTuple();
-
-    // 4. Get results and move them to CPU.
-    // The output tensors will have a batch dimension of 1.
-    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to(torch::kCPU);
-    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to(torch::kCPU);
-
-    // 5. Copy policy data to the output buffer.
-    float* const policy_ptr = policy_tensor.data_ptr<float>();
-    std::copy(policy_ptr, policy_ptr + policies_size, policies);
-
-    // 6. Return the scalar value.
-    return value_tensor[0].item<float>();
-}
-
-void InferenceManager::update_model(std::string&& new_model_data)
-{
-    // Load the new model from the byte stream into a temporary object.
-    std::istringstream new_model_stream(std::move(new_model_data));
     torch::jit::ExtraFilesMap extra_files;
-    auto new_module = torch::jit::load(new_model_stream, extra_files);
-    new_module.to(device);
-    new_module.eval();
 
-    boost::json::value new_metadata;
-    if (extra_files.count("metadata.json")) 
-    {
-        try 
-        {
-            new_metadata = boost::json::parse(extra_files.at("metadata.json"));
-        } 
-        catch (const boost::system::system_error& e) 
-        {
-            std::cerr << "Warning: Could not parse metadata in updated model: " << e.what() << std::endl;
-            new_metadata = boost::json::object();
-        }
-    }
-
+    model_data_stream.str( std::move( new_model_data ));
+    auto new_model = torch::jit::load( model_data_stream, device, extra_files );
+    boost::json::value new_metadata = boost::json::parse( extra_files.at( "metadata.json" ));
+    
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
     {
-        lock_guard< mutex > lock( module_update_mutex);
-        module = new_module;
-        metadata = std::move(new_metadata);
+        lock_guard< mutex > lock( model_update_mutex );
+        model = new_model;
+        metadata = std::move( new_metadata );
     }
     std::cout << "InferenceManager model updated in-place." << std::endl;
 }
@@ -226,8 +182,8 @@ void InferenceManager::inference_loop()
         {
             // Lock the module while running inference to prevent it from being
             // swapped out by an update call from another thread mid-operation.
-            lock_guard< mutex > lock( module_update_mutex);
-            output_ivalue = module.forward({input_batch});
+            lock_guard< mutex > lock( model_update_mutex);
+            output_ivalue = model.forward({input_batch});
         }
 
         auto output_tuple = output_ivalue.toTuple();

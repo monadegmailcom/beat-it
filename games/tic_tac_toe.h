@@ -6,6 +6,11 @@
 #include <iostream>
 
 // forward decl so we do not have to include libtorch_helper.h here
+namespace torch {
+namespace jit {
+struct Module;
+}}
+
 namespace libtorch {
 class InferenceManager;
 } // namespace libtorch {
@@ -87,9 +92,44 @@ using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 const size_t G = 3 * 9;
 const size_t P = 9;
 
-namespace libtorch {
-
 class Player : public ::alphazero::Player< Move, State, G, P >
+{
+public:
+    Player( 
+        Game const& game, 
+        float c_base,
+        float c_init,
+        size_t simulations,
+        NodeAllocator& allocator )
+    : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
+protected:
+    std::array< float, G > serialize_state( Game const& ) const override;
+    size_t move_to_policy_index( Move const& ) const override;
+};
+
+namespace libtorch {
+namespace sync {
+class Player : public alphazero::Player
+{
+public:
+    Player( 
+        Game const& game, 
+        float c_base,
+        float c_init,
+        size_t simulations,
+        NodeAllocator& allocator,
+        torch::jit::Module& model )
+    : alphazero::Player( game, c_base, c_init, simulations, allocator),
+      model( model ) {}
+protected:
+    torch::jit::Module& model;
+    std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
+};
+} // namespace sync {
+
+namespace async {
+
+class Player : public alphazero::Player
 {
 public:
     Player( 
@@ -99,16 +139,15 @@ public:
         size_t simulations,
         NodeAllocator& allocator,
         ::libtorch::InferenceManager& inference_manager )
-    : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator),
+    : alphazero::Player( game, c_base, c_init, simulations, allocator),
       inference_manager( inference_manager ) {}
 protected:
     ::libtorch::InferenceManager& inference_manager;
 
     std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
-    std::array< float, G > serialize_state( Game const& ) const override;
-    size_t move_to_policy_index( Move const& ) const override;
 };
 
+} // namespace async {
 } // namespace libtorch {
 
 namespace training {

@@ -824,7 +824,7 @@ void selfplay_worker(
     local_storage.positions.clear();
     for (; runs_per_thread; --runs_per_thread) 
     {
-        ttt::alphazero::libtorch::Player player( ttt::Game( player_index, ttt::empty_state ), c_base, c_init,
+        ttt::alphazero::libtorch::async::Player player( ttt::Game( player_index, ttt::empty_state ), c_base, c_init,
             simulations, local_storage.node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, dirichlet_alpha, dirichlet_epsilon,
@@ -836,24 +836,24 @@ void selfplay_worker(
 
 void alphazero_training()
 {
-    cout << __func__ << endl;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
 
-    const std::string model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
-    ifstream stream( model_path, ios::binary );
-    if (!stream.is_open()) 
-        throw std::runtime_error("Could not open file: " + model_path);
-
-    std::string content((std::istreambuf_iterator<char>( stream )),
-                         std::istreambuf_iterator<char>());
+    const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
 
     libtorch::InferenceManager inference_manager( 
-        std::move( content ), ttt::alphazero::G, ttt::alphazero::P,
+        model_path, libtorch::check_device(), ttt::alphazero::G, ttt::alphazero::P,
         128, chrono::milliseconds( 5 ) );
 
     // Extract hyperparameters from the loaded model's metadata
     const auto& metadata = inference_manager.get_metadata();
     if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
-        throw std::runtime_error("Model metadata is missing or incomplete in " + model_path);
+        throw std::runtime_error("Model metadata is missing or incomplete");
     }
     const auto& sp_config = metadata.at("self_play_config").as_object();
     cout << "Loaded hyperparameters from model: " << sp_config << endl;
@@ -892,23 +892,27 @@ void alphazero_training()
 
 void ttt_alphazero_nn_vs_minimax()
 {
-    cout << __func__ << endl;
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
 
-    const std::string model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
-    ifstream stream( model_path, ios::binary );
-    if (!stream.is_open()) 
-        throw std::runtime_error("Could not open file: " + model_path);
+    const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
 
-    std::string content((std::istreambuf_iterator<char>( stream )),
-                         std::istreambuf_iterator<char>());
+    torch::jit::ExtraFilesMap extra_files;
+    auto device = libtorch::check_device();
 
-    libtorch::InferenceManager inference_manager( 
-        std::move( content ), ttt::alphazero::G, ttt::alphazero::P );
+    torch::jit::script::Module model = 
+        torch::jit::load( model_path, device, extra_files );  
+    auto metadata = boost::json::parse(extra_files.at("metadata.json"));
+    model.eval();
 
     // Extract hyperparameters from the loaded model's metadata
-    const auto& metadata = inference_manager.get_metadata();
     if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
-        throw std::runtime_error("Model metadata is missing or incomplete in " + model_path);
+        throw std::runtime_error("Model metadata is missing or incomplete" );
     }
     const auto& sp_config = metadata.at("self_play_config").as_object();
     cout << "Loaded hyperparameters from model: " << sp_config << endl;
@@ -927,8 +931,8 @@ void ttt_alphazero_nn_vs_minimax()
 
     match.play_match( 
         game, 
-        [&]() { return new ttt::alphazero::libtorch::Player( 
-            game, c_base, c_init, simulations, allocator, inference_manager ); }, 
+        [&]() { return new ttt::alphazero::libtorch::sync::Player( 
+            game, c_base, c_init, simulations, allocator, model ); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
         rounds );
 

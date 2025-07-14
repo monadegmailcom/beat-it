@@ -12,6 +12,8 @@
 
 namespace libtorch {
 
+torch::Device check_device();
+
 struct InferenceRequest 
 {
     float const* state;
@@ -23,8 +25,17 @@ struct InferenceRequest
 class InferenceManager 
 {
 public:
-    InferenceManager( 
-        std::string&& model_data, size_t state_size, size_t policies_size,
+    InferenceManager(
+        const char* model_path,
+        torch::Device device,
+        size_t state_size, size_t policies_size,
+        size_t max_batch_size = 128,
+        std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
+
+    InferenceManager(
+        std::string&& model_data,
+        torch::Device device,
+        size_t state_size, size_t policies_size,
         size_t max_batch_size = 128,
         std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
 
@@ -32,18 +43,15 @@ public:
 
     const boost::json::value& get_metadata() const;
 
-    void update_model(std::string&& new_model_data);
+    void update_model(std::string&& new_model_data );
 
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
     // memory for predicted policies is provided by the caller.
     std::future< float > queue_request( float const* state, float* policies ); 
-
-    // A synchronous, single-item prediction for performance comparison.
-    // This bypasses the queue and runs inference immediately on the calling thread.
-    float predict_sync(float const* state, float* policies);
 private:
-    void inference_loop(); 
+    void initialize();
+    void inference_loop();
 
     const size_t max_batch_size;
     const std::chrono::milliseconds batch_timeout;
@@ -53,11 +61,11 @@ private:
     std::vector< torch::Tensor > batch_tensors;
     std::istringstream model_data_stream;
     boost::json::value metadata;
-    torch::jit::script::Module module; // The loaded TorchScript model
+    torch::jit::script::Module model; // The loaded TorchScript model
     torch::Device device;
     std::queue< InferenceRequest > request_queue;
     std::mutex queue_mutex;
-    std::mutex module_update_mutex;
+    std::mutex model_update_mutex;
     std::condition_variable cv;
     std::atomic< bool > stop_flag;
     std::vector<size_t> batch_sizes_log;

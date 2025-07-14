@@ -43,8 +43,6 @@ double score( State const& state )
 
 namespace alphazero {
 
-namespace libtorch {
-
 size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
@@ -78,6 +76,44 @@ array< float, G > Player::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
+namespace libtorch {
+namespace sync {
+pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
+{   
+    // provide the buffer to copy predicted policies into
+    array< float, P > policies;
+
+    // --- Synchronous/Direct implementation (for comparison) ---
+    auto input_tensor = torch::from_blob(
+        const_cast<float*>(game_state_players.data()), 
+        {1, (long)game_state_players.size()}, torch::kFloat32);
+
+    static auto device = ::libtorch::check_device();
+
+    // Move tensor to the correct device.
+    input_tensor = input_tensor.to( device );
+
+    // Run inference.
+    torch::jit::IValue output_ivalue = model.forward({input_tensor});
+    auto output_tuple = output_ivalue.toTuple();
+
+    // Get results and move them to CPU.
+    // The output tensors will have a batch dimension of 1.
+    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to(torch::kCPU);
+    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to(torch::kCPU);
+
+    // Copy policy data to the output buffer.
+    float* const policy_ptr = policy_tensor.data_ptr<float>();
+    std::copy(policy_ptr, policy_ptr + P, policies.begin());
+
+    const float value = value_tensor[0].item<float>();
+
+    return make_pair( value, policies );
+}
+} // namespace sync {
+
+namespace async {
+
 pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
 {   
     // This method is now a client of the InferenceManager.
@@ -96,6 +132,7 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
     return make_pair(value, policies);
 }
 
+} // namespace async {
 } // namespace libtorch
 } // namespace alphazero {
 
