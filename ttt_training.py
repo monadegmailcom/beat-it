@@ -24,48 +24,57 @@ class DataPointers(ctypes.Structure):
         ("player_indices", ctypes.POINTER(ctypes.c_int32)), 
         ]
 
-def set_model(lib, model_data, model_data_len):
+def set_model(lib, model_data, model_data_len, metadata_json_bytes):
     # Define the function signatures for the C++ functions.
     c_set_model = lib.set_ttt_model
     c_set_model.restype = ctypes.c_int
     c_set_model.argtypes = [
         ctypes.c_char_p, # model_data
         ctypes.c_int32, # model_data_len
+        ctypes.c_char_p, # metadata_json
+        ctypes.c_int32,  # metadata_len
     ]
 
-    result = c_set_model(model_data, model_data_len)
+    result = c_set_model(model_data, model_data_len, metadata_json_bytes, len(metadata_json_bytes))
     if result < 0:
         raise RuntimeError(f"C++ function returned an error code: {result}")
     
-def get_selfplay_data_from_cpp(lib):
+def fetch_selfplay_data_from_cpp(lib, number_of_positions: int):
     """
-    Calls the C++ shared library to run a self-play game and retrieve the data.
+    Blocks until the C++ library's self-play workers have produced the
+    requested number of positions, then fetches them.
     """
-    # Define the function signatures for the C++ functions.
-    c_run_selfplay = lib.run_ttt_selfplay
-    c_run_selfplay.restype = ctypes.c_int
-    c_run_selfplay.argtypes = [ctypes.POINTER(DataPointers)]
+    # 1. Define C function signature
+    c_fetch_data = lib.fetch_ttt_selfplay_data
+    c_fetch_data.restype = ctypes.c_int
+    c_fetch_data.argtypes = [
+        DataPointers, # Pass struct by value
+        ctypes.c_int32
+    ]
 
-    # Create an instance of our struct and call the C++ function.
+    if number_of_positions <= 0:
+        return None, 0
+
+    # 2. Allocate NumPy arrays in Python to hold the incoming data
+    game_states = np.zeros((number_of_positions, G_SIZE), dtype=np.float32)
+    policy_targets = np.zeros((number_of_positions, P_SIZE), dtype=np.float32)
+    value_targets = np.zeros(number_of_positions, dtype=np.float32)
+    player_indices = np.zeros(number_of_positions, dtype=np.int32)
+
+    # 3. Create DataPointers struct and populate with pointers to NumPy data buffers
     data_pointers = DataPointers()
-    
-    num_positions = c_run_selfplay(ctypes.byref(data_pointers))
+    data_pointers.game_states = game_states.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+    data_pointers.policy_targets = policy_targets.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+    data_pointers.value_targets = value_targets.ctypes.data_as(ctypes.POINTER(ctypes.c_float))
+    data_pointers.player_indices = player_indices.ctypes.data_as(ctypes.POINTER(ctypes.c_int32))
 
-    if num_positions < 0:
-        raise RuntimeError(f"C++ function returned an error code: {num_positions}")
+    # 4. Call the C++ function, which will block until data is ready and fill our arrays.
+    queue_size = c_fetch_data(data_pointers, number_of_positions)
 
-    if num_positions == 0:
-        return None
+    if queue_size < 0:
+        raise RuntimeError(f"C++ fetch function returned an error code: {queue_size}")
 
-    # Create NumPy arrays that view the memory pointed to by the struct fields.
-    game_states = np.ctypeslib.as_array(data_pointers.game_states, shape=(num_positions, G_SIZE))
-    policy_targets = np.ctypeslib.as_array(data_pointers.policy_targets, shape=(num_positions, P_SIZE))
-    value_targets = np.ctypeslib.as_array(data_pointers.value_targets, shape=(num_positions,))
-    player_indices = np.ctypeslib.as_array(data_pointers.player_indices, shape=(num_positions,))
-     
-    # Return a dictionary of VIEWS into the C++ library's memory buffer.
-    # The caller is responsible for copying this data before the next call to this
-    # function, as the underlying C++ buffer will be overwritten.
+    # Return a dictionary of the now-filled NumPy arrays.
     result = {
         "game_states": game_states,
         "policy_targets": policy_targets,
@@ -73,7 +82,7 @@ def get_selfplay_data_from_cpp(lib):
         "player_indices": player_indices
     }
 
-    return result
+    return result, queue_size
 
 def get_git_revision_hash() -> str:
     """Retrieves the current git commit hash."""
@@ -104,7 +113,8 @@ def save_model_with_metadata(model, step, current_loss, game_config, self_play_c
     model.eval()
     scripted_model = torch.jit.script(model)
     buffer = io.BytesIO()
-    scripted_model.save(buffer, _extra_files=extra_files)
+    torch.jit.save(scripted_model, buffer, _extra_files=extra_files)
+    # scripted_model.save(buffer, _extra_files=extra_files)
     return buffer.getvalue(), metadata_json
 
 def print_board(state_vector):
@@ -195,85 +205,6 @@ class ReplayBuffer:
     def __len__(self):
         with self.lock:
             return self.size
-
-class SelfPlayWorker(threading.Thread):
-    """
-    A dedicated thread to continuously generate self-play data in the background.
-    """
-    def __init__(self, lib, replay_buffer, model_queue):
-        super().__init__(daemon=True) # Daemon thread will exit when main program exits
-        self.lib = lib
-        self.replay_buffer = replay_buffer
-        self.model_queue = model_queue
-        self.stop_event = threading.Event()
-        # A thread-safe counter to track the number of positions generated by this worker.
-        self.generated_positions_count = 0 # Number of positions generated since last check
-        self.total_duration = 0.0          # Sum of durations for self-play cycles
-        self.num_cycles = 0                # Number of self-play cycles run
-        self.counter_lock = threading.Lock()
-
-    def stop(self):
-        self.stop_event.set()
-
-    def get_and_reset_stats(self):
-        """Atomically reads and resets the generated stats counters."""
-        with self.counter_lock:
-            positions = self.generated_positions_count
-            duration = self.total_duration
-            cycles = self.num_cycles
-            self.generated_positions_count = 0
-            self.total_duration = 0.0
-            self.num_cycles = 0
-        return positions, duration, cycles
-
-    def run(self):
-        print("[Worker] Self-play worker thread started. Waiting for initial model...")
-        try:
-            # Block here ONLY ONCE to get the initial model from the trainer.
-            # This ensures we don't start generating data with an uninitialized model.
-            model_bytes = self.model_queue.get(block=True, timeout=60)
-            print("[Worker] Received initial model.")
-            set_model(self.lib, model_bytes, len(model_bytes))
-        except queue.Empty:
-            print("[Worker] Timed out waiting for initial model. Stopping.")
-            return
-        except Exception as e:
-            print(f"[Worker] Error receiving initial model: {e}")
-            return
-
-        while not self.stop_event.is_set():
-            try:
-                # 1. Check for an UPDATED model from the trainer (non-blocking).
-                try:
-                    new_model_bytes = self.model_queue.get_nowait()
-                    print("[Worker] Received updated model from trainer.")
-                    set_model(self.lib, new_model_bytes, len(new_model_bytes))
-                except queue.Empty:
-                    # No new model is available, so we continue generating data
-                    # with the current model. This is the expected behavior.
-                    pass
-                
-                # 2. Generate one batch of self-play data.
-                start_time = time.time()
-                new_data = get_selfplay_data_from_cpp(self.lib)
-                duration = time.time() - start_time
-                
-                if new_data:
-                    num_new_positions = len(new_data['game_states'])
-                    # Atomically update the counter for the trainer to read.
-                    with self.counter_lock:
-                        self.generated_positions_count += num_new_positions
-                        self.total_duration += duration
-                        self.num_cycles += 1
-
-                    # The .copy() is crucial as the underlying buffer in C++ is temporary.
-                    self.replay_buffer.add(new_data['game_states'].copy(), new_data['policy_targets'].copy(),
-                                           new_data['value_targets'].copy(), new_data['player_indices'].copy())
-                    print(f"[Worker] Generated {num_new_positions} positions in {duration:.2f}s. Buffer size: {len(self.replay_buffer)}")
-            except Exception as e:
-                print(f"[Worker] Error in self-play worker: {e}")
-                break
-        print("[Worker] Self-play worker thread stopped.")
 
 class ResidualBlock(nn.Module):
     """
@@ -415,6 +346,7 @@ if __name__ == '__main__':
     lib_path = os.path.join('obj', 'libalphazero.so')
     alphazero_lib = ctypes.CDLL(lib_path)
     print(f"Successfully loaded shared library from: {lib_path}")
+    writer = None  # Define writer in the outer scope
     try:
         # --- Game and Network Configuration ---
         game_config = {
@@ -429,7 +361,7 @@ if __name__ == '__main__':
             'learning_rate': 0.0005,
             'batch_size': 64,
             'log_freq_steps': 100,
-            'total_training_steps': 10000,
+            'total_training_steps': 2000,
             'model_update_freq_steps': 500,
             'replay_buffer_size': 20000,
             'min_replay_buffer_size': 1000,
@@ -450,18 +382,15 @@ if __name__ == '__main__':
 
         # Model
         # model = AlphaZeroCNN(**game_config).to(device)
-        model = TicTacToeCNN( game_config['input_channels'], game_config['board_size'], game_config['num_actions']).to(device)
-
-        # A thread-safe queue to pass the latest model from the trainer to the worker
-        model_queue = queue.Queue(maxsize=1)
+        model = TicTacToeCNN( 
+            game_config['input_channels'], 
+            game_config['board_size'], 
+            game_config['num_actions']).to(device)
 
         # Replay Buffer
         replay_buffer = ReplayBuffer(
             training_hyperparams['replay_buffer_size'], G_SIZE, P_SIZE, device)
 
-        # --- TensorBoard Setup ---
-        # Find a unique directory for this training run to avoid overwriting logs.
-        # The first run will be '..._experiment', the next '..._experiment_1', etc.
         base_log_dir = 'runs/ttt_alphazero_experiment'
         if not os.path.exists(base_log_dir):
             log_dir = base_log_dir
@@ -472,7 +401,6 @@ if __name__ == '__main__':
             log_dir = f"{base_log_dir}_{counter}"
         
         writer = SummaryWriter(log_dir)
-        print(f"TensorBoard logs will be saved to: {writer.log_dir}")
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
@@ -480,9 +408,7 @@ if __name__ == '__main__':
         optimizer = optim.Adam(model.parameters(), lr=training_hyperparams['learning_rate'])
 
         # Configuration for the self-play run
-        self_play_config = {
-            'threads': 8,
-            'runs': 100, # Number of games to generate per worker cycle
+        self_play_config = { # This is now only for metadata logging
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
@@ -491,14 +417,9 @@ if __name__ == '__main__':
             'opening_moves': 0
         }
 
-        # --- Start the Self-Play Worker Thread ---
-        worker = SelfPlayWorker(alphazero_lib, replay_buffer, model_queue)
-        worker.start()
-
-        # --- Main Training Loop ---
-        print("\n[Trainer] Starting main training loop.")
+        # --- Initial Model Setup ---
+        print("Setting initial model to start C++ self-play workers...")
         
-        # Put the initial random model on the queue for the worker.
         model_bytes, metadata_json = save_model_with_metadata(
             model,
             step=0,
@@ -507,77 +428,79 @@ if __name__ == '__main__':
             self_play_config=self_play_config,
             training_hyperparams=training_hyperparams
         )
-        model_queue.put(model_bytes)
+        set_model(alphazero_lib, model_bytes, len(model_bytes), metadata_json.encode('utf-8'))
 
-        # Wait for the replay buffer to have a minimum number of samples
-        while len(replay_buffer) < training_hyperparams['min_replay_buffer_size']:
-            print(f"[Trainer] Waiting for replay buffer to fill... {len(replay_buffer)}/{training_hyperparams['min_replay_buffer_size']}")
-            time.sleep(2)
-
-        print("\n[Trainer] Buffer filled. Starting training steps.")
-        value_loss_fn = nn.MSELoss()
-        
         loss = None # Initialize loss to a default value
         step = 0
+
+        print( f"Starting training loop for {training_hyperparams['total_training_steps']} steps...")
         while step < training_hyperparams['total_training_steps']:
-            # Wait for the worker to generate some new data
-            num_new_positions, total_duration, num_cycles = worker.get_and_reset_stats()
-            if num_new_positions == 0:
-                time.sleep(0.1) # Avoid busy-waiting while worker is busy
-                continue
+            # 1. Fetch a small batch of new data to keep the buffer fresh.
+            # This call blocks until the C++ workers have produced enough games.
+            num_positions_to_fetch = max(1, int(training_hyperparams['batch_size'] / training_hyperparams['target_replay_ratio']))
 
-            # Calculate how many training steps to perform for this new data
-            # to maintain the target replay ratio.
-            steps_to_run = max(1, int((training_hyperparams['target_replay_ratio'] * num_new_positions) / training_hyperparams['batch_size']))
-            print(f"[Trainer] Worker generated {num_new_positions} positions. Running {steps_to_run} training steps.")
-
-            for _ in range(steps_to_run):
-                if step >= training_hyperparams['total_training_steps']:
-                    break
-
-                model.train()
-                start_time = time.time()
-
-                batch_states, batch_target_policies, batch_target_values = replay_buffer.sample(batch_size)
-
-                optimizer.zero_grad()
-                pred_values, pred_policy_logits = model(batch_states)
-
-                loss_policy = -torch.sum(batch_target_policies * F.log_softmax(pred_policy_logits, dim=1), dim=1).mean()
-                loss_value = value_loss_fn(pred_values.squeeze(-1), batch_target_values)
-                loss = loss_policy + loss_value
-
-                loss.backward()
-                optimizer.step()
-                duration = time.time() - start_time
-
-                # Log metrics to TensorBoard periodically
-                if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
-                    avg_selfplay_time = total_duration / num_cycles if num_cycles > 0 else 0.0
-
-                    writer.add_scalar('Loss/Total', loss.item(), step)
-                    writer.add_scalar('Loss/Policy', loss_policy.item(), step)
-                    writer.add_scalar('Loss/Value', loss_value.item(), step)
-                    writer.add_scalar('Performance/Training_Step_Time_ms', duration * 1000, step)
-                    writer.add_scalar('Performance/Avg_SelfPlay_Time_s', avg_selfplay_time, step)
-                    print(f"[Trainer] Step {step+1}/{training_hyperparams['total_training_steps']} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
-
-                # Periodically update the model for the self-play worker
-                if (step + 1) % training_hyperparams['model_update_freq_steps'] == 0:
-                    print(f"\n[Trainer] Step {step+1}: Updating model for self-play worker.")
-                    model_bytes, _ = save_model_with_metadata(
-                        model,
-                        step=step + 1,
-                        current_loss=loss,
-                        game_config=game_config,
-                        self_play_config=self_play_config,
-                        training_hyperparams=training_hyperparams
-                    )
-                    with model_queue.mutex:
-                        model_queue.queue.clear()
-                    model_queue.put_nowait(model_bytes)
-
+            fetch_start_time = time.time()
+            new_data, queue_size = fetch_selfplay_data_from_cpp(alphazero_lib, num_positions_to_fetch)
+            fetch_duration = time.time() - fetch_start_time
+            if new_data:
+                replay_buffer.add(new_data['game_states'], new_data['policy_targets'], new_data['value_targets'], new_data['player_indices'])
+            
+            # Check if the buffer is large enough to start training.
+            # This elegantly combines the pre-filling and training phases.
+            if len(replay_buffer) < training_hyperparams['min_replay_buffer_size']:
+                if (step + 1) % training_hyperparams['log_freq_steps'] == 0: # Log progress occasionally during pre-fill
+                    print(f"Pre-filling replay buffer... {len(replay_buffer)}/{training_hyperparams['min_replay_buffer_size']}")
+                # Skip the training part of the loop until the buffer is ready.                
+                # We still increment step to avoid an infinite loop if something goes wrong.
                 step += 1
+                continue
+            
+            # 2. Perform one training step once the buffer is ready.
+            model.train()
+            start_time = time.time()
+
+            batch_states, batch_target_policies, batch_target_values = replay_buffer.sample(training_hyperparams['batch_size'])
+
+            optimizer.zero_grad()
+            pred_values, pred_policy_logits = model(batch_states)
+            value_loss_fn = nn.MSELoss()
+
+            loss_policy = -torch.sum(batch_target_policies * F.log_softmax(pred_policy_logits, dim=1), dim=1).mean()
+            loss_value = value_loss_fn(pred_values.squeeze(-1), batch_target_values)
+            loss = loss_policy + loss_value
+
+            loss.backward()
+            optimizer.step()
+            duration = time.time() - start_time
+
+            # 3. Log metrics and update the C++ model periodically.
+            if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
+                writer.add_scalar('Loss/Total', loss.item(), step)
+                writer.add_scalar('Loss/Policy', loss_policy.item(), step)
+                writer.add_scalar('Loss/Value', loss_value.item(), step)
+                writer.add_scalar('Performance/Training_Step_Time_ms', duration * 1000, step)
+                writer.add_scalar('Buffer/ReplayBuffer_Size', len(replay_buffer), step)
+                writer.add_scalar('Performance/SelfPlay_Fetch_Time_ms', fetch_duration * 1000, step)
+                writer.add_scalar('Buffer/SelfPlay_Queue_Size', queue_size, step)
+                # Log weights and gradients for each layer
+                for name, param in model.named_parameters():
+                    writer.add_histogram(f'Gradients/{name}', param.grad, step)
+                    writer.add_histogram(f'Weights/{name}', param.data, step)
+                print(f"Step {step+1}/{training_hyperparams['total_training_steps']} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
+
+            if (step + 1) % training_hyperparams['model_update_freq_steps'] == 0:
+                print(f"\nUpdating C++ model at step {step+1}...")
+                model_bytes, _ = save_model_with_metadata(
+                    model,
+                    step=step + 1,
+                    current_loss=loss,
+                    game_config=game_config,
+                    self_play_config=self_play_config,
+                    training_hyperparams=training_hyperparams
+                )
+                set_model(alphazero_lib, model_bytes, len(model_bytes), metadata_json.encode('utf-8'))
+
+            step += 1
 
         print("\nTraining finished")
 
@@ -605,20 +528,37 @@ if __name__ == '__main__':
             f.write(model_bytes)
         print("Model saved successfully.")
 
-        # Close the TensorBoard writer
+        print("\nFetching final inference batch size histogram from C++...")
+        try:
+            # Define the C-function signature
+            c_get_histo = alphazero_lib.get_inference_histogram
+            c_get_histo.restype = ctypes.c_int
+            c_get_histo.argtypes = [ctypes.POINTER(ctypes.c_size_t), ctypes.c_int]
+
+            # First, call with no buffer to get the required size.
+            required_size = c_get_histo(None, 0)
+            
+            if required_size > 0:
+                # Allocate a buffer of the correct size and get the data.
+                histo_data = np.zeros(required_size, dtype=np.uintp)
+                histo_ptr = histo_data.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t))
+                c_get_histo(histo_ptr, required_size)
+                
+                # Log the histogram to TensorBoard using the final step count.
+                writer.add_histogram('Performance/Inference_Batch_Sizes_Final', histo_data, step)
+                print(f"Logged final inference batch size histogram ({required_size} data points).")
+        except Exception as e:
+            print(f"Failed to get and log final histogram: {e}")
+        
         writer.close()
+        print("TensorBoard writer closed.")
     except Exception as e:
         print(f"\nAn error occurred: {e}")
     finally:
-        # --- Explicit C++ Resource Cleanup ---
-        # This is crucial to prevent crashes on exit. We must explicitly tell the
-        # C++ library to shut down its background threads and release resources
-        # before the Python interpreter unloads the library.
-        if 'worker' in locals() and worker.is_alive():
-            print("\n[Trainer] Stopping self-play worker...")
-            worker.stop()
-            worker.join()
-
+        # This block runs whether the training loop succeeded or failed.
+        # --- C++ Resource Cleanup ---
+        # This is crucial to prevent crashes on exit by telling the C++ library
+        # to shut down its background threads before the interpreter exits.
         print("\nCleaning up C++ resources...")
         cleanup_func = alphazero_lib.cleanup_resources
         cleanup_func.restype = None

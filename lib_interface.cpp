@@ -7,61 +7,91 @@ using namespace std;
 
 // static global variables keeps them local to this compile unit
 
-// A static buffer to hold the self-play data. This avoids repeated allocations/deallocations
-// the selfplay_data_buffer has a different memory layout than the 
-// incrementally generated positions. so we need a copy:
-// four arrays with positions.size() entries:
-// 1. games states, 2.  policies targets, 3. value targets, 4: player indices
-static vector< uint8_t > selfplay_data_buffer;
+// one global inference manager used by all worker threads,
+// gives access to the nn model asynchronously while batching requests
+static unique_ptr< libtorch::InferenceManager > inference_manager;
+
+// on cleanup the inference manager is deleted, this is important to avoid issues 
+// in the order the multithreading components are teared down
+static atomic< bool > cleanup_requested( false );
+
+static vector< future< void > > thread_pool( thread::hardware_concurrency());
+
+// if position queue gets too large threads will be suspended
+static atomic< bool > threads_suspended( false );
+
+static mutex position_queue_mutex;
+static condition_variable position_queue_cv;
+static size_t position_queue_max_size = 10000;
+
+void set_model(
+    const char* model_data, int32_t model_data_len,
+    const char* metadata_json, int32_t metadata_len,
+    size_t state_size, size_t policies_size, function< void () > selfplay_worker )
+{
+    if (cleanup_requested)
+        return;
+    if (!inference_manager) // First time call: 
+    {
+        // create the InferenceManager instance
+        inference_manager.reset( new libtorch::InferenceManager(
+            model_data, model_data_len, metadata_json, metadata_len,
+            libtorch::check_device(), state_size, policies_size ));
+        
+        // and start worker threads
+        cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
+        for (auto& future : thread_pool)
+            future = async( selfplay_worker );
+    }        
+    else // Subsequent calls: update the model in-place for efficiency.
+        inference_manager->update_model( model_data, model_data_len, metadata_json, metadata_len );
+}
 
 namespace ttt {
 
-struct ThreadLocalStorage
-{
-    // This struct is not copyable because each instance owns unique resources
-    // (random generator, memory pool) that should not be shared across threads
-    // or copied unintentionally.
-    ThreadLocalStorage() = default;
-    ThreadLocalStorage(const ThreadLocalStorage&) = delete;
-    ThreadLocalStorage& operator=(const ThreadLocalStorage&) = delete;
-    ThreadLocalStorage(ThreadLocalStorage&&) = default;
-    ThreadLocalStorage& operator=(ThreadLocalStorage&&) = default;
-
-    // Each thread needs its own random number generator and memory pool allocator.
-    mt19937 g{random_device{}()};
-    vector< ::alphazero::training::Position< alphazero::G, alphazero::P > > positions;
-    alphazero::NodeAllocator node_allocator;
-    future< void > selfplay_future;   
-};
-
-static unique_ptr< libtorch::InferenceManager > inference_manager;
-// use list to prevent reallocations when appending
-static list< ThreadLocalStorage > thread_local_storage_list;
-static const size_t data_pointers_size = (alphazero::G + alphazero::P + 1) * sizeof( float ) + sizeof( int32_t );
+// global position fifo queue, selfplay worker feed new position into and client fetches them
+// there is a mechanism to stop the position queue to grow infinitly by suspending the workers
+// if it gets to large
+static queue< alphazero::training::Position > position_queue;
 
 // run self play in worker thread
-void selfplay_worker( 
-    ThreadLocalStorage& local_storage,
-    libtorch::InferenceManager& inference_manager,
-    size_t runs_per_thread,
-    float c_base,
-    float c_init,
-    float dirichlet_alpha,
-    float dirichlet_epsilon,
-    int32_t simulations,
-    int32_t opening_moves )
+void selfplay_worker()
 {
-    PlayerIndex player_index = PlayerIndex::Player1;
-    local_storage.positions.clear();
-    for (; runs_per_thread; --runs_per_thread) 
+    // random number generator may not be threadsafe
+    mt19937 g { random_device{}() };
+
+    // thread local memory allocator and position buffer avoid synchronization delays 
+    alphazero::NodeAllocator node_allocator;
+    vector< ::alphazero::training::Position< alphazero::G, alphazero::P > > positions;
+
+    // start with player 1, toggle for each self play run    
+    for (PlayerIndex player_index = PlayerIndex::Player1; true; 
+         player_index = toggle( player_index ))
     {
-        alphazero::libtorch::async::Player player( Game( player_index, empty_state ), c_base, c_init,
-            simulations, local_storage.node_allocator, inference_manager );
+        if (threads_suspended)
+        {
+            cout << "selfplay threads are suspended, waiting..." << endl;
+            // block and wait for notification if threads_suspended is true
+            threads_suspended.wait( true );
+        }
+        if (cleanup_requested)
+            break;
+
+        const ::libtorch::Hyperparameters hp = inference_manager->get_hyperparameters();
+        alphazero::libtorch::async::Player player( 
+            Game( player_index, empty_state ), hp.simulations, 
+            node_allocator, *inference_manager );
+        positions.clear();
         alphazero::training::SelfPlay self_play(
-            player, dirichlet_alpha, dirichlet_epsilon,
-            opening_moves, local_storage.g, local_storage.positions );
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
+            hp.opening_moves, g, positions );
         self_play.run();
-        player_index = toggle(player_index);
+        {
+            lock_guard< mutex > lock( position_queue_mutex );
+            position_queue.push_range( positions );
+        }
+
+        position_queue_cv.notify_one();
     }
 }
 
@@ -78,20 +108,14 @@ struct DataPointers {
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
 
-int set_ttt_model( const char* model_data, int32_t model_data_len )
+int set_ttt_model( const char* model_data, int32_t model_data_len, const char* metadata_json, int32_t metadata_len )
 {
     try 
     {
-        std::string content(model_data, model_data_len);
-
-        if (!ttt::inference_manager)
-            // First time call: create the InferenceManager instance.
-            ttt::inference_manager.reset(new libtorch::InferenceManager(
-                std::move(content), libtorch::check_device(),
-                ttt::alphazero::G, ttt::alphazero::P));
-        else
-            // Subsequent calls: update the model in-place for efficiency.
-            ttt::inference_manager->update_model(std::move(content));
+        set_model( 
+            model_data, model_data_len, 
+            metadata_json, metadata_len,
+            ttt::alphazero::G, ttt::alphazero::P, ttt::selfplay_worker );
 
         return 0;
     } 
@@ -108,102 +132,67 @@ int set_ttt_model( const char* model_data, int32_t model_data_len )
 }
 
 /*
- Runs some self-play games for Tic-Tac-Toe with some worker threads. 
- Allocates memory for the training data and provides pointers to it via 
- the data_pointers_out struct. The memory is managed by the library.
+ copy number_of_positions training data position to the memory locations provided by
+ the data_pointers_out struct.
   
  This function is designed to be called from a foreign language interface like Python's ctypes. The model
  is passed as an in-memory buffer.
   
  data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
- returns the number of game positions actually generated. Returns a negative value on error.
- */
-int run_ttt_selfplay(DataPointers* data_pointers_out)
+ returns number of queued position or a negative value on error. */
+int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_positions )
 {
     try 
     {
-        if (!ttt::inference_manager)
+        if (!inference_manager)
             throw runtime_error( "no model loaded" );
 
-        // Extract hyperparameters from the loaded model's metadata
-        const auto& metadata = ttt::inference_manager->get_metadata();
-        if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
-            throw std::runtime_error("Model metadata is missing or incomplete.");
-        }
-        const auto& sp_config = metadata.at("self_play_config").as_object();
-
-        const int32_t threads = boost::json::value_to<int32_t>(sp_config.at("threads"));
-        const int32_t runs = boost::json::value_to<int32_t>(sp_config.at("runs"));
-        const float c_base = boost::json::value_to<float>(sp_config.at("c_base"));
-        const float c_init = boost::json::value_to<float>(sp_config.at("c_init"));
-        const float dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
-        const float dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
-        const int32_t simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
-        const int32_t opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
-
-        if (threads <= 0)
-            throw invalid_argument( "threads must be > 0 in model metadata" );
-        
-        const auto [runs_per_thread, rem_runs] = ldiv(runs, threads);
-
-        //const unsigned int num_threads = std::thread::hardware_concurrency();
-        if (threads > ttt::thread_local_storage_list.size())
-            ttt::thread_local_storage_list.resize( threads );
-
-        // add remainder runs to the first one, so we add up to original number of runs
-        size_t rpt = runs_per_thread + rem_runs;
-
-        for (auto itr = ttt::thread_local_storage_list.begin(); 
-             itr != ttt::thread_local_storage_list.end(); ++itr) 
+        while (!cleanup_requested)
         {
-            itr->selfplay_future = async( ttt::selfplay_worker,
-                ref(*itr), ref(*ttt::inference_manager), rpt, c_base, c_init,
-                dirichlet_alpha, dirichlet_epsilon, simulations, opening_moves );
-            rpt = runs_per_thread;
-        }
+            unique_lock< mutex > lock( position_queue_mutex );
 
-        // wait until all worker threads are done and accumulate total positions
-        size_t total_positions = 0;
-        for (auto& tls : ttt::thread_local_storage_list) 
-        {
-            tls.selfplay_future.wait();
-            total_positions += tls.positions.size();
-        }
+            if (ttt::position_queue.size() < number_of_positions)
+                position_queue_cv.wait( lock );
 
-        selfplay_data_buffer.resize( total_positions * ttt::data_pointers_size);
-
-        // Get pointers to the start of each section in the buffer
-        float* current_ptr = reinterpret_cast< float*>( selfplay_data_buffer.data());
-
-        data_pointers_out->game_states = current_ptr;
-        current_ptr += total_positions * ttt::alphazero::G;
-
-        data_pointers_out->policy_targets = current_ptr;
-        current_ptr += total_positions * ttt::alphazero::P;
-
-        data_pointers_out->value_targets = current_ptr;
-        current_ptr += total_positions;
-
-        data_pointers_out->player_indices = reinterpret_cast< int32_t* >( current_ptr );
-
-        // Copy the generated data into the contiguous out buffer
-        size_t current_pos_idx = 0;
-        for (auto& tls : ttt::thread_local_storage_list)
-            for (const auto& pos : tls.positions)
+            // check again, may be waked up spurious!
+            if (const size_t queue_size = ttt::position_queue.size(); 
+                queue_size >= number_of_positions)
             {
-                ranges::copy( 
-                    pos.game_state_players, 
-                    data_pointers_out->game_states + current_pos_idx * ttt::alphazero::G);
-                ranges::copy( 
-                    pos.target_policy, 
-                    data_pointers_out->policy_targets + current_pos_idx * ttt::alphazero::P);
-                data_pointers_out->value_targets[current_pos_idx] = pos.target_value;
-                data_pointers_out->player_indices[current_pos_idx] = 
-                    static_cast< int32_t >( pos.current_player );
-                ++current_pos_idx;
-            }
+                for (size_t i = 0; i < number_of_positions; ++i)
+                {
+                    auto const& pos = ttt::position_queue.front();
+                    ranges::copy( 
+                        pos.game_state_players,  
+                        data_pointers_out.game_states + i * ttt::alphazero::G );
+                    ranges::copy( 
+                        pos.target_policy, 
+                        data_pointers_out.policy_targets + i * ttt::alphazero::P );
+                    data_pointers_out.value_targets[i] = pos.target_value;
+                    data_pointers_out.player_indices[i] = 
+                        static_cast< int32_t >( pos.current_player );
 
-        return static_cast<int>( total_positions );
+                    ttt::position_queue.pop();
+                }
+
+                // too many queued position updates remaining, stop generating new ones
+                if (ttt::position_queue.size() > position_queue_max_size)
+                {
+                    cout << "suspend selfplay workers" << endl;
+                    threads_suspended = true;
+                    threads_suspended.notify_all();
+                }
+                else if (threads_suspended)
+                {
+                    cout << "resume selfplay workers" << endl;
+                    threads_suspended = false;
+                    threads_suspended.notify_all();
+                }
+
+                return queue_size;
+            }
+        }
+
+        return 0;
     } 
     catch (const exception& e) 
     {
@@ -217,25 +206,51 @@ int run_ttt_selfplay(DataPointers* data_pointers_out)
     }
 }
 
+int get_inference_histogram(size_t* data_out, int max_size)
+{
+    try
+    {
+        if (!inference_manager)
+            return 0; // No manager, no data.
+        
+        // This moves the log data out of the manager.
+        std::vector<size_t> log = inference_manager->get_batch_sizes_log();
+
+        if (data_out != nullptr && max_size > 0)
+        {
+            size_t num_to_copy = std::min((size_t)max_size, log.size());
+            std::copy(log.begin(), log.begin() + num_to_copy, data_out);
+        }
+        
+        return static_cast<int>(log.size());
+    }
+    catch (const std::exception& e)
+    {
+        std::cerr << "Exception in get_inference_histogram: " << e.what() << std::endl;
+        return -1;
+    }
+}
+
 void cleanup_resources()
 {
     try
     {
+        cleanup_requested = true;        
+        threads_suspended = false;
+        threads_suspended.notify_all();
+
+        cout << "Wait for all worker threads to finish..." << endl;
+        for (auto& future : thread_pool)
+            if (future.valid())
+                future.wait();
+
         // Explicitly destroy the inference manager. This is the most critical step,
         // as it ensures the background inference thread is properly joined before
         // the library is unloaded, preventing race conditions during shutdown.
-        if (ttt::inference_manager)
+        if (inference_manager)
         {
             cout << "Cleaning up C++ inference manager..." << endl;
-            ttt::inference_manager.reset();
-        }
-
-        // Clear the thread-local storage list. This ensures all memory allocated
-        // by the list and its contents (like node allocators) is released.
-        if (!ttt::thread_local_storage_list.empty())
-        {
-            cout << "Cleaning up C++ thread local storage..." << endl;
-            ttt::thread_local_storage_list.clear();
+            inference_manager.reset();
         }
     }
     catch (const exception& e)

@@ -13,6 +13,7 @@ struct Module;
 
 namespace libtorch {
 class InferenceManager;
+struct Hyperparameters;
 } // namespace libtorch {
 
 namespace ttt
@@ -92,6 +93,10 @@ using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 const size_t G = 3 * 9;
 const size_t P = 9;
 
+namespace training {
+using Position = ::alphazero::training::Position< G, P >;
+} // namespace training {
+
 class Player : public ::alphazero::Player< Move, State, G, P >
 {
 public:
@@ -100,8 +105,7 @@ public:
         float c_base,
         float c_init,
         size_t simulations,
-        NodeAllocator& allocator )
-    : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
+        NodeAllocator& allocator );
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;
@@ -118,9 +122,7 @@ public:
         float c_init,
         size_t simulations,
         NodeAllocator& allocator,
-        torch::jit::Module& model )
-    : alphazero::Player( game, c_base, c_init, simulations, allocator),
-      model( model ) {}
+        torch::jit::Module& model );
 protected:
     torch::jit::Module& model;
     std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
@@ -133,18 +135,22 @@ class Player : public alphazero::Player
 {
 public:
     Player( 
-        Game const& game, 
-        float c_base,
-        float c_init,
-        size_t simulations,
-        NodeAllocator& allocator,
-        ::libtorch::InferenceManager& inference_manager )
-    : alphazero::Player( game, c_base, c_init, simulations, allocator),
-      inference_manager( inference_manager ) {}
+        Game const&, 
+        size_t simulations, // may be different from model training
+        NodeAllocator&,
+        ::libtorch::InferenceManager& );
 protected:
     ::libtorch::InferenceManager& inference_manager;
 
     std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
+private:
+    // delegate constructor
+    Player( 
+        Game const&, 
+        size_t simulations,
+        NodeAllocator&,
+        ::libtorch::InferenceManager&,
+        ::libtorch::Hyperparameters const& );
 };
 
 } // namespace async {

@@ -33,16 +33,17 @@ torch::Device check_device()
 }
 
 InferenceManager::InferenceManager( 
-    string&& model_data, torch::Device device, 
+    char const* model_data, size_t model_data_len,
+    const char* metadata_json, size_t metadata_len,
+    torch::Device device, 
     size_t state_size, size_t policies_size,
     size_t max_batch_size, std::chrono::milliseconds batch_timeout )
 : max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
-  policies_size( policies_size ), model_data_stream( std::move(model_data)), 
+  policies_size( policies_size ), model_data_stream( string( model_data, model_data_len )), 
   device( device ), stop_flag( false )
 {
-    torch::jit::ExtraFilesMap extra_files;
-    model = torch::jit::load( model_data_stream, device, extra_files );
-    metadata = boost::json::parse( extra_files.at( "metadata.json" ));
+    model = torch::jit::load( model_data_stream, device);
+    hyperparameters = parse_hyperparameters( string(metadata_json, metadata_len) );
 
     initialize();
 }
@@ -55,8 +56,8 @@ InferenceManager::InferenceManager(
   policies_size( policies_size ), device( device ), stop_flag( false )
 {
     torch::jit::ExtraFilesMap extra_files;
-    model = torch::jit::load( model_path, device, extra_files );  
-    metadata = boost::json::parse(extra_files.at("metadata.json"));
+    model = torch::jit::load( model_path, device, extra_files );
+    hyperparameters = parse_hyperparameters(extra_files.at("metadata.json"));
 
     initialize();
 }
@@ -67,30 +68,6 @@ InferenceManager::~InferenceManager()
     cv.notify_one();
     if (inference_future.valid())
         inference_future.wait();
-
-    if (batch_sizes_log.empty()) {
-        cout << "\n--- No inference batches were processed. ---" << endl;
-        return;
-    }
-
-    map<size_t, size_t> counts;
-    size_t max_count = 0;
-    for (size_t size : batch_sizes_log) {
-        counts[size]++;
-        if (counts[size] > max_count) {
-            max_count = counts[size];
-        }
-    }
-
-    const size_t max_bar_width = 50;
-    const double scale = (max_count > max_bar_width) ? static_cast<double>(max_bar_width) / max_count : 1.0;
-
-    cout << "\n--- Inference Batch Size Histogram ---" << endl;
-    cout << "Size | Freq.                                              | Count" << endl;
-    cout << "--------------------------------------------------------------------" << endl;
-    for (const auto& [size, count] : counts)
-        cout << setw(4) << size << " | " << left << setw(max_bar_width) << string(static_cast<size_t>(count * scale), '*') << " | " << count << endl;
-    cout << "--------------------------------------------------------------------" << endl;
 }
 
 void InferenceManager::initialize()
@@ -99,6 +76,35 @@ void InferenceManager::initialize()
 
     // Start the inference loop thread after everything is initialized.
     inference_future = async( &InferenceManager::inference_loop, this );
+}
+
+ Hyperparameters parse_hyperparameters( const string& metadata_json )
+{
+    boost::json::value metadata = boost::json::parse( metadata_json );
+    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) 
+        throw std::runtime_error("Model metadata is missing or incomplete.");
+    const auto& sp_config = metadata.at("self_play_config").as_object();
+    
+    Hyperparameters hyperparameters;
+    hyperparameters.c_base = boost::json::value_to<float>(sp_config.at("c_base"));
+    hyperparameters.c_init = boost::json::value_to<float>(sp_config.at("c_init"));
+    hyperparameters.dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
+    hyperparameters.dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
+    hyperparameters.simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
+    hyperparameters.opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
+
+    return hyperparameters;
+}
+
+Hyperparameters InferenceManager::get_hyperparameters()
+{
+    shared_lock< shared_mutex > lock( model_update_mutex );
+    return hyperparameters;
+}
+
+std::vector<size_t> InferenceManager::get_batch_sizes_log()
+{
+    return batch_sizes_log;
 }
 
 future< float > InferenceManager::queue_request( float const* state, float* policies ) 
@@ -113,25 +119,20 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
     return future;
 }
 
-const boost::json::value& InferenceManager::get_metadata() const
+void InferenceManager::update_model( 
+    char const* new_model_data, size_t new_model_data_len,
+    const char* new_metadata_json, size_t new_metadata_len )
 {
-    return metadata;
-}
-
-void InferenceManager::update_model( string&& new_model_data )
-{
-    torch::jit::ExtraFilesMap extra_files;
-
-    model_data_stream.str( std::move( new_model_data ));
-    auto new_model = torch::jit::load( model_data_stream, device, extra_files );
-    boost::json::value new_metadata = boost::json::parse( extra_files.at( "metadata.json" ));
+    model_data_stream.str( string( new_model_data, new_model_data_len ));
+    auto new_model = torch::jit::load( model_data_stream, device );
+    auto new_hyperparameters = parse_hyperparameters( string(new_metadata_json, new_metadata_len) );
     
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
     {
-        lock_guard< mutex > lock( model_update_mutex );
+        lock_guard< shared_mutex > lock( model_update_mutex );
         model = new_model;
-        metadata = std::move( new_metadata );
+        hyperparameters = new_hyperparameters;
     }
     std::cout << "InferenceManager model updated in-place." << std::endl;
 }
@@ -182,7 +183,7 @@ void InferenceManager::inference_loop()
         {
             // Lock the module while running inference to prevent it from being
             // swapped out by an update call from another thread mid-operation.
-            lock_guard< mutex > lock( model_update_mutex);
+            lock_guard< shared_mutex > lock( model_update_mutex);
             output_ivalue = model.forward({input_batch});
         }
 

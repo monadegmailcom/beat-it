@@ -792,46 +792,26 @@ void uttt_match_mm_vs_tree_mm()
     assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
-struct ThreadLocalStorage
+vector< ttt::alphazero::training::Position > selfplay_worker( 
+    libtorch::InferenceManager& inference_manager, size_t runs_per_thread )
 {
-    // Each thread needs its own random number generator as std::mt19937 is not thread-safe.
-    // Seed with a random device to ensure different threads have different sequences.
     mt19937 g = mt19937( random_device{}());
     ttt::alphazero::NodeAllocator node_allocator;
-
-    vector< ::alphazero::training::Position< ttt::alphazero::G, ttt::alphazero::P > > positions;
-    future< void > selfplay_future;   
-
-    ThreadLocalStorage() = default;
-    ThreadLocalStorage(const ThreadLocalStorage&) = delete;
-    ThreadLocalStorage& operator=(const ThreadLocalStorage&) = delete;
-    ThreadLocalStorage(ThreadLocalStorage&&) = default;
-    ThreadLocalStorage& operator=(ThreadLocalStorage&&) = default;
-};
-
-void selfplay_worker( 
-    ThreadLocalStorage& local_storage,
-    libtorch::InferenceManager& inference_manager,
-    size_t runs_per_thread,
-    float c_base,
-    float c_init,
-    float dirichlet_alpha,
-    float dirichlet_epsilon,
-    int32_t simulations,
-    int32_t opening_moves )
-{
+    vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
-    local_storage.positions.clear();
+    const libtorch::Hyperparameters hp = inference_manager.get_hyperparameters();
     for (; runs_per_thread; --runs_per_thread) 
     {
-        ttt::alphazero::libtorch::async::Player player( ttt::Game( player_index, ttt::empty_state ), c_base, c_init,
-            simulations, local_storage.node_allocator, inference_manager );
+        ttt::alphazero::libtorch::async::Player player( ttt::Game( player_index, ttt::empty_state ), 
+            hp.simulations, node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
-            player, dirichlet_alpha, dirichlet_epsilon,
-            opening_moves, local_storage.g, local_storage.positions );
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
+            hp.opening_moves, g, positions );
         self_play.run();
         player_index = toggle(player_index);
     }
+
+    return positions;
 }
 
 void alphazero_training()
@@ -850,42 +830,17 @@ void alphazero_training()
         model_path, libtorch::check_device(), ttt::alphazero::G, ttt::alphazero::P,
         128, chrono::milliseconds( 5 ) );
 
-    // Extract hyperparameters from the loaded model's metadata
-    const auto& metadata = inference_manager.get_metadata();
-    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
-        throw std::runtime_error("Model metadata is missing or incomplete");
-    }
-    const auto& sp_config = metadata.at("self_play_config").as_object();
-    cout << "Loaded hyperparameters from model: " << sp_config << endl;
-
-    const float c_base = sp_config.contains("c_base") ? boost::json::value_to<float>(sp_config.at("c_base")) : 19652.0f;
-    const float c_init = sp_config.contains("c_init") ? boost::json::value_to<float>(sp_config.at("c_init")) : 1.25f;
-    const size_t simulations = sp_config.contains("simulations") ? boost::json::value_to<size_t>(sp_config.at("simulations")) : 100;
-    const float dirichlet_alpha = sp_config.contains("dirichlet_alpha") ? boost::json::value_to<float>(sp_config.at("dirichlet_alpha")) : 0.3f;
-    const float dirichlet_epsilon = sp_config.contains("dirichlet_epsilon") ? boost::json::value_to<float>(sp_config.at("dirichlet_epsilon")) : 0.25f;
-    const size_t opening_moves = sp_config.contains("opening_moves") ? boost::json::value_to<size_t>(sp_config.at("opening_moves")) : 0;
-    const size_t threads = sp_config.contains("threads") ? boost::json::value_to<size_t>(sp_config.at("threads")) : 8;
-    const size_t rounds = sp_config.contains("runs") ? boost::json::value_to<size_t>(sp_config.at("runs")) : 100;
-    const size_t runs_per_thread = rounds / threads;
-
-    vector< ThreadLocalStorage > local_storages;
-    local_storages.reserve(threads);
-    for (size_t i = 0; i < threads; ++i)
-        local_storages.emplace_back();
-
-    cout << "start " << threads << " worker thread "  << endl;
-    for (auto& tls : local_storages)
-        tls.selfplay_future = async( selfplay_worker,
-            ref( tls ), ref(inference_manager), runs_per_thread, c_base, c_init,
-            dirichlet_alpha, dirichlet_epsilon, simulations, opening_moves );
+    vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
+    cout << "start " << thread_pool.size() << " worker threads"  << endl;
+    for (auto& future : thread_pool)
+        future = async( selfplay_worker, ref(inference_manager), 500 );
 
     cout << "wait for all threads to finish..." << endl;
-
     size_t total_positions = 0;
-    for (auto& tls : local_storages) 
+    for (auto& future : thread_pool) 
     {
-        tls.selfplay_future.wait();
-        total_positions += tls.positions.size();
+        auto positions = future.get();
+        total_positions += positions.size();
     }
     cout << "total positions: " << total_positions << endl;
 }
@@ -906,20 +861,9 @@ void ttt_alphazero_nn_vs_minimax()
     auto device = libtorch::check_device();
 
     torch::jit::script::Module model = 
-        torch::jit::load( model_path, device, extra_files );  
-    auto metadata = boost::json::parse(extra_files.at("metadata.json"));
+        torch::jit::load( model_path, device, extra_files ); 
+    auto hp = libtorch::parse_hyperparameters( extra_files.at("metadata.json") );
     model.eval();
-
-    // Extract hyperparameters from the loaded model's metadata
-    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) {
-        throw std::runtime_error("Model metadata is missing or incomplete" );
-    }
-    const auto& sp_config = metadata.at("self_play_config").as_object();
-    cout << "Loaded hyperparameters from model: " << sp_config << endl;
-
-    const float c_base = sp_config.contains("c_base") ? boost::json::value_to<float>(sp_config.at("c_base")) : 19652.0f;
-    const float c_init = sp_config.contains("c_init") ? boost::json::value_to<float>(sp_config.at("c_init")) : 1.25f;
-    const size_t simulations = sp_config.contains("simulations") ? boost::json::value_to<size_t>(sp_config.at("simulations")) : 100;
 
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::NodeAllocator allocator;
@@ -932,7 +876,7 @@ void ttt_alphazero_nn_vs_minimax()
     match.play_match( 
         game, 
         [&]() { return new ttt::alphazero::libtorch::sync::Player( 
-            game, c_base, c_init, simulations, allocator, model ); }, 
+            game, hp.c_base, hp.c_init, hp.simulations, allocator, model ); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
         rounds );
 

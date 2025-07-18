@@ -76,8 +76,27 @@ array< float, G > Player::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
+Player::Player( 
+    Game const& game, 
+    float c_base,
+    float c_init,
+    size_t simulations,
+    NodeAllocator& allocator )
+: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
+
 namespace libtorch {
 namespace sync {
+
+Player::Player( 
+    Game const& game, 
+    float c_base,
+    float c_init,
+    size_t simulations,
+    NodeAllocator& allocator,
+    torch::jit::Module& model )
+: alphazero::Player( game, c_base, c_init, simulations, allocator),
+    model( model ) {}
+
 pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
 {   
     // provide the buffer to copy predicted policies into
@@ -113,6 +132,22 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
 } // namespace sync {
 
 namespace async {
+
+Player::Player( 
+    Game const& game, 
+    size_t simulations, // may be different from model training
+    NodeAllocator& allocator,
+    ::libtorch::InferenceManager& im )
+: Player( game, simulations, allocator, im, im.get_hyperparameters()) {}
+
+Player::Player( 
+    Game const& game, 
+    size_t simulations,
+    NodeAllocator& allocator,
+    ::libtorch::InferenceManager& im,
+    ::libtorch::Hyperparameters const& hp )
+: ttt::alphazero::Player( game, hp.c_base, hp.c_init, simulations, allocator),
+  inference_manager( im ) {}
 
 pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
 {   
