@@ -36,6 +36,7 @@ struct Hyperparameters
     float dirichlet_epsilon = 0.0f;
     size_t simulations = 0;
     size_t opening_moves = 0;
+    size_t threads = 0;
 };
 
 // promise: - model is set to eval mode
@@ -52,6 +53,7 @@ class InferenceManager
 public:
     InferenceManager(
         std::unique_ptr< torch::jit::script::Module >&&,
+        const Hyperparameters& hp,
         size_t state_size, size_t policies_size,
         size_t max_batch_size = 128,
         std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
@@ -65,7 +67,7 @@ public:
     ~InferenceManager(); 
 
     // threadsafe replacement of model
-    void update_model( std::unique_ptr< torch::jit::script::Module >&& );
+    void update_model( std::unique_ptr< torch::jit::script::Module >&&, const Hyperparameters& hp );
 
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
@@ -73,7 +75,7 @@ public:
     std::future< float > queue_request( float const* state, float* policies ); 
 
     // This moves the log data out of the manager. Should only be called once at the end.
-    std::vector<size_t> get_batch_sizes_log();
+    std::vector<size_t> const& get_inference_histogram() const;
 private:
     void inference_loop();
 
@@ -90,7 +92,7 @@ private:
     std::mutex queue_mutex;
     std::condition_variable cv;
     std::atomic< bool > stop_flag;
-    std::vector<size_t> batch_sizes_log;
+    std::vector<size_t> inference_histogram;
     std::future< void > inference_future;
 };
 

@@ -66,14 +66,17 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
     simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
     opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
+    threads = boost::json::value_to<size_t>(sp_config.at("threads"));
 }
 
 InferenceManager::InferenceManager( 
     unique_ptr< torch::jit::script::Module >&& model,
+    const Hyperparameters& hp,
     size_t state_size, size_t policies_size,
     size_t max_batch_size, std::chrono::milliseconds batch_timeout )
 : max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
-  policies_size( policies_size ), device( get_device()), model( std::move( model )), stop_flag( false )
+  policies_size( policies_size ), device( get_device()), model( std::move( model )), stop_flag( false ),
+  inference_histogram( hp.threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.
     inference_future = async( &InferenceManager::inference_loop, this );
@@ -87,9 +90,9 @@ InferenceManager::~InferenceManager()
         inference_future.wait();
 }
 
-vector< size_t > InferenceManager::get_batch_sizes_log()
+vector< size_t > const& InferenceManager::get_inference_histogram() const
 {
-    return batch_sizes_log;
+    return inference_histogram;
 }
 
 future< float > InferenceManager::queue_request( float const* state, float* policies ) 
@@ -104,12 +107,15 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
     return future;
 }
 
-void InferenceManager::update_model( unique_ptr< torch::jit::script::Module >&& new_model )
+void InferenceManager::update_model( 
+    unique_ptr< torch::jit::script::Module >&& new_model,
+    Hyperparameters const& hp )
 {
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
     lock_guard< mutex > lock( model_update_mutex );
     model = std::move( new_model );
+    inference_histogram.resize( hp.threads + 1, 0 );
 }
 
 void InferenceManager::inference_loop() 
@@ -140,7 +146,10 @@ void InferenceManager::inference_loop()
         if (batch.empty()) 
             continue;
 
-        batch_sizes_log.push_back(batch.size());
+        // Increment the histogram bin corresponding to the current batch size.
+        const size_t batch_size = batch.size();
+        if (batch_size < inference_histogram.size())
+            inference_histogram[batch_size]++;
 
         // Prepare the batch tensor for the model.
         batch_tensors.clear();

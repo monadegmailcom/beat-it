@@ -6,8 +6,8 @@ ki engine for two player games
   - brew install python@3.12
   - python3.12 -m venv .venv
   - source .venv/bin/activate
-  - pip3 install torch torchvision tensorboard
-on the mac make the gatekeeper happy
+  - pip3 install torch torchvision tensorboard matplotlib
+   the mac make the gatekeeper happy
     - xattr -d com.apple.quarantine /Users/wrqpjzc/source/libtorch/lib/*.dylib
 
 ## How to Run

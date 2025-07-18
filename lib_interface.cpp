@@ -15,7 +15,7 @@ static unique_ptr< libtorch::InferenceManager > inference_manager;
 // in the order the multithreading components are teared down
 static atomic< bool > cleanup_requested( false );
 
-static vector< future< void > > thread_pool( thread::hardware_concurrency());
+static vector< future< void > > thread_pool;
 
 // if position queue gets too large threads will be suspended
 static atomic< bool > threads_suspended( false );
@@ -40,9 +40,12 @@ void set_model(
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
-            std::move( model ), state_size, policies_size ));
+            std::move( model ), hp, state_size, policies_size ));
         hyperparameters = hp;
         
+        // Set the thread pool size based on the model's hyperparameters
+        thread_pool.resize(hyperparameters.threads);
+
         // and start worker threads
         cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
         for (auto& future : thread_pool)
@@ -50,7 +53,7 @@ void set_model(
     }        
     else // Subsequent calls: update the model in-place for efficiency.
     {
-        inference_manager->update_model( std::move( model ));
+        inference_manager->update_model( std::move( model ), hp);
         lock_guard< shared_mutex > lock( hp_mutex );
         hyperparameters = hp;
     }
@@ -225,16 +228,16 @@ int get_inference_histogram(size_t* data_out, int max_size)
         if (!inference_manager)
             return 0; // No manager, no data.
         
-        // This moves the log data out of the manager.
-        std::vector<size_t> log = inference_manager->get_batch_sizes_log();
+        // Get a reference to the histogram data.
+        vector<size_t> const& histogram = inference_manager->get_inference_histogram();
 
         if (data_out != nullptr && max_size > 0)
         {
-            size_t num_to_copy = std::min((size_t)max_size, log.size());
-            std::copy(log.begin(), log.begin() + num_to_copy, data_out);
+            size_t num_to_copy = std::min((size_t)max_size, histogram.size());
+            std::copy(histogram.begin(), histogram.begin() + num_to_copy, data_out);
         }
         
-        return static_cast<int>(log.size());
+        return static_cast<int>(histogram.size());
     }
     catch (const std::exception& e)
     {

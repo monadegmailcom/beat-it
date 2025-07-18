@@ -12,6 +12,8 @@ import queue
 import json
 import subprocess
 from torch.utils.tensorboard import SummaryWriter
+import matplotlib.pyplot as plt
+from PIL import Image
 
 G_SIZE = 27  # 3 planes * 9 cells
 P_SIZE = 9   # 9 possible moves
@@ -116,6 +118,32 @@ def save_model_with_metadata(model, step, current_loss, game_config, self_play_c
     torch.jit.save(scripted_model, buffer, _extra_files=extra_files)
     # scripted_model.save(buffer, _extra_files=extra_files)
     return buffer.getvalue(), metadata_json
+
+def log_histogram_as_image(writer, tag, data, step):
+    """Creates a bar chart from histogram data and logs it as an image."""
+    try:
+        fig, ax = plt.subplots()
+        # Find indices with non-zero counts to make the plot cleaner
+        indices = np.where(data > 0)[0]
+        counts = data[indices]
+        
+        if len(indices) > 0:
+            ax.bar(indices, counts, tick_label=indices)
+            ax.set_xlabel("Inference Batch Size")
+            ax.set_ylabel("Frequency (Count)")
+            ax.set_title("Inference Batch Size Distribution")
+            
+            # Convert plot to an image tensor
+            # Save the plot to an in-memory buffer and read it back as an image.
+            # This is more robust across different matplotlib backends.
+            buf = io.BytesIO()
+            fig.savefig(buf, format='png')
+            buf.seek(0)
+            image = Image.open(buf)
+            writer.add_image(tag, np.array(image), step, dataformats='HWC')
+        plt.close(fig)
+    except Exception as e:
+        print(f"Warning: Failed to generate histogram image: {e}")
 
 def print_board(state_vector):
     """
@@ -409,6 +437,7 @@ if __name__ == '__main__':
 
         # Configuration for the self-play run
         self_play_config = { # This is now only for metadata logging
+            'threads': 12, # Example: 1.5x a typical 8-core CPU
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
@@ -486,7 +515,7 @@ if __name__ == '__main__':
                 for name, param in model.named_parameters():
                     writer.add_histogram(f'Gradients/{name}', param.grad, step)
                     writer.add_histogram(f'Weights/{name}', param.data, step)
-                print(f"Step {step+1}/{training_hyperparams['total_training_steps']} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms")
+                print(f"Step {step+1}/{training_hyperparams['total_training_steps']} | Loss: {loss.item():.4f} | Step Time: {duration*1000:.2f}ms | Fetch Time: {fetch_duration*1000:.2f}ms")
 
             if (step + 1) % training_hyperparams['model_update_freq_steps'] == 0:
                 print(f"\nUpdating C++ model at step {step+1}...")
@@ -544,8 +573,10 @@ if __name__ == '__main__':
                 histo_ptr = histo_data.ctypes.data_as(ctypes.POINTER(ctypes.c_size_t))
                 c_get_histo(histo_ptr, required_size)
                 
-                # Log the histogram to TensorBoard using the final step count.
-                writer.add_histogram('Performance/Inference_Batch_Sizes_Final', histo_data, step)
+                # The data is a histogram of counts per batch size.
+                # We log this directly to get a distribution plot in TensorBoard.
+                final_step = step if 'step' in locals() and step is not None else 0
+                log_histogram_as_image(writer, 'Performance/Inference_Batch_Size_Histogram', histo_data, final_step)
                 print(f"Logged final inference batch size histogram ({required_size} data points).")
         except Exception as e:
             print(f"Failed to get and log final histogram: {e}")

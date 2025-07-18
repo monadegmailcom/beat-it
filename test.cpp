@@ -827,7 +827,7 @@ void alphazero_training()
     const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
     auto [model, hp] =  libtorch::load_model( model_path );
     libtorch::InferenceManager inference_manager( 
-        std::move( model ), ttt::alphazero::G, ttt::alphazero::P );
+        std::move( model ), hp, ttt::alphazero::G, ttt::alphazero::P );
 
     vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
