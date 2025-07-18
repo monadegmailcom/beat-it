@@ -43,6 +43,14 @@ double score( State const& state )
 
 namespace alphazero {
 
+Player::Player( 
+    Game const& game, 
+    float c_base,
+    float c_init,
+    size_t simulations,
+    NodeAllocator& allocator )
+: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
+
 size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
@@ -76,14 +84,6 @@ array< float, G > Player::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
-Player::Player( 
-    Game const& game, 
-    float c_base,
-    float c_init,
-    size_t simulations,
-    NodeAllocator& allocator )
-: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
-
 namespace libtorch {
 namespace sync {
 
@@ -107,7 +107,7 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
         const_cast<float*>(game_state_players.data()), 
         {1, (long)game_state_players.size()}, torch::kFloat32);
 
-    static auto device = ::libtorch::check_device();
+    static auto device = ::libtorch::get_device();
 
     // Move tensor to the correct device.
     input_tensor = input_tensor.to( device );
@@ -135,18 +135,11 @@ namespace async {
 
 Player::Player( 
     Game const& game, 
+    float c_base, float c_init,
     size_t simulations, // may be different from model training
     NodeAllocator& allocator,
     ::libtorch::InferenceManager& im )
-: Player( game, simulations, allocator, im, im.get_hyperparameters()) {}
-
-Player::Player( 
-    Game const& game, 
-    size_t simulations,
-    NodeAllocator& allocator,
-    ::libtorch::InferenceManager& im,
-    ::libtorch::Hyperparameters const& hp )
-: ttt::alphazero::Player( game, hp.c_base, hp.c_init, simulations, allocator),
+: ttt::alphazero::Player( game, c_base, c_init, simulations, allocator),
   inference_manager( im ) {}
 
 pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
@@ -160,9 +153,6 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
     // --- Batched/Asynchronous implementation (original) ---
     auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
     auto value = future.get(); // blocking call
-
-    // --- Synchronous/Direct implementation (for comparison) ---
-    // auto value = inference_manager.predict_sync( game_state_players.data(), policies.data());
 
     return make_pair(value, policies);
 }

@@ -793,17 +793,17 @@ void uttt_match_mm_vs_tree_mm()
 }
 
 vector< ttt::alphazero::training::Position > selfplay_worker( 
-    libtorch::InferenceManager& inference_manager, size_t runs_per_thread )
+    libtorch::InferenceManager& inference_manager, libtorch::Hyperparameters const& hp, 
+    size_t runs_per_thread )
 {
     mt19937 g = mt19937( random_device{}());
     ttt::alphazero::NodeAllocator node_allocator;
     vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
-    const libtorch::Hyperparameters hp = inference_manager.get_hyperparameters();
     for (; runs_per_thread; --runs_per_thread) 
     {
         ttt::alphazero::libtorch::async::Player player( ttt::Game( player_index, ttt::empty_state ), 
-            hp.simulations, node_allocator, inference_manager );
+            hp.c_base, hp.c_init, hp.simulations, node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
             hp.opening_moves, g, positions );
@@ -825,15 +825,14 @@ void alphazero_training()
     }
 
     const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
-
+    auto [model, hp] =  libtorch::load_model( model_path );
     libtorch::InferenceManager inference_manager( 
-        model_path, libtorch::check_device(), ttt::alphazero::G, ttt::alphazero::P,
-        128, chrono::milliseconds( 5 ) );
+        std::move( model ), ttt::alphazero::G, ttt::alphazero::P );
 
     vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
     for (auto& future : thread_pool)
-        future = async( selfplay_worker, ref(inference_manager), 500 );
+        future = async( selfplay_worker, ref(inference_manager), hp, 500 );
 
     cout << "wait for all threads to finish..." << endl;
     size_t total_positions = 0;
@@ -856,14 +855,7 @@ void ttt_alphazero_nn_vs_minimax()
     }
 
     const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
-
-    torch::jit::ExtraFilesMap extra_files;
-    auto device = libtorch::check_device();
-
-    torch::jit::script::Module model = 
-        torch::jit::load( model_path, device, extra_files ); 
-    auto hp = libtorch::parse_hyperparameters( extra_files.at("metadata.json") );
-    model.eval();
+    auto [model, hp] = libtorch::load_model( model_path ); 
 
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::NodeAllocator allocator;
@@ -876,7 +868,7 @@ void ttt_alphazero_nn_vs_minimax()
     match.play_match( 
         game, 
         [&]() { return new ttt::alphazero::libtorch::sync::Player( 
-            game, hp.c_base, hp.c_init, hp.simulations, allocator, model ); }, 
+            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model ); }, 
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); }, 
         rounds );
 

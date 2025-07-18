@@ -12,54 +12,71 @@ using namespace std;
 
 namespace libtorch {
 
-torch::Device check_device()
+torch::Device get_device()
 {
     // Check for available hardware backends, preferring MPS on Apple Silicon, then CUDA.
     if (torch::mps::is_available()) 
-    {
-        cout << "MPS is available! Moving model to Apple Silicon GPU." << endl;
         return torch::kMPS;
-    } 
     else if (torch::cuda::is_available()) 
-    {
-        cout << "CUDA is available! Moving model to NVIDIA GPU." << endl;
         return torch::kCUDA;
-    } 
     else 
-    {
-        cout << "No GPU backend found. Using CPU." << endl;
         return torch::kCPU;
-    }
+}
+
+pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+    const char* model_path )
+{
+    torch::jit::ExtraFilesMap extra_files;
+    auto model = make_unique< torch::jit::script::Module >( torch::jit::load( 
+        model_path, get_device(), extra_files ));
+    model->eval();
+    auto hyperparameters( extra_files.at( "metadata.json" ));
+
+    return make_pair( std::move( model ), hyperparameters );
+}
+
+pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+    char const* model_data, size_t model_data_len, 
+    const char* metadata_json, size_t metadata_len )
+{
+    static std::istringstream model_data_stream;
+    // when reading the model from a string stream there seems to be a problem
+    // with the embedded metadata, so we provided as an extra parameter
+    model_data_stream.str( string( model_data, model_data_len ));
+    
+    auto model = make_unique< torch::jit::script::Module >( torch::jit::load( 
+        model_data_stream, get_device()));
+    model->eval();
+
+    auto hyperparameters( string(metadata_json, metadata_len));
+
+    return make_pair( std::move( model ), hyperparameters );
+}
+
+Hyperparameters::Hyperparameters( string const& metadata_json )
+{
+    boost::json::value metadata = boost::json::parse( metadata_json );
+    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) 
+        throw std::runtime_error("Model metadata is missing or incomplete.");
+    const auto& sp_config = metadata.at("self_play_config").as_object();
+    
+    c_base = boost::json::value_to<float>(sp_config.at("c_base"));
+    c_init = boost::json::value_to<float>(sp_config.at("c_init"));
+    dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
+    dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
+    simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
+    opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
 }
 
 InferenceManager::InferenceManager( 
-    char const* model_data, size_t model_data_len,
-    const char* metadata_json, size_t metadata_len,
-    torch::Device device, 
+    unique_ptr< torch::jit::script::Module >&& model,
     size_t state_size, size_t policies_size,
     size_t max_batch_size, std::chrono::milliseconds batch_timeout )
 : max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
-  policies_size( policies_size ), model_data_stream( string( model_data, model_data_len )), 
-  device( device ), stop_flag( false )
+  policies_size( policies_size ), device( get_device()), model( std::move( model )), stop_flag( false )
 {
-    model = torch::jit::load( model_data_stream, device);
-    hyperparameters = parse_hyperparameters( string(metadata_json, metadata_len) );
-
-    initialize();
-}
-
-InferenceManager::InferenceManager(
-    const char* model_path, torch::Device device,
-    size_t state_size, size_t policies_size,
-    size_t max_batch_size, std::chrono::milliseconds batch_timeout)
-: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ), 
-  policies_size( policies_size ), device( device ), stop_flag( false )
-{
-    torch::jit::ExtraFilesMap extra_files;
-    model = torch::jit::load( model_path, device, extra_files );
-    hyperparameters = parse_hyperparameters(extra_files.at("metadata.json"));
-
-    initialize();
+    // Start the inference loop thread after everything is initialized.
+    inference_future = async( &InferenceManager::inference_loop, this );
 }
 
 InferenceManager::~InferenceManager() 
@@ -70,39 +87,7 @@ InferenceManager::~InferenceManager()
         inference_future.wait();
 }
 
-void InferenceManager::initialize()
-{
-    model.eval();
-
-    // Start the inference loop thread after everything is initialized.
-    inference_future = async( &InferenceManager::inference_loop, this );
-}
-
- Hyperparameters parse_hyperparameters( const string& metadata_json )
-{
-    boost::json::value metadata = boost::json::parse( metadata_json );
-    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) 
-        throw std::runtime_error("Model metadata is missing or incomplete.");
-    const auto& sp_config = metadata.at("self_play_config").as_object();
-    
-    Hyperparameters hyperparameters;
-    hyperparameters.c_base = boost::json::value_to<float>(sp_config.at("c_base"));
-    hyperparameters.c_init = boost::json::value_to<float>(sp_config.at("c_init"));
-    hyperparameters.dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
-    hyperparameters.dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
-    hyperparameters.simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
-    hyperparameters.opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
-
-    return hyperparameters;
-}
-
-Hyperparameters InferenceManager::get_hyperparameters()
-{
-    shared_lock< shared_mutex > lock( model_update_mutex );
-    return hyperparameters;
-}
-
-std::vector<size_t> InferenceManager::get_batch_sizes_log()
+vector< size_t > InferenceManager::get_batch_sizes_log()
 {
     return batch_sizes_log;
 }
@@ -119,22 +104,12 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
     return future;
 }
 
-void InferenceManager::update_model( 
-    char const* new_model_data, size_t new_model_data_len,
-    const char* new_metadata_json, size_t new_metadata_len )
+void InferenceManager::update_model( unique_ptr< torch::jit::script::Module >&& new_model )
 {
-    model_data_stream.str( string( new_model_data, new_model_data_len ));
-    auto new_model = torch::jit::load( model_data_stream, device );
-    auto new_hyperparameters = parse_hyperparameters( string(new_metadata_json, new_metadata_len) );
-    
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
-    {
-        lock_guard< shared_mutex > lock( model_update_mutex );
-        model = new_model;
-        hyperparameters = new_hyperparameters;
-    }
-    std::cout << "InferenceManager model updated in-place." << std::endl;
+    lock_guard< mutex > lock( model_update_mutex );
+    model = std::move( new_model );
 }
 
 void InferenceManager::inference_loop() 
@@ -148,10 +123,7 @@ void InferenceManager::inference_loop()
             // The timeout is crucial to process incomplete batches with low latency.
             // lock is released while waiting
             cv.wait_for( 
-                lock, 
-                batch_timeout, 
-                [this] () { return !request_queue.empty() || stop_flag; }
-                );
+                lock, batch_timeout, [this] () { return !request_queue.empty() || stop_flag; });
 
             if (stop_flag) 
                 return;
@@ -174,7 +146,6 @@ void InferenceManager::inference_loop()
         batch_tensors.clear();
         batch_tensors.reserve( batch.size());
         for (auto& req : batch) 
-            // cast to void* because of legacy c interface
             batch_tensors.push_back( torch::from_blob( 
                 const_cast< float* >( req.state ), state_size, torch::kFloat32));
         torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
@@ -183,8 +154,8 @@ void InferenceManager::inference_loop()
         {
             // Lock the module while running inference to prevent it from being
             // swapped out by an update call from another thread mid-operation.
-            lock_guard< shared_mutex > lock( model_update_mutex);
-            output_ivalue = model.forward({input_batch});
+            lock_guard< mutex > lock( model_update_mutex);
+            output_ivalue = model->forward({input_batch});
         }
 
         auto output_tuple = output_ivalue.toTuple();

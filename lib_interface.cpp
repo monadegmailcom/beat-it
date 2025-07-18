@@ -23,6 +23,8 @@ static atomic< bool > threads_suspended( false );
 static mutex position_queue_mutex;
 static condition_variable position_queue_cv;
 static size_t position_queue_max_size = 10000;
+static libtorch::Hyperparameters hyperparameters;
+static shared_mutex hp_mutex;
 
 void set_model(
     const char* model_data, int32_t model_data_len,
@@ -31,12 +33,15 @@ void set_model(
 {
     if (cleanup_requested)
         return;
+
+    auto [model, hp] = libtorch::load_model( 
+        model_data, model_data_len, metadata_json, metadata_len );
     if (!inference_manager) // First time call: 
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
-            model_data, model_data_len, metadata_json, metadata_len,
-            libtorch::check_device(), state_size, policies_size ));
+            std::move( model ), state_size, policies_size ));
+        hyperparameters = hp;
         
         // and start worker threads
         cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
@@ -44,14 +49,18 @@ void set_model(
             future = async( selfplay_worker );
     }        
     else // Subsequent calls: update the model in-place for efficiency.
-        inference_manager->update_model( model_data, model_data_len, metadata_json, metadata_len );
+    {
+        inference_manager->update_model( std::move( model ));
+        lock_guard< shared_mutex > lock( hp_mutex );
+        hyperparameters = hp;
+    }
 }
 
 namespace ttt {
 
-// global position fifo queue, selfplay worker feed new position into and client fetches them
+// global position fifo queue, selfplay workers feed new positions into it and client fetches them
 // there is a mechanism to stop the position queue to grow infinitly by suspending the workers
-// if it gets to large
+// if it gets too large
 static queue< alphazero::training::Position > position_queue;
 
 // run self play in worker thread
@@ -77,14 +86,17 @@ void selfplay_worker()
         if (cleanup_requested)
             break;
 
-        const ::libtorch::Hyperparameters hp = inference_manager->get_hyperparameters();
+        shared_lock< shared_mutex > lock( hp_mutex );
         alphazero::libtorch::async::Player player( 
-            Game( player_index, empty_state ), hp.simulations, 
+            Game( player_index, empty_state ), 
+            hyperparameters.c_base, hyperparameters.c_init, hyperparameters.simulations, 
             node_allocator, *inference_manager );
         positions.clear();
         alphazero::training::SelfPlay self_play(
-            player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
-            hp.opening_moves, g, positions );
+            player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
+            hyperparameters.opening_moves, g, positions );
+        lock.unlock();
+
         self_play.run();
         {
             lock_guard< mutex > lock( position_queue_mutex );

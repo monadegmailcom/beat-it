@@ -448,7 +448,7 @@ if __name__ == '__main__':
             # Check if the buffer is large enough to start training.
             # This elegantly combines the pre-filling and training phases.
             if len(replay_buffer) < training_hyperparams['min_replay_buffer_size']:
-                if (step + 1) % training_hyperparams['log_freq_steps'] == 0: # Log progress occasionally during pre-fill
+                if (step + 1) % 10 == 0: # Log progress occasionally during pre-fill
                     print(f"Pre-filling replay buffer... {len(replay_buffer)}/{training_hyperparams['min_replay_buffer_size']}")
                 # Skip the training part of the loop until the buffer is ready.                
                 # We still increment step to avoid an infinite loop if something goes wrong.

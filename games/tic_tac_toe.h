@@ -136,6 +136,7 @@ class Player : public alphazero::Player
 public:
     Player( 
         Game const&, 
+        float c_base, float c_init,
         size_t simulations, // may be different from model training
         NodeAllocator&,
         ::libtorch::InferenceManager& );
@@ -143,14 +144,6 @@ protected:
     ::libtorch::InferenceManager& inference_manager;
 
     std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
-private:
-    // delegate constructor
-    Player( 
-        Game const&, 
-        size_t simulations,
-        NodeAllocator&,
-        ::libtorch::InferenceManager&,
-        ::libtorch::Hyperparameters const& );
 };
 
 } // namespace async {

@@ -13,7 +13,7 @@
 
 namespace libtorch {
 
-torch::Device check_device();
+torch::Device get_device();
 
 struct InferenceRequest 
 {
@@ -24,40 +24,39 @@ struct InferenceRequest
 
 struct Hyperparameters 
 {
-    float c_base;
-    float c_init;
-    float dirichlet_alpha;
-    float dirichlet_epsilon;
-    size_t simulations;
-    size_t opening_moves;
+    // require: metadata_json has to contain a self_play_config sub-object 
+    //          with the variables below, otherwise it will throw
+    // promise: json is parsed and assigned to the variables below
+    Hyperparameters( std::string const& metadata_json );
+    Hyperparameters() {};
+
+    float c_base = 0.0f;
+    float c_init = 0.0f;
+    float dirichlet_alpha = 0.0f;
+    float dirichlet_epsilon = 0.0f;
+    size_t simulations = 0;
+    size_t opening_moves = 0;
 };
 
-
-Hyperparameters parse_hyperparameters( const std::string& metadata_json );
+// promise: - model is set to eval mode
+//          - model is moved to the most powerful device on the machine
+std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+    const char* model_path );
+std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+    char const* model_data, size_t model_data_len,
+    const char* metadata_json, size_t metadata_len );
 
 // This class manages a dedicated thread for running batched model inference.
 class InferenceManager 
 {
 public:
-    // construct by file path
     InferenceManager(
-        const char* model_path,
-        torch::Device device,
+        std::unique_ptr< torch::jit::script::Module >&&,
         size_t state_size, size_t policies_size,
         size_t max_batch_size = 128,
         std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
 
-    InferenceManager(
-        // construct by memory
-        char const* model_data,
-        size_t model_data_len,
-        const char* metadata_json,
-        size_t metadata_len,
-        torch::Device device,
-        size_t state_size, size_t policies_size,
-        size_t max_batch_size = 128,
-        std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
-
+    // be sure not to copy or assign the inference manager accidentally
     InferenceManager( const InferenceManager& ) = delete;
     InferenceManager& operator=( const InferenceManager& ) = delete;
     InferenceManager( InferenceManager&& ) = delete;
@@ -65,22 +64,17 @@ public:
 
     ~InferenceManager(); 
 
-    // threadsafe replace of model and metadata
-    void update_model( char const* new_model_data, size_t new_model_data_len, 
-                       const char* new_metadata_json, size_t new_metadata_len );
+    // threadsafe replacement of model
+    void update_model( std::unique_ptr< torch::jit::script::Module >&& );
 
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
     // memory for predicted policies is provided by the caller.
     std::future< float > queue_request( float const* state, float* policies ); 
 
-    // threadsafe hyper parameter copy
-    Hyperparameters get_hyperparameters();
-
     // This moves the log data out of the manager. Should only be called once at the end.
     std::vector<size_t> get_batch_sizes_log();
 private:
-    void initialize();
     void inference_loop();
 
     const size_t max_batch_size;
@@ -89,17 +83,15 @@ private:
     size_t state_size;
     size_t policies_size;
     std::vector< torch::Tensor > batch_tensors;
-    std::istringstream model_data_stream;
     torch::Device device;
-    torch::jit::script::Module model; // The loaded TorchScript model
+    std::unique_ptr< torch::jit::script::Module > model;
+    std::mutex model_update_mutex;
     std::queue< InferenceRequest > request_queue;
     std::mutex queue_mutex;
-    std::shared_mutex model_update_mutex;
     std::condition_variable cv;
     std::atomic< bool > stop_flag;
     std::vector<size_t> batch_sizes_log;
     std::future< void > inference_future;
-    Hyperparameters hyperparameters;
 };
 
 } // namespace libtorch {
