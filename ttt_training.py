@@ -12,6 +12,7 @@ import queue
 import json
 import subprocess
 from torch.utils.tensorboard import SummaryWriter
+import argparse
 import matplotlib.pyplot as plt
 from PIL import Image
 
@@ -93,13 +94,13 @@ def get_git_revision_hash() -> str:
     except Exception:
         return "N/A"
 
-def save_model_with_metadata(model, step, current_loss, game_config, self_play_config, training_hyperparams):
+def create_inference_model_bundle(model, step, current_loss, game_config, self_play_config, training_hyperparams):
     """Gathers metadata and saves the scripted model to an in-memory buffer."""
     # 1. Gather all relevant metadata into a dictionary.
     metadata = {
         "model_architecture": model.__class__.__name__,
         "training_steps": step,
-        "final_loss": current_loss.item() if current_loss is not None else None,
+        "loss": current_loss.item() if current_loss is not None else None,
         "hyperparameters": training_hyperparams,
         "self_play_config": self_play_config,
         "game_config": game_config,
@@ -115,9 +116,25 @@ def save_model_with_metadata(model, step, current_loss, game_config, self_play_c
     model.eval()
     scripted_model = torch.jit.script(model)
     buffer = io.BytesIO()
-    torch.jit.save(scripted_model, buffer, _extra_files=extra_files)
-    # scripted_model.save(buffer, _extra_files=extra_files)
+    # For inference, we only need the model itself.
+    torch.jit.save(scripted_model, buffer)
     return buffer.getvalue(), metadata_json
+
+def save_checkpoint(model, optimizer, step, current_loss, game_config, self_play_config, training_hyperparams, path):
+    """Saves a full checkpoint including model, metadata, and optimizer state to a file."""
+    model_bytes, metadata_json = create_inference_model_bundle(
+        model, step, current_loss, game_config, self_play_config, training_hyperparams
+    )
+    
+    # Save optimizer state along with the model for resuming training
+    optimizer_state_buffer = io.BytesIO()
+    torch.save(optimizer.state_dict(), optimizer_state_buffer)
+    # We load the model back from bytes to add the extra files for the checkpoint.
+    loaded_model = torch.jit.load(io.BytesIO(model_bytes))
+    torch.jit.save(loaded_model, path, _extra_files={
+        'metadata.json': metadata_json,
+        'optimizer_state.pt': optimizer_state_buffer.getvalue()
+    })
 
 def log_histogram_as_image(writer, tag, data, step):
     """Creates a bar chart from histogram data and logs it as an image."""
@@ -371,11 +388,20 @@ class AlphaZeroCNN(nn.Module):
 
 # 2. Training Setup
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description="AlphaZero Training for Tic-Tac-Toe")
+    parser.add_argument('--resume_from', type=str, default=None,
+                        help='Path to a model checkpoint (.pt file) to resume training from.')
+    args = parser.parse_args()
+    
     lib_path = os.path.join('obj', 'libalphazero.so')
     alphazero_lib = ctypes.CDLL(lib_path)
     print(f"Successfully loaded shared library from: {lib_path}")
     writer = None  # Define writer in the outer scope
     try:
+        # --- Initial Setup ---
+        start_step = 0
+        log_dir = None
+
         # --- Game and Network Configuration ---
         game_config = {
             'board_size': 3,
@@ -391,6 +417,7 @@ if __name__ == '__main__':
             'log_freq_steps': 100,
             'total_training_steps': 2000,
             'model_update_freq_steps': 500,
+            'checkpoint_freq_steps': 1000, # Save a checkpoint every 1000 steps
             'replay_buffer_size': 20000,
             'min_replay_buffer_size': 1000,
             'target_replay_ratio': 4.0,
@@ -418,26 +445,52 @@ if __name__ == '__main__':
         # Replay Buffer
         replay_buffer = ReplayBuffer(
             training_hyperparams['replay_buffer_size'], G_SIZE, P_SIZE, device)
+        # Optimizer
+        optimizer = optim.Adam(model.parameters(), lr=training_hyperparams['learning_rate'])
 
-        base_log_dir = 'runs/ttt_alphazero_experiment'
-        if not os.path.exists(base_log_dir):
-            log_dir = base_log_dir
+        # --- Resume from Checkpoint Logic ---
+        if args.resume_from:
+            print(f"Attempting to resume training from: {args.resume_from}")
+            if os.path.exists(args.resume_from):
+                extra_files = {'optimizer_state.pt': b'', 'metadata.json': b''}
+                model = torch.jit.load(args.resume_from, map_location=device, _extra_files=extra_files)
+                
+                # Load optimizer state
+                optimizer_state_buffer = io.BytesIO(extra_files['optimizer_state.pt'])
+                optimizer.load_state_dict(torch.load(optimizer_state_buffer))
+
+                # Load metadata to get the step count
+                metadata = json.loads(extra_files['metadata.json'])
+                # Load hyperparameters from the checkpoint to ensure consistency
+                training_hyperparams = metadata.get('hyperparameters', training_hyperparams)
+                start_step = metadata.get('training_steps', 0)
+                # Correctly determine the original run's log directory
+                run_name = os.path.basename(os.path.dirname(args.resume_from))
+                log_dir = os.path.join("runs", run_name)
+                print(f"Resuming from step {start_step}. Optimizer state loaded.")
+            else:
+                print(f"Warning: Checkpoint file not found at {args.resume_from}. Starting a new run.")
+
+        # --- TensorBoard Setup ---
+        if log_dir is None:
+            base_log_dir = 'runs/ttt_alphazero_experiment'
+            if not os.path.exists(base_log_dir):
+                log_dir = base_log_dir
+            else:
+                counter = 1
+                while os.path.exists(f"{base_log_dir}_{counter}"):
+                    counter += 1
+                log_dir = f"{base_log_dir}_{counter}"
         else:
-            counter = 1
-            while os.path.exists(f"{base_log_dir}_{counter}"):
-                counter += 1
-            log_dir = f"{base_log_dir}_{counter}"
+            print(f"Resuming TensorBoard logs in: {log_dir}")
         
         writer = SummaryWriter(log_dir)
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
-        # Optimizer
-        optimizer = optim.Adam(model.parameters(), lr=training_hyperparams['learning_rate'])
-
         # Configuration for the self-play run
         self_play_config = { # This is now only for metadata logging
-            'threads': 12, # Example: 1.5x a typical 8-core CPU
+            'threads': int(os.cpu_count() * 1.5), # Oversubscribe threads to hide I/O latency
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
@@ -449,7 +502,7 @@ if __name__ == '__main__':
         # --- Initial Model Setup ---
         print("Setting initial model to start C++ self-play workers...")
         
-        model_bytes, metadata_json = save_model_with_metadata(
+        model_bytes, metadata_json = create_inference_model_bundle(
             model,
             step=0,
             current_loss=None,
@@ -460,9 +513,9 @@ if __name__ == '__main__':
         set_model(alphazero_lib, model_bytes, len(model_bytes), metadata_json.encode('utf-8'))
 
         loss = None # Initialize loss to a default value
-        step = 0
+        step = start_step
 
-        print( f"Starting training loop for {training_hyperparams['total_training_steps']} steps...")
+        print( f"Starting training loop from step {start_step} up to {training_hyperparams['total_training_steps']} steps...")
         while step < training_hyperparams['total_training_steps']:
             # 1. Fetch a small batch of new data to keep the buffer fresh.
             # This call blocks until the C++ workers have produced enough games.
@@ -479,7 +532,7 @@ if __name__ == '__main__':
             if len(replay_buffer) < training_hyperparams['min_replay_buffer_size']:
                 if (step + 1) % 10 == 0: # Log progress occasionally during pre-fill
                     print(f"Pre-filling replay buffer... {len(replay_buffer)}/{training_hyperparams['min_replay_buffer_size']}")
-                # Skip the training part of the loop until the buffer is ready.                
+                # Skip the training part of the loop until the buffer is ready.
                 # We still increment step to avoid an infinite loop if something goes wrong.
                 step += 1
                 continue
@@ -519,7 +572,7 @@ if __name__ == '__main__':
 
             if (step + 1) % training_hyperparams['model_update_freq_steps'] == 0:
                 print(f"\nUpdating C++ model at step {step+1}...")
-                model_bytes, _ = save_model_with_metadata(
+                model_bytes, metadata_json = create_inference_model_bundle(
                     model,
                     step=step + 1,
                     current_loss=loss,
@@ -529,33 +582,43 @@ if __name__ == '__main__':
                 )
                 set_model(alphazero_lib, model_bytes, len(model_bytes), metadata_json.encode('utf-8'))
 
+            # Periodically save a checkpoint
+            if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
+                checkpoint_dir = os.path.join(os.path.dirname(log_dir), "models", os.path.basename(log_dir))
+                os.makedirs(checkpoint_dir, exist_ok=True)
+                checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
+                print(f"\nSaving checkpoint at step {step+1} to {checkpoint_path}...")
+                save_checkpoint(
+                    model,
+                    optimizer,
+                    step=step + 1,
+                    current_loss=loss,
+                    game_config=game_config,
+                    self_play_config=self_play_config,
+                    training_hyperparams=training_hyperparams,
+                    path=checkpoint_path
+                )
+
             step += 1
 
         print("\nTraining finished")
 
         # --- Save the final trained model with embedded metadata ---
-        # Use the TensorBoard log directory name to create a unique model filename,
-        # linking the model to its training run logs.
-        final_model_path = os.path.join("models", f"{os.path.basename(writer.log_dir)}.pt")
-        os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
-        print(f"\nSaving final trained model to {final_model_path}...")
-
-        model_bytes, metadata_json = save_model_with_metadata(
-            model,
-            step=step,
-            current_loss=loss,
-            game_config=game_config,
-            self_play_config=self_play_config,
-            training_hyperparams=training_hyperparams
-        )
-
-        print("Bundling metadata with the model:")
-        print(metadata_json)
-
-        # Save the final model bytes to a file.
-        with open(final_model_path, "wb") as f:
-            f.write(model_bytes)
-        print("Model saved successfully.")
+        if writer:
+            # The log_dir is like 'runs/ttt_alphazero_experiment_6'
+            final_model_path = os.path.join("models", os.path.basename(log_dir), "final_model.pt")
+            os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
+            print(f"\nSaving final trained model to {final_model_path}...")
+            save_checkpoint(
+                model,
+                optimizer,
+                step=step,
+                current_loss=loss,
+                game_config=game_config,
+                self_play_config=self_play_config,
+                training_hyperparams=training_hyperparams,
+                path=final_model_path
+            )
 
         print("\nFetching final inference batch size histogram from C++...")
         try:
@@ -575,14 +638,16 @@ if __name__ == '__main__':
                 
                 # The data is a histogram of counts per batch size.
                 # We log this directly to get a distribution plot in TensorBoard.
-                final_step = step if 'step' in locals() and step is not None else 0
-                log_histogram_as_image(writer, 'Performance/Inference_Batch_Size_Histogram', histo_data, final_step)
+                if writer:
+                    final_step = step if 'step' in locals() and step is not None else 0
+                    log_histogram_as_image(writer, 'Performance/Inference_Batch_Size_Histogram', histo_data, final_step)
                 print(f"Logged final inference batch size histogram ({required_size} data points).")
         except Exception as e:
             print(f"Failed to get and log final histogram: {e}")
         
-        writer.close()
-        print("TensorBoard writer closed.")
+        if writer:
+            writer.close()
+            print("TensorBoard writer closed.")
     except Exception as e:
         print(f"\nAn error occurred: {e}")
     finally:
