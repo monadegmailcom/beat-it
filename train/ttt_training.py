@@ -15,6 +15,8 @@ from torch.utils.tensorboard import SummaryWriter
 import argparse
 import matplotlib.pyplot as plt
 from PIL import Image
+from ttt_cnn import TicTacToeCNN
+from alphazero_cnn import AlphaZeroCNN
 
 G_SIZE = 27  # 3 planes * 9 cells
 P_SIZE = 9   # 9 possible moves
@@ -250,141 +252,6 @@ class ReplayBuffer:
     def __len__(self):
         with self.lock:
             return self.size
-
-class ResidualBlock(nn.Module):
-    """
-    The core building block of a ResNet. It contains a 'skip connection'
-    that adds the input of the block to its output. This helps combat
-    vanishing gradients and allows for much deeper networks.
-    """
-    def __init__(self, num_channels):
-        super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
-        self.bn1 = nn.BatchNorm2d(num_channels)
-        self.conv2 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
-        self.bn2 = nn.BatchNorm2d(num_channels)
-
-    def forward(self, x):
-        # The 'skip connection'
-        residual = x
-        # The main path
-        out = F.relu(self.bn1(self.conv1(x)))
-        out = self.bn2(self.conv2(out))
-        # Add the input to the output of the convolutions
-        out += residual
-        out = F.relu(out)
-        return out
-
-class TicTacToeCNN(nn.Module):
-    def __init__(self, input_channels=3, board_size=3, num_actions=9):
-        super(TicTacToeCNN, self).__init__()
-        self.board_size = board_size
-        self.num_actions = num_actions
-        self.input_channels = input_channels
-
-        # Shared Body
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1) # 64 filters
-        self.bn2 = nn.BatchNorm2d(64)
-
-        # Calculate the flattened size after convolutions
-        # For a 3x3 board and the conv layers above, the output size remains 3x3
-        # If you add more conv layers or change padding/stride, this needs adjustment.
-        self.flattened_size = 64 * board_size * board_size
-
-        # Policy Head
-        self.fc_policy1 = nn.Linear(self.flattened_size, 128)
-        self.fc_policy2 = nn.Linear(128, num_actions)
-
-        # Value Head
-        self.fc_value1 = nn.Linear(self.flattened_size, 128)
-        self.fc_value2 = nn.Linear(128, 1) # Single scalar value
-
-    def forward(self, x):
-        # The input x from C++ is flat (batch, 18). Reshape it for the Conv2D layers.
-        x = x.view(-1, self.input_channels, self.board_size, self.board_size)
-
-        # Shared body
-        x = F.relu(self.bn1(self.conv1(x)))
-        x = F.relu(self.bn2(self.conv2(x)))
-        # x = F.relu(self.bn3(self.conv3(x))) # if using conv3
-        x = x.view(-1, self.flattened_size)  # Flatten for the fully connected layers
-
-        # Policy head
-        policy = F.relu(self.fc_policy1(x))
-        policy = self.fc_policy2(policy) # Raw logits, softmax will be applied in loss or outside
-
-        # Value head
-        value = F.relu(self.fc_value1(x))
-        value = torch.tanh(self.fc_value2(value)) # Output between -1 and 1
-
-        return value, policy
-
-class AlphaZeroCNN(nn.Module):
-    def __init__(self, board_size, num_actions, input_channels, num_res_blocks, res_block_channels):
-        """
-        A configurable ResNet-based architecture inspired by AlphaZero.
-
-        Args:
-            board_size (int): The width and height of the board.
-            num_actions (int): The size of the policy output.
-            input_channels (int): Number of input planes. For UTTT, this could be:
-            num_res_blocks (int): The number of residual blocks in the network body.
-            res_block_channels (int): The number of channels used in the residual blocks.
-        """
-        super(AlphaZeroCNN, self).__init__()
-        self.board_size = board_size
-        self.num_actions = num_actions
-        self.input_channels = input_channels
-
-        # --- Network Body ---
-        # 1. An initial convolutional layer to transform the input planes to the desired channel depth.
-        self.initial_conv = nn.Sequential(
-            nn.Conv2d(input_channels, res_block_channels, kernel_size=3, padding=1, bias=False),
-            nn.BatchNorm2d(res_block_channels),
-            nn.ReLU(inplace=True)
-        )
-
-        # 2. A stack of residual blocks. This is the core of the network.
-        self.res_blocks = nn.Sequential(
-            *[ResidualBlock(res_block_channels) for _ in range(num_res_blocks)]
-        )
-
-        # --- Value Head (as in AlphaZero paper) ---
-        self.value_head = nn.Sequential(
-            nn.Conv2d(res_block_channels, 1, kernel_size=1, bias=False), # Reduce to 1 channel
-            nn.BatchNorm2d(1),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(1 * board_size * board_size, 256),
-            nn.ReLU(inplace=True),
-            nn.Linear(256, 1),
-            nn.Tanh() # Output value between -1 and 1
-        )
-
-        # --- Policy Head (as in AlphaZero paper) ---
-        self.policy_head = nn.Sequential(
-            nn.Conv2d(res_block_channels, 2, kernel_size=1, bias=False), # Reduce to 2 channels
-            nn.BatchNorm2d(2),
-            nn.ReLU(inplace=True),
-            nn.Flatten(),
-            nn.Linear(2 * board_size * board_size, num_actions)
-        )
-
-    def forward(self, x):
-        # Input x from C++ is flat. Reshape it for the Conv2D layers.
-        x = x.view(-1, self.input_channels, self.board_size, self.board_size)
-        
-        # Pass through the initial convolution and the residual blocks
-        x = self.initial_conv(x)
-        x = self.res_blocks(x)
-
-        # The two heads operate on the output of the residual body
-        policy_logits = self.policy_head(x)
-        value = self.value_head(x)
-
-        return value, policy_logits
 
 # 2. Training Setup
 if __name__ == '__main__':

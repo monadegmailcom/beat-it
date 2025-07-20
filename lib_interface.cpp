@@ -26,10 +26,18 @@ static size_t position_queue_max_size = 10000;
 static libtorch::Hyperparameters hyperparameters;
 static shared_mutex hp_mutex;
 
+// A struct to define the layout of the data pointers. This must be mirrored in Python.
+struct DataPointers {
+    float* game_states = nullptr; // G floats
+    float* policy_targets = nullptr; // P floats
+    float* value_targets = nullptr; // 1 float
+    int32_t* player_indices = nullptr; // 1 int32_t
+};
+
 void set_model(
     const char* model_data, int32_t model_data_len,
     const char* metadata_json, int32_t metadata_len,
-    size_t state_size, size_t policies_size, function< void () > selfplay_worker )
+    size_t state_size, size_t policies_size, function< void () > worker )
 {
     if (cleanup_requested)
         return;
@@ -49,7 +57,7 @@ void set_model(
         // and start worker threads
         cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
         for (auto& future : thread_pool)
-            future = async( selfplay_worker );
+            future = async( worker );
     }        
     else // Subsequent calls: update the model in-place for efficiency.
     {
@@ -59,22 +67,29 @@ void set_model(
     }
 }
 
-namespace ttt {
+template< typename MoveT, typename StateT, size_t G, size_t P >
+using AlphazeroPlayerFactory = alphazero::Player< MoveT, StateT, G, P >* (*)(
+    PlayerIndex,
+    libtorch::Hyperparameters const&,
+    alphazero::NodeAllocator< MoveT, StateT >&);
 
-// global position fifo queue, selfplay workers feed new positions into it and client fetches them
-// there is a mechanism to stop the position queue to grow infinitly by suspending the workers
-// if it gets too large
-static queue< alphazero::training::Position > position_queue;
+template< typename MoveT, typename StateT, size_t G, size_t P >
+using SelfPlayFactory = alphazero::training::SelfPlay<MoveT, StateT, G, P>* (*)(
+    alphazero::Player<MoveT, StateT, G, P>&, std::vector<alphazero::training::Position<G, P>>&, std::mt19937&);
 
 // run self play in worker thread
-void selfplay_worker()
+template< typename MoveT, typename StateT, size_t G, size_t P >
+void selfplay_worker( 
+    AlphazeroPlayerFactory< MoveT, StateT, G, P > player_factory,
+    SelfPlayFactory< MoveT, StateT, G, P > selfplay_factory,
+    queue< alphazero::training::Position< G, P >>& position_queue )
 {
     // random number generator may not be threadsafe
     mt19937 g { random_device{}() };
 
     // thread local memory allocator and position buffer avoid synchronization delays 
-    alphazero::NodeAllocator node_allocator;
-    vector< ::alphazero::training::Position< alphazero::G, alphazero::P > > positions;
+    alphazero::NodeAllocator< MoveT, StateT > node_allocator;
+    vector< alphazero::training::Position< G, P > > positions;
 
     // start with player 1, toggle for each self play run    
     for (PlayerIndex player_index = PlayerIndex::Player1; true; 
@@ -89,18 +104,20 @@ void selfplay_worker()
         if (cleanup_requested)
             break;
 
-        shared_lock< shared_mutex > lock( hp_mutex );
-        alphazero::libtorch::async::Player player( 
-            Game( player_index, empty_state ), 
-            hyperparameters.c_base, hyperparameters.c_init, hyperparameters.simulations, 
-            node_allocator, *inference_manager );
-        positions.clear();
-        alphazero::training::SelfPlay self_play(
-            player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
-            hyperparameters.opening_moves, g, positions );
-        lock.unlock();
+        libtorch::Hyperparameters hp;
+        {
+            shared_lock< shared_mutex > lock( hp_mutex );
+            hp = hyperparameters;
+        }
 
-        self_play.run();
+        unique_ptr< alphazero::Player< MoveT, StateT, G, P > > player( 
+            player_factory( player_index, hp, node_allocator ));
+
+        positions.clear();
+        unique_ptr< alphazero::training::SelfPlay< MoveT, StateT, G, P > > selfplay( 
+            selfplay_factory( *player, positions, g ));
+        selfplay->run();
+
         {
             lock_guard< mutex > lock( position_queue_mutex );
             position_queue.push_range( positions );
@@ -110,15 +127,91 @@ void selfplay_worker()
     }
 }
 
-} // namespace ttt {
+template< size_t G, size_t P >
+int fetch_selfplay_data( 
+    DataPointers data_pointers_out, int32_t number_of_positions,
+    queue< ::alphazero::training::Position< G, P >>& position_queue )
+{
+    if (!inference_manager)
+        throw runtime_error( "no model loaded" );
 
-// A struct to define the layout of the data pointers. This must be mirrored in Python.
-struct DataPointers {
-    float* game_states = nullptr; // G floats
-    float* policy_targets = nullptr; // P floats
-    float* value_targets = nullptr; // 1 float
-    int32_t* player_indices = nullptr; // 1 int32_t
-};
+    while (!cleanup_requested)
+    {
+        unique_lock< mutex > lock( position_queue_mutex );
+
+        if (position_queue.size() < number_of_positions)
+            position_queue_cv.wait( lock );
+
+        // check again, may be waked up spurious!
+        if (const size_t queue_size = position_queue.size(); 
+            queue_size >= number_of_positions)
+        {
+            for (size_t i = 0; i < number_of_positions; ++i)
+            {
+                auto const& pos = position_queue.front();
+                ranges::copy( 
+                    pos.game_state_players,  
+                    data_pointers_out.game_states + i * G );
+                ranges::copy( 
+                    pos.target_policy, 
+                    data_pointers_out.policy_targets + i * P );
+                data_pointers_out.value_targets[i] = pos.target_value;
+                data_pointers_out.player_indices[i] = 
+                    static_cast< int32_t >( pos.current_player );
+
+                position_queue.pop();
+            }
+
+            // too many queued position updates remaining, stop generating new ones
+            if (position_queue.size() > position_queue_max_size)
+            {
+                cout << "suspend selfplay workers" << endl;
+                threads_suspended = true;
+                threads_suspended.notify_all();
+            }
+            else if (threads_suspended)
+            {
+                cout << "resume selfplay workers" << endl;
+                threads_suspended = false;
+                threads_suspended.notify_all();
+            }
+
+            return queue_size;
+        }
+    }
+
+    return 0;
+}
+
+namespace ttt {
+
+// global position fifo queue, selfplay workers feed new positions into it and client fetches them
+// there is a mechanism to stop the position queue to grow infinitly by suspending the workers
+// if it gets too large
+static queue< alphazero::training::Position > position_queue;
+
+::alphazero::Player<Move, State, alphazero::G, alphazero::P>* player_factory( 
+    PlayerIndex player_index, 
+    libtorch::Hyperparameters const& hp, 
+    ::alphazero::NodeAllocator<Move, State>& node_allocator )
+{
+    return new alphazero::libtorch::async::Player( 
+        Game( player_index, empty_state ), 
+        hp.c_base, hp.c_init, hp.simulations, 
+        node_allocator, *inference_manager );
+}
+
+alphazero::training::SelfPlay* selfplay_factory( 
+    ::alphazero::Player< Move, State, alphazero::G, alphazero::P>& player, 
+    vector< alphazero::training::Position >& positions, 
+    mt19937& g )
+{
+    return new alphazero::training::SelfPlay(
+        player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
+        hyperparameters.opening_moves, g, positions );
+}
+
+} // namespace ttt {
 
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
@@ -130,7 +223,12 @@ int set_ttt_model( const char* model_data, int32_t model_data_len, const char* m
         set_model( 
             model_data, model_data_len, 
             metadata_json, metadata_len,
-            ttt::alphazero::G, ttt::alphazero::P, ttt::selfplay_worker );
+            ttt::alphazero::G, ttt::alphazero::P, 
+            []() 
+            { 
+                selfplay_worker( 
+                    ttt::player_factory, ttt::selfplay_factory, ttt::position_queue); 
+            });
 
         return 0;
     } 
@@ -159,55 +257,7 @@ int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_p
 {
     try 
     {
-        if (!inference_manager)
-            throw runtime_error( "no model loaded" );
-
-        while (!cleanup_requested)
-        {
-            unique_lock< mutex > lock( position_queue_mutex );
-
-            if (ttt::position_queue.size() < number_of_positions)
-                position_queue_cv.wait( lock );
-
-            // check again, may be waked up spurious!
-            if (const size_t queue_size = ttt::position_queue.size(); 
-                queue_size >= number_of_positions)
-            {
-                for (size_t i = 0; i < number_of_positions; ++i)
-                {
-                    auto const& pos = ttt::position_queue.front();
-                    ranges::copy( 
-                        pos.game_state_players,  
-                        data_pointers_out.game_states + i * ttt::alphazero::G );
-                    ranges::copy( 
-                        pos.target_policy, 
-                        data_pointers_out.policy_targets + i * ttt::alphazero::P );
-                    data_pointers_out.value_targets[i] = pos.target_value;
-                    data_pointers_out.player_indices[i] = 
-                        static_cast< int32_t >( pos.current_player );
-
-                    ttt::position_queue.pop();
-                }
-
-                // too many queued position updates remaining, stop generating new ones
-                if (ttt::position_queue.size() > position_queue_max_size)
-                {
-                    cout << "suspend selfplay workers" << endl;
-                    threads_suspended = true;
-                    threads_suspended.notify_all();
-                }
-                else if (threads_suspended)
-                {
-                    cout << "resume selfplay workers" << endl;
-                    threads_suspended = false;
-                    threads_suspended.notify_all();
-                }
-
-                return queue_size;
-            }
-        }
-
-        return 0;
+        return fetch_selfplay_data( data_pointers_out, number_of_positions, ttt::position_queue );
     } 
     catch (const exception& e) 
     {

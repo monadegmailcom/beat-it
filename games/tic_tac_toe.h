@@ -95,6 +95,8 @@ const size_t P = 9;
 
 namespace training {
 using Position = ::alphazero::training::Position< G, P >;
+using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
+
 } // namespace training {
 
 class Player : public ::alphazero::Player< Move, State, G, P >
@@ -102,9 +104,7 @@ class Player : public ::alphazero::Player< Move, State, G, P >
 public:
     Player( 
         Game const& game, 
-        float c_base,
-        float c_init,
-        size_t simulations,
+        float c_base, float c_init, size_t simulations,
         NodeAllocator& allocator );
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
@@ -118,9 +118,7 @@ class Player : public alphazero::Player
 public:
     Player( 
         Game const& game, 
-        float c_base,
-        float c_init,
-        size_t simulations,
+        float c_base, float c_init, size_t simulations,
         NodeAllocator& allocator,
         torch::jit::Module& model );
 protected:
