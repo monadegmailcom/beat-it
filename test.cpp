@@ -824,7 +824,7 @@ void alphazero_training()
         return;
     }
 
-    const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
+    const char* const model_path = "runs/models/ttt_alphazero_experiment_6/final_model.pt"; // Adjust if needed
     auto [model, hp] =  libtorch::load_model( model_path );
     libtorch::InferenceManager inference_manager( 
         std::move( model ), hp, ttt::alphazero::G, ttt::alphazero::P );
@@ -854,7 +854,8 @@ void ttt_alphazero_nn_vs_minimax()
         return;
     }
 
-    const char* const model_path = "models/ttt_alphazero_experiment.pt"; // Adjust if needed
+    const char* const model_path = "models/ttt_alphazero_experiment_1/final_model.pt"; // Adjust if needed
+    cout << "load model " << model_path << endl;
     auto [model, hp] = libtorch::load_model( model_path ); 
 
     ttt::Game game( Player1, ttt::empty_state );

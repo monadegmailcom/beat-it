@@ -23,16 +23,50 @@ torch::Device get_device()
         return torch::kCPU;
 }
 
+// Helper function to safely get a value from a JSON object.
+// Throws a descriptive error if the key is not found.
+template <typename T>
+T get_required_value(const boost::json::object& obj, string const& key) 
+{
+    if (!obj.contains(key)) 
+        throw runtime_error("Required key not found in self_play_config: '" + key + "'");
+    return boost::json::value_to<T>(obj.at(key));
+}
+
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
     const char* model_path )
 {
-    torch::jit::ExtraFilesMap extra_files;
-    auto model = make_unique< torch::jit::script::Module >( torch::jit::load( 
-        model_path, get_device(), extra_files ));
-    model->eval();
-    auto hyperparameters( extra_files.at( "metadata.json" ));
+    // Read the entire model file into a string buffer.
+    ifstream model_file(model_path, ios::binary);
+    if (!model_file)
+        throw runtime_error("Failed to open model file: " + string(model_path));
 
-    return make_pair( std::move( model ), hyperparameters );
+    stringstream model_buffer;
+    model_buffer << model_file.rdbuf();
+    string model_data = model_buffer.str();
+
+    // Use `unzip` via `popen` to robustly extract the metadata.json.
+    // This is more reliable than relying on libtorch's extra file reading from streams.
+    // Use a wildcard '*' to find metadata.json regardless of the parent directory name
+    // (e.g., 'final_model/extra/metadata.json' or 'checkpoint/extra/metadata.json').
+    string command = "unzip -p " + string(model_path) + " '*/extra/metadata.json' 2>/dev/null";
+    FILE* pipe = popen(command.c_str(), "r");
+    if (!pipe)
+        throw runtime_error("popen() failed!");
+
+    char buffer[128];
+    string metadata_json;
+    while (fgets(buffer, sizeof(buffer), pipe))
+        metadata_json += buffer;
+
+    if (int exit_code = pclose(pipe); exit_code != 0)
+        throw runtime_error("unzip command failed with exit code " + to_string(exit_code));
+
+    if (metadata_json.empty())
+        throw runtime_error("Failed to extract metadata.json from model file. Is the path correct?");
+
+    // Call the other load_model overload that takes memory buffers.
+    return load_model(model_data.data(), model_data.size(), metadata_json.data(), metadata_json.size());
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
@@ -59,14 +93,14 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     if (!metadata.is_object() || !metadata.as_object().contains("self_play_config")) 
         throw std::runtime_error("Model metadata is missing or incomplete.");
     const auto& sp_config = metadata.at("self_play_config").as_object();
-    
-    c_base = boost::json::value_to<float>(sp_config.at("c_base"));
-    c_init = boost::json::value_to<float>(sp_config.at("c_init"));
-    dirichlet_alpha = boost::json::value_to<float>(sp_config.at("dirichlet_alpha"));
-    dirichlet_epsilon = boost::json::value_to<float>(sp_config.at("dirichlet_epsilon"));
-    simulations = boost::json::value_to<int32_t>(sp_config.at("simulations"));
-    opening_moves = boost::json::value_to<int32_t>(sp_config.at("opening_moves"));
-    threads = boost::json::value_to<size_t>(sp_config.at("threads"));
+
+    c_base = get_required_value<float>(sp_config, "c_base");
+    c_init = get_required_value<float>(sp_config, "c_init");
+    dirichlet_alpha = get_required_value<float>(sp_config, "dirichlet_alpha");
+    dirichlet_epsilon = get_required_value<float>(sp_config, "dirichlet_epsilon");
+    simulations = get_required_value<int32_t>(sp_config, "simulations");
+    opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
+    threads = get_required_value<size_t>(sp_config, "threads");
 }
 
 InferenceManager::InferenceManager( 
