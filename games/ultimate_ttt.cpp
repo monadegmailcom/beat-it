@@ -5,10 +5,9 @@
 
 using namespace std;
 
-namespace uttt
-{
+namespace uttt {
 
-const State empty_state = 
+const State empty_state =
     { { ttt::empty_state, ttt::empty_state, ttt::empty_state,
         ttt::empty_state, ttt::empty_state, ttt::empty_state,
         ttt::empty_state, ttt::empty_state, ttt::empty_state},
@@ -35,7 +34,7 @@ Move HumanPlayer::choose_move()
     while (true)
     {
         unsigned big_move;
-        if (   state.next_big_move == ttt::no_move 
+        if (   state.next_big_move == ttt::no_move
             || state.big_state[state.next_big_move] != GameResult::Undecided)
         {
             cout << "big move? ";
@@ -124,8 +123,8 @@ double score_function( uttt::State const& state, double weight )
 
 namespace minimax {
 
-Player::Player( 
-    Game const& game, double weight, unsigned depth, Data& data ) 
+Player::Player(
+    Game const& game, double weight, unsigned depth, Data& data )
     : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
 
 double Player::score( Game const& game ) const
@@ -135,8 +134,8 @@ double Player::score( Game const& game ) const
 
 namespace tree {
 
-Player::Player( 
-    Game const& game, double weight, unsigned depth, Data& data ) 
+Player::Player(
+    Game const& game, double weight, unsigned depth, Data& data )
     : ::minimax::tree::Player< Move, State >( game, depth, data ), weight( weight ) {}
 
 double Player::score( Game const& game ) const
@@ -149,22 +148,13 @@ double Player::score( Game const& game ) const
 
 namespace alphazero {
 
-pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
-{   
-    // This method is now a client of the InferenceManager.
-    // It queues a request and blocks until the result is ready.
-
-    // provide the buffer to copy predicted policies into
-    array< float, P > policies;
-
-    // --- Batched/Asynchronous implementation (original) ---
-    auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
-    auto value = future.get(); // blocking call
-
-    // --- Synchronous/Direct implementation (for comparison) ---
-
-    return make_pair(value, policies);
-}
+Player::Player(
+    Game const& game,
+    float c_base,
+    float c_init,
+    size_t simulations,
+    NodeAllocator& allocator )
+: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
 
 size_t Player::move_to_policy_index( Move const& move ) const
 {
@@ -185,10 +175,10 @@ array< float, G > Player::serialize_state( Game const& game ) const
     float* plane4_player_indicator = plane3_valid_sub_board + 81;
 
     // --- Plane 1 & 2: 'X' and 'O' pieces (absolute representation) ---
-    for (size_t i = 0; i != 9; ++i) 
+    for (size_t i = 0; i != 9; ++i)
     {
         auto& small_state = state.small_states[i];
-        for (size_t j = 0; j != 9; ++j)             
+        for (size_t j = 0; j != 9; ++j)
         {
             if (small_state[j] == ttt::Symbol::Player1) // 'X'
                 plane1_x_pieces[i*9+j] = 1.0f;
@@ -216,12 +206,64 @@ array< float, G > Player::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
-} // namespace alphazero {
+namespace libtorch {
+namespace sync {
 
+Player::Player(
+    Game const& game,
+    float c_base,
+    float c_init,
+    size_t simulations,
+    NodeAllocator& allocator,
+    torch::jit::Module& model )
+: alphazero::Player( game, c_base, c_init, simulations, allocator),
+    model( model ) {}
+
+pair< float, array< float, P > > Player::predict(
+    array< float, G > const& game_state_players )
+{
+    // provide the buffer to copy predicted policies into
+    array< float, P > policies;
+
+    const float value = ::libtorch::sync_predict(
+        model,
+        game_state_players.data(), game_state_players.size(),
+        policies.data(), policies.size());
+
+    return make_pair( value, policies );
+}
+} // namespace sync {
+
+namespace async {
+
+Player::Player(
+    Game const& game,
+    float c_base, float c_init,
+    size_t simulations, // may be different from model training
+    NodeAllocator& allocator,
+    ::libtorch::InferenceManager& im )
+: uttt::alphazero::Player( game, c_base, c_init, simulations, allocator),
+  inference_manager( im ) {}
+
+pair< float, array< float, P > > Player::predict(
+    array< float, G > const& game_state_players )
+{
+    // provide the buffer to copy predicted policies into
+    array< float, P > policies;
+
+    auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
+    auto value = future.get(); // blocking call
+
+    return make_pair( value, policies );
+}
+
+} // namespace async {
+} // namespace libtorch
+} // namespace alphazero {
 } // namespace uttt
 
 bool next_move( ttt::Move& small_move, ttt::State const& state )
-{    
+{
     for (;small_move < 9; ++small_move)
         if (state[small_move] == ttt::Symbol::Empty)
             return true;
@@ -233,21 +275,21 @@ void GameState<uttt::Move, uttt::State>::next_valid_move(
 {
     if (!move) // reset first move
         move = uttt::Move {
-            state.next_big_move != ttt::no_move ? state.next_big_move : ttt::Move {0}, 
+            state.next_big_move != ttt::no_move ? state.next_big_move : ttt::Move {0},
             0 };
-    else        
+    else
         ++move->small_move; // possible next move
 
     if (state.next_big_move == ttt::no_move) // free big move
     {
-        for (;move->big_move < 9; ++move->big_move, move->small_move = 0) 
+        for (;move->big_move < 9; ++move->big_move, move->small_move = 0)
             if (   state.big_state[move->big_move] == GameResult::Undecided
                 && next_move( move->small_move, state.small_states[move->big_move] ))
                 return;
-    }    
-    else if (next_move( move->small_move, state.small_states[state.next_big_move] )) // fixed big move        
+    }
+    else if (next_move( move->small_move, state.small_states[state.next_big_move] )) // fixed big move
         return;
-    
+
     // no valid move found
     move.reset();
 }
@@ -275,32 +317,32 @@ void GameState< uttt::Move, uttt::State >::get_valid_moves(
         for (ttt::Move big_move = 0; big_move != 9; ++big_move)
             if (state.big_state[big_move] == GameResult::Undecided)
                 ::append_valid_moves( state, big_move, move_itr );
-                
+
     // reduce to correct logical size
     moves.resize( move_itr - moves.begin());
 }
 
-uttt::State GameState< uttt::Move, uttt::State >::apply( 
+uttt::State GameState< uttt::Move, uttt::State >::apply(
     uttt::Move const& move, PlayerIndex player_index, uttt::State const& state )
 {
-    if (   move.big_move >= 9 
+    if (   move.big_move >= 9
         || (state.next_big_move != ttt::no_move && move.big_move != state.next_big_move))
         throw std::invalid_argument( "invalid big move" );
 
     uttt::State new_state = state;
-    new_state.small_states[move.big_move] = GameState< ttt::Move, ttt::State >::apply( 
+    new_state.small_states[move.big_move] = GameState< ttt::Move, ttt::State >::apply(
         move.small_move, player_index, state.small_states[move.big_move] );
-    new_state.big_state[move.big_move] = GameState< ttt::Move, ttt::State >::result( 
+    new_state.big_state[move.big_move] = GameState< ttt::Move, ttt::State >::result(
         player_index, new_state.small_states[move.big_move]);
     new_state.next_big_move = (new_state.big_state[move.small_move] == GameResult::Undecided)
-        ? move.small_move 
+        ? move.small_move
         : ttt::no_move;
     if (new_state.big_state[move.big_move] != state.big_state[move.big_move])
         new_state.game_result_cache.reset();
     return new_state;
 }
 
-GameResult GameState< uttt::Move, uttt::State >::result( 
+GameResult GameState< uttt::Move, uttt::State >::result(
     PlayerIndex, uttt::State const& state )
 {
     if (state.game_result_cache)
@@ -310,13 +352,13 @@ GameResult GameState< uttt::Move, uttt::State >::result(
     for (const auto& win : ttt::wins)
     {
         const GameResult symbol = state.big_state[win[0]];
-        if (   symbol != GameResult::Undecided 
-            && symbol != GameResult::Draw 
-            && symbol == state.big_state[win[1]] 
+        if (   symbol != GameResult::Undecided
+            && symbol != GameResult::Draw
+            && symbol == state.big_state[win[1]]
             && symbol == state.big_state[win[2]])
         {
             state.game_result_cache =
-                (symbol == GameResult::Player1Win) 
+                (symbol == GameResult::Player1Win)
                     ? GameResult::Player1Win
                     : GameResult::Player2Win;
             return *state.game_result_cache;
@@ -324,11 +366,11 @@ GameResult GameState< uttt::Move, uttt::State >::result(
     }
 
     // check for undecided
-    if (std::any_of(state.big_state.begin(), state.big_state.end(), 
+    if (std::any_of(state.big_state.begin(), state.big_state.end(),
         [](GameResult symbol) { return symbol == GameResult::Undecided; }))
     {
         state.game_result_cache = GameResult::Undecided;
-        return GameResult::Undecided;    
+        return GameResult::Undecided;
     }
 
     // otherwise its a draw
@@ -391,9 +433,9 @@ ostream& operator<<( ostream& stream, uttt::Game const& game )
     for (auto i = 0; i != 5; ++i)
         stream << '-';
     stream << '\n';
-    
+
     stream << "next big move: (";
-    if (game.get_state().next_big_move != ttt::no_move) 
+    if (game.get_state().next_big_move != ttt::no_move)
         stream << int( game.get_state().next_big_move );
     else
         stream << "choose free";

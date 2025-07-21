@@ -15,16 +15,16 @@ namespace libtorch {
 
 torch::Device get_device();
 
-struct InferenceRequest 
+struct InferenceRequest
 {
     float const* state;
     float* policies;
     std::promise< float > promise;
 };
 
-struct Hyperparameters 
+struct Hyperparameters
 {
-    // require: metadata_json has to contain a self_play_config sub-object 
+    // require: metadata_json has to contain a self_play_config sub-object
     //          with the variables below, otherwise it will throw
     // promise: json is parsed and assigned to the variables below
     Hyperparameters( std::string const& metadata_json );
@@ -41,14 +41,19 @@ struct Hyperparameters
 
 // promise: - model is set to eval mode
 //          - model is moved to the most powerful device on the machine
-std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     const char* model_path );
-std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model( 
+std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
     const char* metadata_json, size_t metadata_len );
 
+float sync_predict(
+    torch::jit::script::Module& model,
+    float const* game_state_players, size_t game_state_players_size,
+    float* policies, size_t policies_size );
+
 // This class manages a dedicated thread for running batched model inference.
-class InferenceManager 
+class InferenceManager
 {
 public:
     InferenceManager(
@@ -64,7 +69,7 @@ public:
     InferenceManager( InferenceManager&& ) = delete;
     InferenceManager& operator=( InferenceManager&&) = delete;
 
-    ~InferenceManager(); 
+    ~InferenceManager();
 
     // threadsafe replacement of model
     void update_model( std::unique_ptr< torch::jit::script::Module >&&, const Hyperparameters& hp );
@@ -72,7 +77,7 @@ public:
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
     // memory for predicted policies is provided by the caller.
-    std::future< float > queue_request( float const* state, float* policies ); 
+    std::future< float > queue_request( float const* state, float* policies );
 
     // This moves the log data out of the manager. Should only be called once at the end.
     std::vector<size_t> const& get_inference_histogram() const;

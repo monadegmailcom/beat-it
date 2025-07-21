@@ -11,7 +11,7 @@ using namespace std;
 // gives access to the nn model asynchronously while batching requests
 static unique_ptr< libtorch::InferenceManager > inference_manager;
 
-// on cleanup the inference manager is deleted, this is important to avoid issues 
+// on cleanup the inference manager is deleted, this is important to avoid issues
 // in the order the multithreading components are teared down
 static atomic< bool > cleanup_requested( false );
 
@@ -42,15 +42,15 @@ void set_model(
     if (cleanup_requested)
         return;
 
-    auto [model, hp] = libtorch::load_model( 
+    auto [model, hp] = libtorch::load_model(
         model_data, model_data_len, metadata_json, metadata_len );
-    if (!inference_manager) // First time call: 
+    if (!inference_manager) // First time call:
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
             std::move( model ), hp, state_size, policies_size ));
         hyperparameters = hp;
-        
+
         // Set the thread pool size based on the model's hyperparameters
         thread_pool.resize(hyperparameters.threads);
 
@@ -58,7 +58,7 @@ void set_model(
         cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
         for (auto& future : thread_pool)
             future = async( worker );
-    }        
+    }
     else // Subsequent calls: update the model in-place for efficiency.
     {
         inference_manager->update_model( std::move( model ), hp);
@@ -79,7 +79,7 @@ using SelfPlayFactory = alphazero::training::SelfPlay<MoveT, StateT, G, P>* (*)(
 
 // run self play in worker thread
 template< typename MoveT, typename StateT, size_t G, size_t P >
-void selfplay_worker( 
+void selfplay_worker(
     AlphazeroPlayerFactory< MoveT, StateT, G, P > player_factory,
     SelfPlayFactory< MoveT, StateT, G, P > selfplay_factory,
     queue< alphazero::training::Position< G, P >>& position_queue )
@@ -87,12 +87,12 @@ void selfplay_worker(
     // random number generator may not be threadsafe
     mt19937 g { random_device{}() };
 
-    // thread local memory allocator and position buffer avoid synchronization delays 
+    // thread local memory allocator and position buffer avoid synchronization delays
     alphazero::NodeAllocator< MoveT, StateT > node_allocator;
     vector< alphazero::training::Position< G, P > > positions;
 
-    // start with player 1, toggle for each self play run    
-    for (PlayerIndex player_index = PlayerIndex::Player1; true; 
+    // start with player 1, toggle for each self play run
+    for (PlayerIndex player_index = PlayerIndex::Player1; true;
          player_index = toggle( player_index ))
     {
         if (threads_suspended)
@@ -110,11 +110,11 @@ void selfplay_worker(
             hp = hyperparameters;
         }
 
-        unique_ptr< alphazero::Player< MoveT, StateT, G, P > > player( 
+        unique_ptr< alphazero::Player< MoveT, StateT, G, P > > player(
             player_factory( player_index, hp, node_allocator ));
 
         positions.clear();
-        unique_ptr< alphazero::training::SelfPlay< MoveT, StateT, G, P > > selfplay( 
+        unique_ptr< alphazero::training::SelfPlay< MoveT, StateT, G, P > > selfplay(
             selfplay_factory( *player, positions, g ));
         selfplay->run();
 
@@ -128,7 +128,7 @@ void selfplay_worker(
 }
 
 template< size_t G, size_t P >
-int fetch_selfplay_data( 
+int fetch_selfplay_data(
     DataPointers data_pointers_out, int32_t number_of_positions,
     queue< ::alphazero::training::Position< G, P >>& position_queue )
 {
@@ -143,20 +143,20 @@ int fetch_selfplay_data(
             position_queue_cv.wait( lock );
 
         // check again, may be waked up spurious!
-        if (const size_t queue_size = position_queue.size(); 
+        if (const size_t queue_size = position_queue.size();
             queue_size >= number_of_positions)
         {
             for (size_t i = 0; i < number_of_positions; ++i)
             {
                 auto const& pos = position_queue.front();
-                ranges::copy( 
-                    pos.game_state_players,  
+                ranges::copy(
+                    pos.game_state_players,
                     data_pointers_out.game_states + i * G );
-                ranges::copy( 
-                    pos.target_policy, 
+                ranges::copy(
+                    pos.target_policy,
                     data_pointers_out.policy_targets + i * P );
                 data_pointers_out.value_targets[i] = pos.target_value;
-                data_pointers_out.player_indices[i] = 
+                data_pointers_out.player_indices[i] =
                     static_cast< int32_t >( pos.current_player );
 
                 position_queue.pop();
@@ -190,23 +190,23 @@ namespace ttt {
 // if it gets too large
 static queue< alphazero::training::Position > position_queue;
 
-::alphazero::Player<Move, State, alphazero::G, alphazero::P>* player_factory( 
-    PlayerIndex player_index, 
-    libtorch::Hyperparameters const& hp, 
+::alphazero::Player<Move, State, alphazero::G, alphazero::P>* player_factory(
+    PlayerIndex player_index,
+    libtorch::Hyperparameters const& hp,
     ::alphazero::NodeAllocator<Move, State>& node_allocator )
 {
-    return new alphazero::libtorch::async::Player( 
-        Game( player_index, empty_state ), 
-        hp.c_base, hp.c_init, hp.simulations, 
+    return new alphazero::libtorch::async::Player(
+        Game( player_index, empty_state ),
+        hp.c_base, hp.c_init, hp.simulations,
         node_allocator, *inference_manager );
 }
 
-alphazero::training::SelfPlay* selfplay_factory( 
-    ::alphazero::Player< Move, State, alphazero::G, alphazero::P>& player, 
-    vector< alphazero::training::Position >& positions, 
+::alphazero::training::SelfPlay< Move, State, alphazero::G, alphazero::P> * selfplay_factory(
+    ::alphazero::Player< Move, State, alphazero::G, alphazero::P>& player,
+    vector< alphazero::training::Position >& positions,
     mt19937& g )
 {
-    return new alphazero::training::SelfPlay(
+    return new ::alphazero::training::SelfPlay< Move, State, alphazero::G, alphazero::P>(
         player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
         hyperparameters.opening_moves, g, positions );
 }
@@ -218,26 +218,26 @@ extern "C" {
 
 int set_ttt_model( const char* model_data, int32_t model_data_len, const char* metadata_json, int32_t metadata_len )
 {
-    try 
+    try
     {
-        set_model( 
-            model_data, model_data_len, 
+        set_model(
+            model_data, model_data_len,
             metadata_json, metadata_len,
-            ttt::alphazero::G, ttt::alphazero::P, 
-            []() 
-            { 
-                selfplay_worker( 
-                    ttt::player_factory, ttt::selfplay_factory, ttt::position_queue); 
+            ttt::alphazero::G, ttt::alphazero::P,
+            []()
+            {
+                selfplay_worker(
+                    ttt::player_factory, ttt::selfplay_factory, ttt::position_queue);
             });
 
         return 0;
-    } 
-    catch (exception const& e) 
+    }
+    catch (exception const& e)
     {
         cerr << "C++ Exception caught: " << e.what() << endl;
         return -1;
-    } 
-    catch (...) 
+    }
+    catch (...)
     {
         cerr << "C++ Unknown exception caught." << endl;
         return -2;
@@ -247,24 +247,24 @@ int set_ttt_model( const char* model_data, int32_t model_data_len, const char* m
 /*
  copy number_of_positions training data position to the memory locations provided by
  the data_pointers_out struct.
-  
+
  This function is designed to be called from a foreign language interface like Python's ctypes. The model
  is passed as an in-memory buffer.
-  
+
  data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
  returns number of queued position or a negative value on error. */
 int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_positions )
 {
-    try 
+    try
     {
         return fetch_selfplay_data( data_pointers_out, number_of_positions, ttt::position_queue );
-    } 
-    catch (const exception& e) 
+    }
+    catch (const exception& e)
     {
         cerr << "C++ Exception caught: " << e.what() << endl;
         return -1;
-    } 
-    catch (...) 
+    }
+    catch (...)
     {
         cerr << "C++ Unknown exception caught." << endl;
         return -2;
@@ -277,7 +277,7 @@ int get_inference_histogram(size_t* data_out, int max_size)
     {
         if (!inference_manager)
             return 0; // No manager, no data.
-        
+
         // Get a reference to the histogram data.
         vector<size_t> const& histogram = inference_manager->get_inference_histogram();
 
@@ -286,7 +286,7 @@ int get_inference_histogram(size_t* data_out, int max_size)
             size_t num_to_copy = std::min((size_t)max_size, histogram.size());
             std::copy(histogram.begin(), histogram.begin() + num_to_copy, data_out);
         }
-        
+
         return static_cast<int>(histogram.size());
     }
     catch (const std::exception& e)
@@ -300,7 +300,7 @@ void cleanup_resources()
 {
     try
     {
-        cleanup_requested = true;        
+        cleanup_requested = true;
         threads_suspended = false;
         threads_suspended.notify_all();
 

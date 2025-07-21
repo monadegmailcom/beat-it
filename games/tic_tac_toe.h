@@ -36,7 +36,7 @@ extern const std::array< Move, 3 > wins[8];
 Symbol player_index_to_symbol( PlayerIndex );
 
 const Move no_move = 9;
-const State empty_state = { 
+const State empty_state = {
     Symbol::Empty, Symbol::Empty, Symbol::Empty,
     Symbol::Empty, Symbol::Empty, Symbol::Empty,
     Symbol::Empty, Symbol::Empty, Symbol::Empty };
@@ -51,9 +51,9 @@ using PlayerFactory = ::PlayerFactory< Move >;
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, Data& data ) 
+    Player( Game const& game, unsigned depth, Data& data )
     : ::minimax::Player< Move, State >( game, depth, data ) {}
-    double score( Game const& game ) const override 
+    double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
 
@@ -66,9 +66,9 @@ using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, Data& data ) 
+    Player( Game const& game, unsigned depth, Data& data )
     : ::minimax::tree::Player< Move, State >( game, depth, data ) {}
-    double score( Game const& game ) const override 
+    double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
 
@@ -76,7 +76,7 @@ public:
 
 } // namespace minimax {
 
-namespace montecarlo 
+namespace montecarlo
 {
 
 using Data = ::montecarlo::Data< Move, State >;
@@ -84,7 +84,7 @@ using Player = ::montecarlo::Player< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
-} // namespace montecarlo 
+} // namespace montecarlo
 
 namespace alphazero {
 
@@ -96,14 +96,13 @@ const size_t P = 9;
 namespace training {
 using Position = ::alphazero::training::Position< G, P >;
 using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
-
 } // namespace training {
 
 class Player : public ::alphazero::Player< Move, State, G, P >
 {
 public:
-    Player( 
-        Game const& game, 
+    Player(
+        Game const& game,
         float c_base, float c_init, size_t simulations,
         NodeAllocator& allocator );
 protected:
@@ -116,8 +115,8 @@ namespace sync {
 class Player : public alphazero::Player
 {
 public:
-    Player( 
-        Game const& game, 
+    Player(
+        Game const& game,
         float c_base, float c_init, size_t simulations,
         NodeAllocator& allocator,
         torch::jit::Module& model );
@@ -132,8 +131,8 @@ namespace async {
 class Player : public alphazero::Player
 {
 public:
-    Player( 
-        Game const&, 
+    Player(
+        Game const&,
         float c_base, float c_init,
         size_t simulations, // may be different from model training
         NodeAllocator&,
@@ -146,13 +145,6 @@ protected:
 
 } // namespace async {
 } // namespace libtorch {
-
-namespace training {
-
-using Position = ::alphazero::training::Position< G, P >;
-using SelfPlay = ::alphazero::training::SelfPlay< Move, State, G, P >;
-
-} // namespace training {
 } // namespace alphazero {
 
 namespace console
@@ -174,15 +166,15 @@ private:
 std::ostream& operator<<( std::ostream&, ttt::Game const& );
 
 template<>
-struct GameState< ttt::Move, ttt::State > 
+struct GameState< ttt::Move, ttt::State >
 {
-    static void next_valid_move( 
+    static void next_valid_move(
         std::optional< ttt::Move >&, PlayerIndex, ttt::State const& );
 
     static void get_valid_moves(
         std::vector< ttt::Move >& moves, PlayerIndex, ttt::State const& state );
 
-    static ttt::State apply( 
+    static ttt::State apply(
         ttt::Move const&, PlayerIndex, ttt::State const& );
 
     static GameResult result( PlayerIndex, ttt::State const& );

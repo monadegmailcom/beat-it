@@ -7,8 +7,7 @@
 
 using namespace std;
 
-namespace ttt
-{   
+namespace ttt {
 
 const array< Move, 3 > wins[8] =
 { { 0, 1, 2 }, { 3, 4, 5 }, { 6, 7, 8 }, // rows
@@ -43,8 +42,8 @@ double score( State const& state )
 
 namespace alphazero {
 
-Player::Player( 
-    Game const& game, 
+Player::Player(
+    Game const& game,
     float c_base,
     float c_init,
     size_t simulations,
@@ -87,8 +86,8 @@ array< float, G > Player::serialize_state( Game const& game ) const
 namespace libtorch {
 namespace sync {
 
-Player::Player( 
-    Game const& game, 
+Player::Player(
+    Game const& game,
     float c_base,
     float c_init,
     size_t simulations,
@@ -97,35 +96,16 @@ Player::Player(
 : alphazero::Player( game, c_base, c_init, simulations, allocator),
     model( model ) {}
 
-pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
-{   
+pair< float, array< float, P > > Player::predict(
+    array< float, G > const& game_state_players )
+{
     // provide the buffer to copy predicted policies into
     array< float, P > policies;
 
-    // --- Synchronous/Direct implementation (for comparison) ---
-    auto input_tensor = torch::from_blob(
-        const_cast<float*>(game_state_players.data()), 
-        {1, (long)game_state_players.size()}, torch::kFloat32);
-
-    static auto device = ::libtorch::get_device();
-
-    // Move tensor to the correct device.
-    input_tensor = input_tensor.to( device );
-
-    // Run inference.
-    torch::jit::IValue output_ivalue = model.forward({input_tensor});
-    auto output_tuple = output_ivalue.toTuple();
-
-    // Get results and move them to CPU.
-    // The output tensors will have a batch dimension of 1.
-    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to(torch::kCPU);
-    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to(torch::kCPU);
-
-    // Copy policy data to the output buffer.
-    float* const policy_ptr = policy_tensor.data_ptr<float>();
-    std::copy(policy_ptr, policy_ptr + P, policies.begin());
-
-    const float value = value_tensor[0].item<float>();
+    const float value = ::libtorch::sync_predict(
+        model,
+        game_state_players.data(), game_state_players.size(),
+        policies.data(), policies.size());
 
     return make_pair( value, policies );
 }
@@ -133,8 +113,8 @@ pair< float, array< float, P > > Player::predict( std::array< float, G > const& 
 
 namespace async {
 
-Player::Player( 
-    Game const& game, 
+Player::Player(
+    Game const& game,
     float c_base, float c_init,
     size_t simulations, // may be different from model training
     NodeAllocator& allocator,
@@ -142,19 +122,16 @@ Player::Player(
 : ttt::alphazero::Player( game, c_base, c_init, simulations, allocator),
   inference_manager( im ) {}
 
-pair< float, array< float, P > > Player::predict( std::array< float, G > const& game_state_players )
-{   
-    // This method is now a client of the InferenceManager.
-    // It queues a request and blocks until the result is ready.
-
+pair< float, array< float, P > > Player::predict(
+    array< float, G > const& game_state_players )
+{
     // provide the buffer to copy predicted policies into
     array< float, P > policies;
 
-    // --- Batched/Asynchronous implementation (original) ---
     auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
     auto value = future.get(); // blocking call
 
-    return make_pair(value, policies);
+    return make_pair( value, policies );
 }
 
 } // namespace async {
@@ -212,7 +189,7 @@ void HumanPlayer::apply_opponent_move( Move const& move )
 } // namespace console
 } // namespace ttt
 
-void GameState< ttt::Move, ttt::State >::next_valid_move( 
+void GameState< ttt::Move, ttt::State >::next_valid_move(
     optional< ttt::Move >& move, PlayerIndex, ttt::State const& state )
 {
     if (!move)
@@ -248,7 +225,7 @@ void GameState< ttt::Move, ttt::State >::get_valid_moves(
     moves.resize( move_itr - moves.begin());
 }
 
-ttt::State GameState< ttt::Move, ttt::State >::apply( 
+ttt::State GameState< ttt::Move, ttt::State >::apply(
     ttt::Move const& move, PlayerIndex player_index, ttt::State const& state )
 {
     if (move >= 9)
@@ -261,7 +238,7 @@ ttt::State GameState< ttt::Move, ttt::State >::apply(
     return new_state;
 }
 
-GameResult GameState< ttt::Move, ttt::State >::result( 
+GameResult GameState< ttt::Move, ttt::State >::result(
     PlayerIndex player_index, ttt::State const& state )
 {
     // check for wins
@@ -274,13 +251,13 @@ GameResult GameState< ttt::Move, ttt::State >::result(
     }
 
     // check for undecided
-    if (std::any_of(state.begin(), state.end(), 
+    if (std::any_of(state.begin(), state.end(),
         [](ttt::Symbol symbol) { return symbol == ttt::Symbol::Empty; }))
         return GameResult::Undecided;
 
     // otherwise its a draw
     return GameResult::Draw;
-}    
+}
 
 ostream& operator<<( ostream& os, ttt::Game const& game )
 {
