@@ -44,7 +44,8 @@ if __name__ == '__main__':
             'num_actions': 9,
             'input_channels': 3,  # X pieces, O pieces, player-to-move
             'num_res_blocks': 1,  # A smaller ResNet for a simple game like TTT
-            'res_block_channels': 64
+            'res_block_channels': 64,
+            'fc_hidden_size': 128 # Hidden layer size for value/policy heads
         }
         # Group all training hyperparameters into a single dictionary for easy
         # logging.

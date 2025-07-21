@@ -32,7 +32,7 @@ class ResidualBlock(nn.Module):
 class AlphaZeroCNN(nn.Module):
     def __init__(
             self, board_size, num_actions, input_channels, num_res_blocks,
-            res_block_channels):
+            res_block_channels, fc_hidden_size):
         """
         A configurable ResNet-based architecture inspired by AlphaZero.
 
@@ -44,6 +44,8 @@ class AlphaZeroCNN(nn.Module):
             body.
         res_block_channels (int): The number of channels used in the residual
             blocks.
+        fc_hidden_size (int): The number of neurons in the hidden layer of the
+            value and policy heads.
         """
         super(AlphaZeroCNN, self).__init__()
         self.board_size = board_size
@@ -65,15 +67,16 @@ class AlphaZeroCNN(nn.Module):
         self.value_head = nn.Sequential(
             nn.Conv2d(res_block_channels, 1, kernel_size=1, bias=False),
             nn.BatchNorm2d(1), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(1 * board_size * board_size, 256), nn.ReLU(inplace=True),
-            nn.Linear(256, 1), nn.Tanh()
+            nn.Linear(1 * board_size * board_size, fc_hidden_size), nn.ReLU(inplace=True),
+            nn.Linear(fc_hidden_size, 1), nn.Tanh()
         )
 
         # --- Policy Head ---
         self.policy_head = nn.Sequential(
             nn.Conv2d(res_block_channels, 2, kernel_size=1, bias=False),
             nn.BatchNorm2d(2), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(2 * board_size * board_size, num_actions)
+            nn.Linear(2 * board_size * board_size, fc_hidden_size), nn.ReLU(inplace=True),
+            nn.Linear(fc_hidden_size, num_actions)
         )
 
     def forward(self, x):
