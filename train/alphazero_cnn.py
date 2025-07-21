@@ -1,6 +1,6 @@
-import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
 
 class ResidualBlock(nn.Module):
     """
@@ -10,9 +10,11 @@ class ResidualBlock(nn.Module):
     """
     def __init__(self, num_channels):
         super(ResidualBlock, self).__init__()
-        self.conv1 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
+        self.conv1 = nn.Conv2d(
+            num_channels, num_channels, kernel_size=3, padding=1, bias=False)
         self.bn1 = nn.BatchNorm2d(num_channels)
-        self.conv2 = nn.Conv2d(num_channels, num_channels, kernel_size=3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(
+            num_channels, num_channels, kernel_size=3, padding=1, bias=False)
         self.bn2 = nn.BatchNorm2d(num_channels)
 
     def forward(self, x):
@@ -26,17 +28,22 @@ class ResidualBlock(nn.Module):
         out = F.relu(out)
         return out
 
+
 class AlphaZeroCNN(nn.Module):
-    def __init__(self, board_size, num_actions, input_channels, num_res_blocks, res_block_channels):
+    def __init__(
+            self, board_size, num_actions, input_channels, num_res_blocks,
+            res_block_channels):
         """
         A configurable ResNet-based architecture inspired by AlphaZero.
 
         Args:
-            board_size (int): The width and height of the board.
-            num_actions (int): The size of the policy output.
-            input_channels (int): Number of input planes. For UTTT, this could be:
-            num_res_blocks (int): The number of residual blocks in the network body.
-            res_block_channels (int): The number of channels used in the residual blocks.
+        board_size (int): The width and height of the board.
+        num_actions (int): The size of the policy output.
+        input_channels (int): Number of input planes. For UTTT, this could be:
+        num_res_blocks (int): The number of residual blocks in the network
+            body.
+        res_block_channels (int): The number of channels used in the residual
+            blocks.
         """
         super(AlphaZeroCNN, self).__init__()
         self.board_size = board_size
@@ -45,11 +52,14 @@ class AlphaZeroCNN(nn.Module):
 
         # --- Network Body ---
         self.initial_conv = nn.Sequential(
-            nn.Conv2d(input_channels, res_block_channels, kernel_size=3, padding=1, bias=False),
+            nn.Conv2d(
+                input_channels, res_block_channels, kernel_size=3, padding=1,
+                bias=False),
             nn.BatchNorm2d(res_block_channels),
             nn.ReLU(inplace=True)
         )
-        self.res_blocks = nn.Sequential(*[ResidualBlock(res_block_channels) for _ in range(num_res_blocks)])
+        self.res_blocks = nn.Sequential(*[ResidualBlock(res_block_channels)
+                                          for _ in range(num_res_blocks)])
 
         # --- Value Head ---
         self.value_head = nn.Sequential(
