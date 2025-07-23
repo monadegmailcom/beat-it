@@ -47,6 +47,7 @@ std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load
     char const* model_data, size_t model_data_len,
     const char* metadata_json, size_t metadata_len );
 
+
 float sync_predict(
     torch::jit::script::Module& model,
     float const* game_state_players, size_t game_state_players_size,

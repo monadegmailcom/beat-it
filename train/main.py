@@ -1,24 +1,20 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
-import torch.nn.functional as F
 import numpy as np
 import os
 import ctypes
 import io
 import json
 import time
+import importlib
 from torch.utils.tensorboard import SummaryWriter
 import argparse
-from ttt_cnn import TicTacToeCNN
-from utils import (
+from train.utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp,
     create_inference_model_bundle, save_checkpoint, log_histogram_as_image,
     DataPointers
 )
-
-G_SIZE = 27  # 3 planes * 9 cells
-P_SIZE = 9   # 9 possible moves
 
 # 2. Training Setup
 if __name__ == '__main__':
@@ -27,6 +23,8 @@ if __name__ == '__main__':
     parser.add_argument('--resume_from', type=str, default=None,
                         help='Path to a model checkpoint (.pt file) to resume \
                              training from.')
+    parser.add_argument('--game', type=str, default='ttt',
+                        help='The game to train on (e.g., "ttt", "uttt").')
     args = parser.parse_args()
 
     lib_path = os.path.join('obj', 'libalphazero.so')
@@ -38,15 +36,15 @@ if __name__ == '__main__':
         start_step = 0
         log_dir = None
 
-        # --- Game and Network Configuration ---
-        game_config = {
-            'board_size': 3,
-            'num_actions': 9,
-            'input_channels': 3,  # X pieces, O pieces, player-to-move
-            'num_res_blocks': 1,  # A smaller ResNet for a simple game like TTT
-            'res_block_channels': 64,
-            'fc_hidden_size': 128 # Hidden layer size for value/policy heads
-        }
+        # --- Dynamically Load Game Configuration ---
+        print(f"Loading configuration for game: {args.game}")
+        try:
+            game_module = importlib.import_module(f"train.{args.game}")
+        except ImportError:
+            print(f"Error: Could not find configuration module for game"
+                  f" '{args.game}'.")
+            exit(1)
+
         # Group all training hyperparameters into a single dictionary for easy
         # logging.
         training_hyperparams = {
@@ -74,15 +72,19 @@ if __name__ == '__main__':
             print("No GPU backend found. Using CPU for training.")
 
         # Model
-        # model = AlphaZeroCNN(**game_config).to(device)
-        model = TicTacToeCNN(
-            game_config['input_channels'],
-            game_config['board_size'],
-            game_config['num_actions']).to(device)
+        model = game_module.model.to(device)
+
+        # --- Game and Network Configuration ---
+        game_config = game_module.game_config
+        G_SIZE = game_module.G_SIZE
+        P_SIZE = game_module.P_SIZE
+        basename = game_module.basename
 
         # Replay Buffer
         replay_buffer = ReplayBuffer(
-            training_hyperparams['replay_buffer_size'], G_SIZE, P_SIZE, device)
+            training_hyperparams['replay_buffer_size'],
+            G_SIZE, P_SIZE, device)
+
         # Optimizer
         optimizer = optim.Adam(
             model.parameters(), lr=training_hyperparams['learning_rate'])
@@ -119,7 +121,7 @@ if __name__ == '__main__':
 
         # --- TensorBoard Setup ---
         if log_dir is None:
-            base_log_dir = 'runs/ttt_alphazero_experiment'
+            base_log_dir = 'runs/' + basename
             if not os.path.exists(base_log_dir):
                 log_dir = base_log_dir
             else:
@@ -150,14 +152,16 @@ if __name__ == '__main__':
         print("Setting initial model to start C++ self-play workers...")
 
         # Prepare generic C++ function handles
-        c_set_model_func = alphazero_lib.set_ttt_model
+        c_set_model_func = getattr(
+            alphazero_lib, game_module.set_model_func_name)
         c_set_model_func.restype = ctypes.c_int
         c_set_model_func.argtypes = [
             ctypes.c_char_p, ctypes.c_int32,
             ctypes.c_char_p, ctypes.c_int32
         ]
 
-        c_fetch_data_func = alphazero_lib.fetch_ttt_selfplay_data
+        c_fetch_data_func = getattr(
+            alphazero_lib, game_module.fetch_data_func_name)
         c_fetch_data_func.restype = ctypes.c_int
         c_fetch_data_func.argtypes = [DataPointers, ctypes.c_int32]
 
@@ -358,4 +362,3 @@ if __name__ == '__main__':
         cleanup_func.argtypes = []
         cleanup_func()
         print("C++ cleanup complete.")
-        
