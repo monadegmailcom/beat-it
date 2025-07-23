@@ -1,5 +1,4 @@
-#include "games/tic_tac_toe.h" // Includes alphazero.h etc.
-#include "libtorch_util.h"
+#include "games/ultimate_ttt.h" // Includes alphazero.h etc.
 
 #include <list>
 
@@ -69,7 +68,7 @@ void set_model(
 
 template< typename MoveT, typename StateT, size_t G, size_t P >
 using AlphazeroPlayerFactory = alphazero::Player< MoveT, StateT, G, P >* (*)(
-    PlayerIndex,
+    Game< MoveT, StateT > const&,
     libtorch::Hyperparameters const&,
     alphazero::NodeAllocator< MoveT, StateT >&);
 
@@ -82,6 +81,7 @@ template< typename MoveT, typename StateT, size_t G, size_t P >
 void selfplay_worker(
     AlphazeroPlayerFactory< MoveT, StateT, G, P > player_factory,
     SelfPlayFactory< MoveT, StateT, G, P > selfplay_factory,
+    StateT const& initial_state,
     queue< alphazero::training::Position< G, P >>& position_queue )
 {
     // random number generator may not be threadsafe
@@ -111,7 +111,8 @@ void selfplay_worker(
         }
 
         unique_ptr< alphazero::Player< MoveT, StateT, G, P > > player(
-            player_factory( player_index, hp, node_allocator ));
+            player_factory( Game< MoveT, StateT >( player_index, initial_state ),
+                            hp, node_allocator ));
 
         positions.clear();
         unique_ptr< alphazero::training::SelfPlay< MoveT, StateT, G, P > > selfplay(
@@ -183,6 +184,44 @@ int fetch_selfplay_data(
     return 0;
 }
 
+template< typename PlayerT >
+using AlphazeroPlayer = ::alphazero::Player<
+    typename PlayerT::game_type::move_type,
+    typename PlayerT::game_type::state_type,
+    PlayerT::game_size,
+    PlayerT::policy_size >;
+
+template< typename PlayerT >
+AlphazeroPlayer< PlayerT >* player_factory(
+    typename PlayerT::game_type const& game,
+    libtorch::Hyperparameters const& hp,
+    ::alphazero::NodeAllocator<
+        typename PlayerT::game_type::move_type,
+        typename PlayerT::game_type::state_type > & node_allocator )
+{
+    return new PlayerT(
+        game, hp.c_base, hp.c_init, hp.simulations,
+        node_allocator, *inference_manager );
+}
+
+template< typename PlayerT >
+using AlphazeroSelfPlay = ::alphazero::training::SelfPlay<
+    typename PlayerT::game_type::move_type,
+    typename PlayerT::game_type::state_type,
+    PlayerT::game_size,
+    PlayerT::policy_size >;
+
+template< typename PlayerT >
+AlphazeroSelfPlay< PlayerT >* selfplay_factory(
+    AlphazeroPlayer< PlayerT >& player,
+    vector< ::alphazero::training::Position< PlayerT::game_size, PlayerT::policy_size >>& positions,
+     mt19937& g )
+{
+    return new AlphazeroSelfPlay< PlayerT >(
+        player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
+        hyperparameters.opening_moves, g, positions );
+}
+
 namespace ttt {
 
 // global position fifo queue, selfplay workers feed new positions into it and client fetches them
@@ -190,28 +229,11 @@ namespace ttt {
 // if it gets too large
 static queue< alphazero::training::Position > position_queue;
 
-::alphazero::Player<Move, State, alphazero::G, alphazero::P>* player_factory(
-    PlayerIndex player_index,
-    libtorch::Hyperparameters const& hp,
-    ::alphazero::NodeAllocator<Move, State>& node_allocator )
-{
-    return new alphazero::libtorch::async::Player(
-        Game( player_index, empty_state ),
-        hp.c_base, hp.c_init, hp.simulations,
-        node_allocator, *inference_manager );
-}
-
-::alphazero::training::SelfPlay< Move, State, alphazero::G, alphazero::P> * selfplay_factory(
-    ::alphazero::Player< Move, State, alphazero::G, alphazero::P>& player,
-    vector< alphazero::training::Position >& positions,
-    mt19937& g )
-{
-    return new ::alphazero::training::SelfPlay< Move, State, alphazero::G, alphazero::P>(
-        player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
-        hyperparameters.opening_moves, g, positions );
-}
-
 } // namespace ttt {
+
+namespace uttt {
+static queue< alphazero::training::Position > position_queue;
+} // namespace uttt {
 
 // Use C-style linkage to prevent C++ name mangling, making it callable from Python.
 extern "C" {
@@ -227,7 +249,41 @@ int set_ttt_model( const char* model_data, int32_t model_data_len, const char* m
             []()
             {
                 selfplay_worker(
-                    ttt::player_factory, ttt::selfplay_factory, ttt::position_queue);
+                    player_factory< ttt::alphazero::libtorch::async::Player >,
+                    selfplay_factory< ttt::alphazero::libtorch::async::Player >,
+                    ttt::empty_state,
+                    ttt::position_queue);
+            });
+
+        return 0;
+    }
+    catch (exception const& e)
+    {
+        cerr << "C++ Exception caught: " << e.what() << endl;
+        return -1;
+    }
+    catch (...)
+    {
+        cerr << "C++ Unknown exception caught." << endl;
+        return -2;
+    }
+}
+
+int set_uttt_model( const char* model_data, int32_t model_data_len, const char* metadata_json, int32_t metadata_len )
+{
+    try
+    {
+        set_model(
+            model_data, model_data_len,
+            metadata_json, metadata_len,
+            ttt::alphazero::G, ttt::alphazero::P,
+            []()
+            {
+                selfplay_worker(
+                    player_factory< uttt::alphazero::libtorch::async::Player >,
+                    selfplay_factory< uttt::alphazero::libtorch::async::Player >,
+                    uttt::empty_state,
+                    uttt::position_queue);
             });
 
         return 0;
@@ -258,6 +314,24 @@ int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_p
     try
     {
         return fetch_selfplay_data( data_pointers_out, number_of_positions, ttt::position_queue );
+    }
+    catch (const exception& e)
+    {
+        cerr << "C++ Exception caught: " << e.what() << endl;
+        return -1;
+    }
+    catch (...)
+    {
+        cerr << "C++ Unknown exception caught." << endl;
+        return -2;
+    }
+}
+
+int fetch_uttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_positions )
+{
+    try
+    {
+        return fetch_selfplay_data( data_pointers_out, number_of_positions, uttt::position_queue );
     }
     catch (const exception& e)
     {
