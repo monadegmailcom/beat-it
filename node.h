@@ -10,19 +10,15 @@
 template< typename ValueT >
 class Node;
 
-// using a null_mutex is not threadsafe, even if each pool_allocator is only
-// used by a single thread
 template< typename ValueT >
 using NodeAllocator = boost::pool_allocator< Node< ValueT >>;
-    //Node< ValueT >,
-   // boost::default_user_allocator_new_delete,
-   // boost::details::pool::null_mutex >;
 
 template< typename ValueT >
 class Node : public boost::intrusive::list_base_hook<>
 {
 public:
-    Node( ValueT value, NodeAllocator< ValueT >& allocator ) 
+    using value_type = ValueT;
+    Node( ValueT value, NodeAllocator< ValueT >& allocator )
     : value( std::move( value )), allocator( allocator ) {}
 
     Node( Node const& ) = delete;
@@ -46,7 +42,7 @@ public:
     }
 
     NodeAllocator< ValueT >& get_allocator() { return allocator; }
-    
+
     ValueT& get_value() { return value; }
     ValueT const& get_value() const { return value; }
 
@@ -59,8 +55,8 @@ private:
 };
 
 template< typename ValueT >
-using NodePtr = std::unique_ptr< 
-    Node< ValueT >, 
+using NodePtr = std::unique_ptr<
+    Node< ValueT >,
     std::function< void (Node< ValueT >*) > >; // Custom deleter
 
 template< typename ValueT >

@@ -1,3 +1,5 @@
+#pragma once
+
 #include <torch/script.h> // Main LibTorch header for loading models
 #include <torch/torch.h>
 
@@ -10,6 +12,8 @@
 #include <atomic>
 #include <vector>
 #include <boost/json.hpp>
+
+#include "node.h"
 
 namespace libtorch {
 
@@ -46,7 +50,6 @@ std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
     const char* metadata_json, size_t metadata_len );
-
 
 float sync_predict(
     torch::jit::script::Module& model,
@@ -102,4 +105,66 @@ private:
     std::future< void > inference_future;
 };
 
+namespace sync {
+template< typename BasePlayerT >
+class Player : public BasePlayerT
+{
+public:
+    Player(
+        typename BasePlayerT::game_type const& game,
+        float c_base, float c_init, size_t simulations,
+        NodeAllocator< typename BasePlayerT::value_type >& allocator,
+        torch::jit::Module& model )
+    : BasePlayerT( game, c_base, c_init, simulations, allocator),
+      model( model ) {}
+protected:
+    torch::jit::Module& model;
+    std::pair< float, std::array< float, BasePlayerT::policy_size >> predict(
+        std::array< float, BasePlayerT::game_size > const& game_state_players ) override
+    {
+        // provide the buffer to copy predicted policies into
+        std::array< float, BasePlayerT::policy_size > policies;
+
+        const float value = sync_predict(
+            model,
+            game_state_players.data(), BasePlayerT::game_size,
+            policies.data(), BasePlayerT::policy_size);
+
+        return make_pair( value, policies );
+    }
+};
+} // namespace sync {
+
+namespace async {
+
+template< typename BasePlayerT >
+class Player : public BasePlayerT
+{
+public:
+    Player(
+        BasePlayerT::game_type const& game,
+        float c_base, float c_init,
+        size_t simulations, // may be different from model training
+        NodeAllocator< typename BasePlayerT::value_type >& allocator,
+        InferenceManager& im )
+: BasePlayerT( game, c_base, c_init, simulations, allocator),
+  inference_manager( im ) {}
+protected:
+    InferenceManager& inference_manager;
+
+    std::pair< float, std::array< float, BasePlayerT::policy_size > > predict(
+        std::array< float, BasePlayerT::game_size > const& game_state_players ) override
+    {
+        // provide the buffer to copy predicted policies into
+        std::array< float, BasePlayerT::policy_size > policies;
+
+        auto future = inference_manager.queue_request(
+            game_state_players.data(), policies.data());
+        auto value = future.get(); // blocking call
+
+        return std::make_pair( value, policies );
+    }
+};
+
+} // namespace async {
 } // namespace libtorch {

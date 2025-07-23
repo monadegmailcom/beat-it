@@ -1,6 +1,7 @@
 #include "../minimax-tree.h"
 #include "../montecarlo.h"
 #include "../alphazero.h"
+#include "../libtorch_util.h"
 
 #include <array>
 #include <iostream>
@@ -10,11 +11,6 @@ namespace torch {
 namespace jit {
 struct Module;
 }}
-
-namespace libtorch {
-class InferenceManager;
-struct Hyperparameters;
-} // namespace libtorch {
 
 namespace ttt
 {
@@ -98,10 +94,10 @@ using Position = ::alphazero::training::Position< G, P >;
 using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 } // namespace training {
 
-class Player : public ::alphazero::Player< Move, State, G, P >
+class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 {
 public:
-    Player(
+    BasePlayer(
         Game const& game,
         float c_base, float c_init, size_t simulations,
         NodeAllocator& allocator );
@@ -111,40 +107,14 @@ protected:
 };
 
 namespace libtorch {
-namespace sync {
-class Player : public alphazero::Player
-{
-public:
-    Player(
-        Game const& game,
-        float c_base, float c_init, size_t simulations,
-        NodeAllocator& allocator,
-        torch::jit::Module& model );
-protected:
-    torch::jit::Module& model;
-    std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
-};
-} // namespace sync {
-
 namespace async {
-
-class Player : public alphazero::Player
-{
-public:
-    Player(
-        Game const&,
-        float c_base, float c_init,
-        size_t simulations, // may be different from model training
-        NodeAllocator&,
-        ::libtorch::InferenceManager& );
-protected:
-    ::libtorch::InferenceManager& inference_manager;
-
-    std::pair< float, std::array< float, P >> predict( std::array< float, G > const& ) override;
-};
-
+using Player = ::libtorch::async::Player< BasePlayer >;
 } // namespace async {
+namespace sync {
+using Player = ::libtorch::sync::Player< BasePlayer >;
+} // namespace sync {
 } // namespace libtorch {
+
 } // namespace alphazero {
 
 namespace console

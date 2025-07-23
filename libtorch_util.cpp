@@ -143,7 +143,7 @@ InferenceManager::InferenceManager(
   inference_histogram( hp.threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.
-    inference_future = async( &InferenceManager::inference_loop, this );
+    inference_future = std::async( &InferenceManager::inference_loop, this );
 }
 
 InferenceManager::~InferenceManager()

@@ -42,7 +42,7 @@ double score( State const& state )
 
 namespace alphazero {
 
-Player::Player(
+BasePlayer::BasePlayer(
     Game const& game,
     float c_base,
     float c_init,
@@ -50,12 +50,12 @@ Player::Player(
     NodeAllocator& allocator )
 : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
 
-size_t Player::move_to_policy_index( Move const& move ) const
+size_t BasePlayer::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
 }
 
-array< float, G > Player::serialize_state( Game const& game ) const
+array< float, G > BasePlayer::serialize_state( Game const& game ) const
 {
     auto const& state = game.get_state();
     array< float, G > game_state_players = { 0.0f };
@@ -83,59 +83,6 @@ array< float, G > Player::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
-namespace libtorch {
-namespace sync {
-
-Player::Player(
-    Game const& game,
-    float c_base,
-    float c_init,
-    size_t simulations,
-    NodeAllocator& allocator,
-    torch::jit::Module& model )
-: alphazero::Player( game, c_base, c_init, simulations, allocator),
-    model( model ) {}
-
-pair< float, array< float, P > > Player::predict(
-    array< float, G > const& game_state_players )
-{
-    // provide the buffer to copy predicted policies into
-    array< float, P > policies;
-
-    const float value = ::libtorch::sync_predict(
-        model,
-        game_state_players.data(), game_state_players.size(),
-        policies.data(), policies.size());
-
-    return make_pair( value, policies );
-}
-} // namespace sync {
-
-namespace async {
-
-Player::Player(
-    Game const& game,
-    float c_base, float c_init,
-    size_t simulations, // may be different from model training
-    NodeAllocator& allocator,
-    ::libtorch::InferenceManager& im )
-: ttt::alphazero::Player( game, c_base, c_init, simulations, allocator),
-  inference_manager( im ) {}
-
-pair< float, array< float, P > > Player::predict(
-    array< float, G > const& game_state_players )
-{
-    // provide the buffer to copy predicted policies into
-    array< float, P > policies;
-
-    auto future = inference_manager.queue_request( game_state_players.data(), policies.data());
-    auto value = future.get(); // blocking call
-
-    return make_pair( value, policies );
-}
-
-} // namespace async {
-} // namespace libtorch
 } // namespace alphazero {
 
 Symbol player_index_to_symbol( PlayerIndex player_index )
