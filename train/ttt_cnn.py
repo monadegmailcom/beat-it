@@ -4,32 +4,36 @@ import torch.nn.functional as F
 
 
 class TicTacToeCNN(nn.Module):
-    def __init__(self, input_channels=3, board_size=3, num_actions=9):
+    def __init__(
+            self, input_channels, board_size, num_actions, conv_channels,
+            fc_hidden_size):
         super(TicTacToeCNN, self).__init__()
         self.board_size = board_size
         self.num_actions = num_actions
         self.input_channels = input_channels
 
         # Shared Body
-        self.conv1 = nn.Conv2d(input_channels, 32, kernel_size=3, padding=1)
-        self.bn1 = nn.BatchNorm2d(32)
-        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, padding=1)  # 64 filters
-        self.bn2 = nn.BatchNorm2d(64)
+        self.conv1 = nn.Conv2d(
+            input_channels, conv_channels, kernel_size=3, padding=1)
+        self.bn1 = nn.BatchNorm2d(conv_channels)
+        self.conv2 = nn.Conv2d(
+            conv_channels, conv_channels * 2, kernel_size=3, padding=1)
+        self.bn2 = nn.BatchNorm2d(conv_channels * 2)
 
         # Calculate the flattened size after convolutions
         # For a 3x3 board and the conv layers above, the output size remains
         # 3x3
         # If you add more conv layers or change padding/stride, this needs
         # adjustment.
-        self.flattened_size = 64 * board_size * board_size
+        self.flattened_size = (conv_channels * 2) * board_size * board_size
 
         # Policy Head
-        self.fc_policy1 = nn.Linear(self.flattened_size, 128)
-        self.fc_policy2 = nn.Linear(128, num_actions)
+        self.fc_policy1 = nn.Linear(self.flattened_size, fc_hidden_size)
+        self.fc_policy2 = nn.Linear(fc_hidden_size, num_actions)
 
         # Value Head
-        self.fc_value1 = nn.Linear(self.flattened_size, 128)
-        self.fc_value2 = nn.Linear(128, 1)  # Single scalar value
+        self.fc_value1 = nn.Linear(self.flattened_size, fc_hidden_size)
+        self.fc_value2 = nn.Linear(fc_hidden_size, 1)  # Single scalar value
 
     def forward(self, x):
         # The input x from C++ is flat (batch, 18). Reshape it for the

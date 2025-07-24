@@ -67,7 +67,8 @@ class AlphaZeroCNN(nn.Module):
         self.value_head = nn.Sequential(
             nn.Conv2d(res_block_channels, 1, kernel_size=1, bias=False),
             nn.BatchNorm2d(1), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(1 * board_size * board_size, fc_hidden_size), nn.ReLU(inplace=True),
+            nn.Linear(1 * board_size * board_size, fc_hidden_size),
+            nn.ReLU(inplace=True),
             nn.Linear(fc_hidden_size, 1), nn.Tanh()
         )
 
@@ -75,7 +76,8 @@ class AlphaZeroCNN(nn.Module):
         self.policy_head = nn.Sequential(
             nn.Conv2d(res_block_channels, 2, kernel_size=1, bias=False),
             nn.BatchNorm2d(2), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(2 * board_size * board_size, fc_hidden_size), nn.ReLU(inplace=True),
+            nn.Linear(2 * board_size * board_size, fc_hidden_size),
+            nn.ReLU(inplace=True),
             nn.Linear(fc_hidden_size, num_actions)
         )
 

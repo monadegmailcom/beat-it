@@ -1,14 +1,12 @@
 from ttt_cnn import TicTacToeCNN
 
-# --- Game-specific constants ---
-G_SIZE = 27  # 3 planes * 9 cells
-P_SIZE = 9   # 9 possible moves
-
 # --- Game and Network Configuration Dictionary ---
 game_config = {
     'board_size': 3,
     'num_actions': 9,
-    'input_channels': 3,  # X pieces, O pieces, player-to-move
+    'input_channels': 3,      # X pieces, O pieces, player-to-move
+    'conv_channels': 32,      # Number of channels in the first conv layer
+    'fc_hidden_size': 128     # Size of the hidden layer in the heads
 }
 
 # --- Model Instantiation ---

@@ -59,6 +59,18 @@ if __name__ == '__main__':
             'target_replay_ratio': 4.0,
         }
 
+        # Configuration for the self-play run
+        self_play_config = {  # This is now only for metadata logging
+            # Oversubscribe threads to hide I/O latency
+            'threads': int((os.cpu_count() or 1) * 1.5),
+            'c_base': 19652.0,
+            'c_init': 1.25,
+            'dirichlet_alpha': 0.3,
+            'dirichlet_epsilon': 0.25,
+            'simulations': 400,
+            'opening_moves': 5
+        }
+
         # Device
         # Device selection: Prefer MPS on Apple Silicon, then CUDA, then CPU
         if torch.backends.mps.is_available():
@@ -76,8 +88,9 @@ if __name__ == '__main__':
 
         # --- Game and Network Configuration ---
         game_config = game_module.game_config
-        G_SIZE = game_module.G_SIZE
-        P_SIZE = game_module.P_SIZE
+        G_SIZE = game_config['input_channels'] * game_config['board_size'] \
+            * game_config['board_size']
+        P_SIZE = game_config['num_actions']
         basename = game_module.basename
 
         # Replay Buffer
@@ -135,18 +148,6 @@ if __name__ == '__main__':
         writer = SummaryWriter(log_dir)
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
-
-        # Configuration for the self-play run
-        self_play_config = {  # This is now only for metadata logging
-            # Oversubscribe threads to hide I/O latency
-            'threads': int((os.cpu_count() or 1) * 1.5),
-            'c_base': 19652.0,
-            'c_init': 1.25,
-            'dirichlet_alpha': 0.3,
-            'dirichlet_epsilon': 0.25,
-            'simulations': 100,
-            'opening_moves': 0
-        }
 
         # --- Initial Model Setup ---
         print("Setting initial model to start C++ self-play workers...")
