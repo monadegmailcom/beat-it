@@ -215,7 +215,7 @@ template< typename PlayerT >
 AlphazeroSelfPlay< PlayerT >* selfplay_factory(
     AlphazeroPlayer< PlayerT >& player,
     vector< ::alphazero::training::Position< PlayerT::game_size, PlayerT::policy_size >>& positions,
-     mt19937& g )
+    mt19937& g )
 {
     return new AlphazeroSelfPlay< PlayerT >(
         player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
@@ -283,7 +283,7 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
                     player_factory< uttt::alphazero::libtorch::async::Player >,
                     selfplay_factory< uttt::alphazero::libtorch::async::Player >,
                     uttt::empty_state,
-                    uttt::position_queue);
+                    uttt::position_queue );
             });
 
         return 0;
