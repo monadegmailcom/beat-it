@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import torch.nn.functional as F
 import numpy as np
 import os
 import ctypes
@@ -10,7 +11,7 @@ import time
 import importlib
 from torch.utils.tensorboard import SummaryWriter
 import argparse
-from train.utils import (
+from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp,
     create_inference_model_bundle, save_checkpoint, log_histogram_as_image,
     DataPointers
@@ -39,7 +40,8 @@ if __name__ == '__main__':
         # --- Dynamically Load Game Configuration ---
         print(f"Loading configuration for game: {args.game}")
         try:
-            game_module = importlib.import_module(f"train.{args.game}")
+            game_module = importlib.import_module(
+                f".{args.game}", package=__package__)
         except ImportError:
             print(f"Error: Could not find configuration module for game"
                   f" '{args.game}'.")
@@ -145,6 +147,10 @@ if __name__ == '__main__':
         else:
             print(f"Resuming TensorBoard logs in: {log_dir}")
 
+        checkpoint_dir = os.path.join("models", os.path.basename(log_dir))
+        os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
+        checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
+
         writer = SummaryWriter(log_dir)
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
@@ -181,6 +187,14 @@ if __name__ == '__main__':
         loss = None  # Initialize loss to a default value
         step = start_step
 
+        # Accumulators for averaging metrics over the logging interval
+        accumulated_loss = 0.0
+        accumulated_policy_loss = 0.0
+        accumulated_value_loss = 0.0
+        accumulated_duration = 0.0
+        accumulated_fetch_duration = 0.0
+        accumulated_queue_size = 0.0
+
         print(f"Starting training loop from step {start_step} up to "
               f"{training_hyperparams['total_training_steps']} steps...")
         while step < training_hyperparams['total_training_steps']:
@@ -194,7 +208,9 @@ if __name__ == '__main__':
             fetch_start_time = time.time()
             new_data, queue_size = fetch_selfplay_data_from_cpp(
                 c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
-            fetch_duration = time.time() - fetch_start_time
+            accumulated_fetch_duration += time.time() - fetch_start_time
+            accumulated_queue_size += queue_size
+
             if new_data:
                 replay_buffer.add(
                     new_data['game_states'], new_data['policy_targets'],
@@ -231,32 +247,56 @@ if __name__ == '__main__':
                 pred_values.squeeze(-1), batch_target_values)
             loss = loss_policy + loss_value
 
+            # Accumulate metrics
+            accumulated_loss += loss.item()
+            accumulated_policy_loss += loss_policy.item()
+            accumulated_value_loss += loss_value.item()
+
             loss.backward()
             optimizer.step()
-            duration = time.time() - start_time
+            accumulated_duration += time.time() - start_time
 
             # 3. Log metrics and update the C++ model periodically.
             if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
-                writer.add_scalar('Loss/Total', loss.item(), step)
-                writer.add_scalar('Loss/Policy', loss_policy.item(), step)
-                writer.add_scalar('Loss/Value', loss_value.item(), step)
+                log_steps = training_hyperparams['log_freq_steps']
+                avg_loss = accumulated_loss / log_steps
+                avg_policy_loss = accumulated_policy_loss / log_steps
+                avg_value_loss = accumulated_value_loss / log_steps
+                avg_duration = accumulated_duration / log_steps
+                avg_fetch_duration = accumulated_fetch_duration / log_steps
+                avg_queue_size = accumulated_queue_size / log_steps
+
+                writer.add_scalar('Loss/Total', avg_loss, step)
+                writer.add_scalar('Loss/Policy', avg_policy_loss, step)
+                writer.add_scalar('Loss/Value', avg_value_loss, step)
                 writer.add_scalar(
-                    'Performance/Training_Step_Time_ms', duration * 1000, step)
+                    'Performance/Training_Step_Time_ms',
+                    avg_duration * 1000, step)
                 writer.add_scalar(
                     'Buffer/ReplayBuffer_Size', len(replay_buffer), step)
+                # These are point-in-time, not averaged
                 writer.add_scalar(
                     'Performance/SelfPlay_Fetch_Time_ms',
-                    fetch_duration * 1000, step)
+                    avg_fetch_duration * 1000, step)
                 writer.add_scalar(
-                    'Buffer/SelfPlay_Queue_Size', queue_size, step)
+                    'Buffer/SelfPlay_Queue_Size', avg_queue_size, step)
+
                 # Log weights and gradients for each layer
                 for name, param in model.named_parameters():
                     writer.add_histogram(f'Gradients/{name}', param.grad, step)
                     writer.add_histogram(f'Weights/{name}', param.data, step)
                 print(f"Step {step+1}/{training_hyperparams[
                     'total_training_steps']} | Loss: {loss.item():.4f} |"
-                      f" Step Time: {duration*1000:.2f}ms | Fetch Time: "
-                      f"{fetch_duration*1000:.2f}ms")
+                      f" Step Time: {avg_duration*1000:.2f}ms | Fetch Time: "
+                      f"{avg_fetch_duration*1000:.2f}ms")
+
+                # Reset accumulators
+                accumulated_loss = 0.0
+                accumulated_policy_loss = 0.0
+                accumulated_value_loss = 0.0
+                accumulated_duration = 0.0
+                accumulated_fetch_duration = 0.0
+                accumulated_queue_size = 0.0
 
             if (step + 1) % training_hyperparams['model_update_freq_steps']\
                     == 0:
@@ -275,11 +315,6 @@ if __name__ == '__main__':
 
             # Periodically save a checkpoint
             if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
-                checkpoint_dir = os.path.join(
-                    os.path.dirname(log_dir), "models",
-                    os.path.basename(log_dir))
-                os.makedirs(checkpoint_dir, exist_ok=True)
-                checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
                 print(f"\nSaving checkpoint at step {step+1} to "
                       f"{checkpoint_path}...")
                 save_checkpoint(

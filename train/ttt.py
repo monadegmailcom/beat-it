@@ -1,4 +1,4 @@
-from ttt_cnn import TicTacToeCNN
+from .ttt_cnn import TicTacToeCNN
 
 # --- Game and Network Configuration Dictionary ---
 game_config = {

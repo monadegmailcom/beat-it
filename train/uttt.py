@@ -1,4 +1,4 @@
-from alphazero_cnn import AlphaZeroCNN
+from .alphazero_cnn import AlphaZeroCNN
 
 # --- Game and Network Configuration Dictionary ---
 game_config = {

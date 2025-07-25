@@ -276,7 +276,7 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
         set_model(
             model_data, model_data_len,
             metadata_json, metadata_len,
-            ttt::alphazero::G, ttt::alphazero::P,
+            uttt::alphazero::G, uttt::alphazero::P,
             []()
             {
                 selfplay_worker(

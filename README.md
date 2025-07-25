@@ -18,7 +18,7 @@ ki engine for two player games
     ```
 2.  **Build and run the training:**
     ```bash
-    make shared && python ttt_training.py
+    make shared && python -m train.main --game ttt
     ```
 3.  **Monitor with TensorBoard (in a separate terminal inside the virtual environment):**
     ```bash
@@ -32,10 +32,10 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ## Resume training
 1. **Resume training from checkpoint**
   ```bash
-  python ttt_training.py --resume_from runs/models/ttt_alphazero_experiment_2/checkpoint.pt
+  python -m train.main --game ttt --resume_from runs/models/ttt_alphazero_experiment_2/checkpoint.pt
   ```
 2. **Extend training steps**
-  - extract metadata.json : 
+  - extract metadata.json :
   ```bash
   mkdir -p checkpoint/extra
   unzip -p runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json > checkpoint/extra/metadata.json
@@ -46,7 +46,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
   zip -u runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json
   ```
   - resume training in point 1.
-  
+
 ## Todos
 - make `play_match` parallel
 
@@ -57,7 +57,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
 #include <xmmintrin.h> // For SSE intrinsics to control floating-point behavior
 #endif
-  ```   
+  ```
    2. in the code before using libtorch
    ```cpp
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
@@ -67,4 +67,3 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
     _mm_setcsr(_mm_getcsr() | 0x8040);
 #endif
 ````
-   
