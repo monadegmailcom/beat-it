@@ -34,7 +34,7 @@ T get_required_value(const boost::json::object& obj, string const& key)
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
-    const char* model_path )
+    const char* model_path, torch::Device device )
 {
     // Read the entire model file into a string buffer.
     ifstream model_file(model_path, ios::binary);
@@ -66,12 +66,15 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
         throw runtime_error("Failed to extract metadata.json from model file. Is the path correct?");
 
     // Call the other load_model overload that takes memory buffers.
-    return load_model(model_data.data(), model_data.size(), metadata_json.data(), metadata_json.size());
+    return load_model(
+        model_data.data(), model_data.size(),
+        metadata_json.data(), metadata_json.size(),
+        device );
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
-    const char* metadata_json, size_t metadata_len )
+    const char* metadata_json, size_t metadata_len, torch::Device device )
 {
     static std::istringstream model_data_stream;
     // when reading the model from a string stream there seems to be a problem
@@ -79,7 +82,7 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     model_data_stream.str( string( model_data, model_data_len ));
 
     auto model = make_unique< torch::jit::script::Module >( torch::jit::load(
-        model_data_stream, get_device()));
+        model_data_stream ));
     model->eval();
 
     auto hyperparameters( string(metadata_json, metadata_len));
@@ -104,15 +107,13 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
 }
 
 float sync_predict(
-    torch::jit::script::Module& model,
+    torch::jit::script::Module& model, torch::Device device,
     float const* game_state_players, size_t game_state_players_size,
     float* policies, size_t policies_size )
 {
     auto input_tensor = torch::from_blob(
         const_cast< float* >( game_state_players ),
         {1, (long)game_state_players_size }, torch::kFloat32);
-
-    static auto device = ::libtorch::get_device();
 
     // Move tensor to the correct device.
     input_tensor = input_tensor.to( device );
@@ -135,11 +136,12 @@ float sync_predict(
 
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
-    const Hyperparameters& hp,
+    torch::Device device,
+    Hyperparameters const& hp,
     size_t state_size, size_t policies_size,
     size_t max_batch_size, std::chrono::milliseconds batch_timeout )
 : max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ),
-  policies_size( policies_size ), device( get_device()), model( std::move( model )), stop_flag( false ),
+  policies_size( policies_size ), device( device ), model( std::move( model )), stop_flag( false ),
   inference_histogram( hp.threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.

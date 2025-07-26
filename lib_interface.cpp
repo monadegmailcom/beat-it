@@ -33,6 +33,21 @@ struct DataPointers {
     int32_t* player_indices = nullptr; // 1 int32_t
 };
 
+template< typename PlayerT >
+using AlphazeroPlayer = ::alphazero::Player<
+    typename PlayerT::game_type::move_type,
+    typename PlayerT::game_type::state_type,
+    PlayerT::game_size,
+    PlayerT::policy_size >;
+
+template< typename PlayerT >
+using AlphazeroNodeAllocator = alphazero::NodeAllocator<
+    typename PlayerT::game_type::move_type, typename PlayerT::game_type::state_type >;
+
+template< typename PlayerT >
+using AlphazeroPosition = alphazero::training::Position<
+    PlayerT::game_size, PlayerT::policy_size >;
+
 void set_model(
     const char* model_data, int32_t model_data_len,
     const char* metadata_json, int32_t metadata_len,
@@ -41,13 +56,14 @@ void set_model(
     if (cleanup_requested)
         return;
 
+    torch::Device device = libtorch::get_device();
     auto [model, hp] = libtorch::load_model(
-        model_data, model_data_len, metadata_json, metadata_len );
+        model_data, model_data_len, metadata_json, metadata_len, device );
     if (!inference_manager) // First time call:
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
-            std::move( model ), hp, state_size, policies_size ));
+            std::move( model ), device, hp, state_size, policies_size ));
         hyperparameters = hp;
 
         // Set the thread pool size based on the model's hyperparameters
@@ -63,68 +79,6 @@ void set_model(
         inference_manager->update_model( std::move( model ), hp);
         lock_guard< shared_mutex > lock( hp_mutex );
         hyperparameters = hp;
-    }
-}
-
-template< typename MoveT, typename StateT, size_t G, size_t P >
-using AlphazeroPlayerFactory = alphazero::Player< MoveT, StateT, G, P >* (*)(
-    Game< MoveT, StateT > const&,
-    libtorch::Hyperparameters const&,
-    alphazero::NodeAllocator< MoveT, StateT >&);
-
-template< typename MoveT, typename StateT, size_t G, size_t P >
-using SelfPlayFactory = alphazero::training::SelfPlay<MoveT, StateT, G, P>* (*)(
-    alphazero::Player<MoveT, StateT, G, P>&, std::vector<alphazero::training::Position<G, P>>&, std::mt19937&);
-
-// run self play in worker thread
-template< typename MoveT, typename StateT, size_t G, size_t P >
-void selfplay_worker(
-    AlphazeroPlayerFactory< MoveT, StateT, G, P > player_factory,
-    SelfPlayFactory< MoveT, StateT, G, P > selfplay_factory,
-    StateT const& initial_state,
-    queue< alphazero::training::Position< G, P >>& position_queue )
-{
-    // random number generator may not be threadsafe
-    mt19937 g { random_device{}() };
-
-    // thread local memory allocator and position buffer avoid synchronization delays
-    alphazero::NodeAllocator< MoveT, StateT > node_allocator;
-    vector< alphazero::training::Position< G, P > > positions;
-
-    // start with player 1, toggle for each self play run
-    for (PlayerIndex player_index = PlayerIndex::Player1; true;
-         player_index = toggle( player_index ))
-    {
-        if (threads_suspended)
-        {
-            cout << "selfplay threads are suspended, waiting..." << endl;
-            // block and wait for notification if threads_suspended is true
-            threads_suspended.wait( true );
-        }
-        if (cleanup_requested)
-            break;
-
-        libtorch::Hyperparameters hp;
-        {
-            shared_lock< shared_mutex > lock( hp_mutex );
-            hp = hyperparameters;
-        }
-
-        unique_ptr< alphazero::Player< MoveT, StateT, G, P > > player(
-            player_factory( Game< MoveT, StateT >( player_index, initial_state ),
-                            hp, node_allocator ));
-
-        positions.clear();
-        unique_ptr< alphazero::training::SelfPlay< MoveT, StateT, G, P > > selfplay(
-            selfplay_factory( *player, positions, g ));
-        selfplay->run();
-
-        {
-            lock_guard< mutex > lock( position_queue_mutex );
-            position_queue.push_range( positions );
-        }
-
-        position_queue_cv.notify_one();
     }
 }
 
@@ -185,19 +139,10 @@ int fetch_selfplay_data(
 }
 
 template< typename PlayerT >
-using AlphazeroPlayer = ::alphazero::Player<
-    typename PlayerT::game_type::move_type,
-    typename PlayerT::game_type::state_type,
-    PlayerT::game_size,
-    PlayerT::policy_size >;
-
-template< typename PlayerT >
 AlphazeroPlayer< PlayerT >* player_factory(
     typename PlayerT::game_type const& game,
     libtorch::Hyperparameters const& hp,
-    ::alphazero::NodeAllocator<
-        typename PlayerT::game_type::move_type,
-        typename PlayerT::game_type::state_type > & node_allocator )
+    AlphazeroNodeAllocator< PlayerT >& node_allocator )
 {
     return new PlayerT(
         game, hp.c_base, hp.c_init, hp.simulations,
@@ -211,15 +156,67 @@ using AlphazeroSelfPlay = ::alphazero::training::SelfPlay<
     PlayerT::game_size,
     PlayerT::policy_size >;
 
+
 template< typename PlayerT >
 AlphazeroSelfPlay< PlayerT >* selfplay_factory(
     AlphazeroPlayer< PlayerT >& player,
-    vector< ::alphazero::training::Position< PlayerT::game_size, PlayerT::policy_size >>& positions,
+    vector< AlphazeroPosition< PlayerT >>& positions,
     mt19937& g )
 {
     return new AlphazeroSelfPlay< PlayerT >(
         player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
         hyperparameters.opening_moves, g, positions );
+}
+
+// run self play in worker thread
+template< typename PlayerT >
+void selfplay_worker(
+    typename PlayerT::game_type::state_type const& initial_state,
+    queue< AlphazeroPosition< PlayerT >>& position_queue )
+{
+    // random number generator may not be threadsafe
+    mt19937 g { random_device{}() };
+
+    // thread local memory allocator and position buffer avoid synchronization delays
+    AlphazeroNodeAllocator< PlayerT > node_allocator;
+    vector< AlphazeroPosition< PlayerT >> positions;
+
+    // start with player 1, toggle for each self play run
+    for (PlayerIndex player_index = PlayerIndex::Player1; true;
+         player_index = toggle( player_index ))
+    {
+        if (threads_suspended)
+        {
+            cout << "selfplay threads are suspended, waiting..." << endl;
+            // block and wait for notification if threads_suspended is true
+            threads_suspended.wait( true );
+        }
+        if (cleanup_requested)
+            break;
+
+        libtorch::Hyperparameters hp;
+        {
+            shared_lock< shared_mutex > lock( hp_mutex );
+            hp = hyperparameters;
+        }
+
+        unique_ptr< AlphazeroPlayer< PlayerT >> player(
+            player_factory< PlayerT >(
+                 typename PlayerT::game_type( player_index, initial_state ),
+                 hp, node_allocator ));
+
+        positions.clear();
+        unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay(
+            selfplay_factory< PlayerT >( *player, positions, g ));
+        selfplay->run();
+
+        {
+            lock_guard< mutex > lock( position_queue_mutex );
+            position_queue.push_range( positions );
+        }
+
+        position_queue_cv.notify_one();
+    }
 }
 
 namespace ttt {
@@ -248,11 +245,8 @@ int set_ttt_model( const char* model_data, int32_t model_data_len, const char* m
             ttt::alphazero::G, ttt::alphazero::P,
             []()
             {
-                selfplay_worker(
-                    player_factory< ttt::alphazero::libtorch::async::Player >,
-                    selfplay_factory< ttt::alphazero::libtorch::async::Player >,
-                    ttt::empty_state,
-                    ttt::position_queue);
+                selfplay_worker< ttt::alphazero::libtorch::async::Player >(
+                    ttt::empty_state, ttt::position_queue);
             });
 
         return 0;
@@ -279,11 +273,8 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
             uttt::alphazero::G, uttt::alphazero::P,
             []()
             {
-                selfplay_worker(
-                    player_factory< uttt::alphazero::libtorch::async::Player >,
-                    selfplay_factory< uttt::alphazero::libtorch::async::Player >,
-                    uttt::empty_state,
-                    uttt::position_queue );
+                selfplay_worker< uttt::alphazero::libtorch::async::Player >(
+                    uttt::empty_state, uttt::position_queue );
             });
 
         return 0;

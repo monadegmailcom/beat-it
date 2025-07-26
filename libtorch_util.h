@@ -46,13 +46,13 @@ struct Hyperparameters
 // promise: - model is set to eval mode
 //          - model is moved to the most powerful device on the machine
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
-    const char* model_path );
+    const char* model_path, torch::Device );
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
-    const char* metadata_json, size_t metadata_len );
+    const char* metadata_json, size_t metadata_len, torch::Device );
 
 float sync_predict(
-    torch::jit::script::Module& model,
+    torch::jit::script::Module& model, torch::Device,
     float const* game_state_players, size_t game_state_players_size,
     float* policies, size_t policies_size );
 
@@ -62,6 +62,7 @@ class InferenceManager
 public:
     InferenceManager(
         std::unique_ptr< torch::jit::script::Module >&&,
+        torch::Device,
         const Hyperparameters& hp,
         size_t state_size, size_t policies_size,
         size_t max_batch_size = 128,
@@ -114,11 +115,13 @@ public:
         typename BasePlayerT::game_type const& game,
         float c_base, float c_init, size_t simulations,
         NodeAllocator< typename BasePlayerT::value_type >& allocator,
-        torch::jit::Module& model )
+        torch::jit::Module& model, torch::Device device )
     : BasePlayerT( game, c_base, c_init, simulations, allocator),
-      model( model ) {}
+      model( model ), device( device ) {}
 protected:
     torch::jit::Module& model;
+    torch::Device device;
+
     std::pair< float, std::array< float, BasePlayerT::policy_size >> predict(
         std::array< float, BasePlayerT::game_size > const& game_state_players ) override
     {
@@ -126,7 +129,7 @@ protected:
         std::array< float, BasePlayerT::policy_size > policies;
 
         const float value = sync_predict(
-            model,
+            model, device,
             game_state_players.data(), BasePlayerT::game_size,
             policies.data(), BasePlayerT::policy_size);
 

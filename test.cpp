@@ -694,15 +694,14 @@ void montecarlo_minimax_uttt_match()
     uttt::montecarlo::NodeAllocator allocator;
     uttt::montecarlo::Data data1( g, allocator );
     const double exploration = 0.4;
-//    const size_t simulations = 3200;
-    const size_t simulations = 100;
+    const size_t simulations = 3200;
+    //const size_t simulations = 100;
 
     uttt::minimax::Data data2( g );
-//    const size_t depth = 6;
-    const size_t depth = 2;
+    const size_t depth = 6;
     const double factor = 9.0;
 
-    const size_t rounds = 100;
+    const size_t rounds = 10;
 
     MultiMatch< uttt::Move, uttt::State > match;
     match.play_match(
@@ -824,10 +823,11 @@ void alphazero_training()
         return;
     }
 
+    torch::Device device = libtorch::get_device();
     const char* const model_path = "runs/models/ttt_alphazero_experiment_6/final_model.pt"; // Adjust if needed
-    auto [model, hp] =  libtorch::load_model( model_path );
+    auto [model, hp] =  libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
-        std::move( model ), hp, ttt::alphazero::G, ttt::alphazero::P );
+        std::move( model ), device, hp, ttt::alphazero::G, ttt::alphazero::P );
 
     vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
@@ -854,9 +854,10 @@ void ttt_alphazero_nn_vs_minimax()
         return;
     }
 
+    torch::Device device = libtorch::get_device();
     const char* const model_path = "models/ttt_alphazero_experiment_1/final_model.pt"; // Adjust if needed
     cout << "load model " << model_path << endl;
-    auto [model, hp] = libtorch::load_model( model_path );
+    auto [model, hp] = libtorch::load_model( model_path, device );
 
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::NodeAllocator allocator;
@@ -869,7 +870,7 @@ void ttt_alphazero_nn_vs_minimax()
     match.play_match(
         game,
         [&]() { return new ttt::alphazero::libtorch::sync::Player(
-            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model ); },
+            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); },
         rounds );
 
@@ -930,10 +931,11 @@ void uttt_alphazero_training()
         return;
     }
 
+    torch::Device device = libtorch::get_device();
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
-    auto [model, hp] =  libtorch::load_model( model_path );
+    auto [model, hp] =  libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
-        std::move( model ), hp, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
 
     vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 15 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
@@ -948,6 +950,52 @@ void uttt_alphazero_training()
         total_positions += positions.size();
     }
     cout << "total positions: " << total_positions << endl;
+}
+
+void uttt_alphazero_nn_vs_minimax()
+{
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
+
+    torch::Device device = libtorch::get_device();
+    const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
+    cout << "load model " << model_path << endl;
+    auto [model, hp] = libtorch::load_model( model_path, device );
+
+    uttt::Game game( Player1, uttt::empty_state );
+    uttt::alphazero::NodeAllocator allocator;
+    mt19937 g( seed );
+    uttt::minimax::Data data( g );
+
+    MultiMatch< uttt::Move, uttt::State > match;
+    const size_t rounds = 1;
+
+    match.play_match(
+        game,
+        [&]() { return new uttt::alphazero::libtorch::sync::Player(
+            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
+        [&game, &data]() { return new uttt::minimax::Player( game, 9.0, 3, data ); },
+        rounds );
+
+    if (verbose)
+        cout
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "draws: " << match.draws << '\n'
+            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
+            << "snd player eval calls: " << data.eval_calls << '\n'
+            << "fst/snd player duration ratio: "
+            << double( chrono::duration_cast< std::chrono::microseconds >(
+                    match.fst_player_duration ).count()) /
+               chrono::duration_cast< std::chrono::microseconds >(
+                    match.snd_player_duration ).count() << '\n' << endl;
 }
 
 } // namespace test {
@@ -987,8 +1035,8 @@ int main()
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
         */
-
-        test::uttt_alphazero_training();
+        test::uttt_alphazero_nn_vs_minimax();
+//        test::uttt_alphazero_training();
         cout << "\neverything ok" << endl;
         return 0;
     }
