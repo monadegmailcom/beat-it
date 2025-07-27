@@ -931,13 +931,13 @@ void uttt_alphazero_training()
         return;
     }
 
-    torch::Device device = libtorch::get_device();
+    torch::Device device = torch::kCPU; // libtorch::get_device();
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
     auto [model, hp] =  libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
 
-    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 15 );
+    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 1 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
     for (auto& future : thread_pool)
         future = async( uttt_selfplay_worker, ref(inference_manager), hp, 1 );
@@ -1035,8 +1035,8 @@ int main()
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
         */
-        test::uttt_alphazero_nn_vs_minimax();
-//        test::uttt_alphazero_training();
+//        test::uttt_alphazero_nn_vs_minimax();
+        test::uttt_alphazero_training();
         cout << "\neverything ok" << endl;
         return 0;
     }

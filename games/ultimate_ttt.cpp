@@ -154,7 +154,10 @@ BasePlayer::BasePlayer(
     float c_init,
     size_t simulations,
     NodeAllocator& allocator )
-: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
+: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator)
+{
+    cout << "uttt::alphazero::BasePlayer::BasePlayer()" << endl;
+}
 
 size_t BasePlayer::move_to_policy_index( Move const& move ) const
 {

@@ -186,7 +186,8 @@ void InferenceManager::update_model(
 
 void InferenceManager::inference_loop()
 {
-    vector< InferenceRequest > batch;
+    vector< InferenceRequest > request_batch;
+
     while (!stop_flag)
     {
         {
@@ -201,15 +202,15 @@ void InferenceManager::inference_loop()
                 return;
 
             // Pull requests from the queue to form a batch.
-            batch.clear();
-            while (!request_queue.empty() && batch.size() < max_batch_size)
+            request_batch.clear();
+            while (!request_queue.empty() && request_batch.size() < max_batch_size)
             {
-                batch.push_back( std::move( request_queue.front()));
+                request_batch.push_back( std::move( request_queue.front()));
                 request_queue.pop();
             }
         }
 
-        if (batch.empty())
+        if (request_batch.empty())
             continue;
 
         // Increment the histogram bin corresponding to the current batch size.
@@ -219,8 +220,8 @@ void InferenceManager::inference_loop()
 
         // Prepare the batch tensor for the model.
         batch_tensors.clear();
-        batch_tensors.reserve( batch.size());
-        for (auto& req : batch)
+        batch_tensors.reserve( request_batch.size());
+        for (auto& req : request_batch)
             batch_tensors.push_back( torch::from_blob(
                 const_cast< float* >( req.state ), state_size, torch::kFloat32));
         torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
@@ -238,13 +239,13 @@ void InferenceManager::inference_loop()
         torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to( torch::kCPU);
 
         // Distribute the results back to the waiting threads.
-        for (size_t i = 0; i < batch.size(); ++i)
+        for (size_t i = 0; i < request_batch.size(); ++i)
         {
             // copy the policy items into the provided buffer from the request
             float* const policy_ptr = policy_batch[i].data_ptr< float >();
-            copy( policy_ptr, policy_ptr + policies_size, batch[i].policies );
+            copy( policy_ptr, policy_ptr + policies_size, request_batch[i].policies );
 
-            batch[i].promise.set_value( value_batch[i].item< float >());
+            request_batch[i].promise.set_value( value_batch[i].item< float >());
         }
     }
 }
