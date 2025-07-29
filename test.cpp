@@ -209,12 +209,11 @@ void nim_match()
 
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
-    MultiMatch< nim::Move, nim::State< HEAPS > > match;
-    match.play_match(
+    MultiMatch< nim::Move, nim::State< HEAPS > > match(
         game,
         [&game, &data1]() { return new nim::minimax::Player< HEAPS >( game, 2, data1 ); },
         [&game, &data2]() { return new nim::minimax::Player< HEAPS >( game, 3, data2 ); },
-        100 );
+        100, 1 );
 
     if (verbose)
         cout
@@ -371,12 +370,11 @@ void tic_tac_toe_match()
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    MultiMatch< ttt::Move, ttt::State > match;
-    match.play_match(
+    MultiMatch< ttt::Move, ttt::State > match(
         game,
         [&game, &data1]() { return new ttt::minimax::Player( game, 0, data1 ); },
         [&game, &data2]() { return new ttt::minimax::Player( game, 5, data2 ); },
-        100 );
+        100, 1 );
 
     if (verbose)
         cout
@@ -491,12 +489,11 @@ void uttt_match()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    MultiMatch< uttt::Move, uttt::State > match;
-    match.play_match(
+    MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, 1, data1 ); },
         [&game, &data2]() { return new uttt::minimax::Player( game, 9.0, 4, data2 ); },
-        100 );
+        100, 1 );
 
     if (verbose)
         cout
@@ -617,14 +614,13 @@ void montecarlo_ttt_match()
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    MultiMatch< ttt::Move, ttt::State > match;
     const double exploration = 0.4;
     const size_t rounds = 100;
-    match.play_match(
+    MultiMatch< ttt::Move, ttt::State > match(
         game,
         [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 100, data1 ); },
         [&game, exploration, &data2]() { return new ttt::montecarlo::Player( game, exploration, 500, data2 ); },
-        rounds );
+        rounds, 1 );
 
     if (verbose)
         cout
@@ -657,14 +653,14 @@ void montecarlo_minimax_ttt_match()
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    MultiMatch< ttt::Move, ttt::State > match;
+    ;
     const double exploration = 0.4;
     const size_t rounds = 100;
-    match.play_match(
+    MultiMatch< ttt::Move, ttt::State > match(
         game,
         [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 400, data1 ); },
         [&game, &data2]() { return new ttt::minimax::Player( game, 2, data2 ); },
-        rounds );
+        rounds, 1 );
 
     if (verbose)
         cout
@@ -703,14 +699,13 @@ void montecarlo_minimax_uttt_match()
 
     const size_t rounds = 10;
 
-    MultiMatch< uttt::Move, uttt::State > match;
-    match.play_match(
+    MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&game, exploration, &data1]()
             { return new uttt::montecarlo::Player( game, exploration, simulations, data1 ); },
         [&game, factor, &data2]()
             { return new uttt::minimax::Player( game, factor, depth, data2 ); },
-        rounds );
+        rounds, 1 );
 
     if (verbose)
         cout
@@ -756,12 +751,11 @@ void uttt_match_mm_vs_tree_mm()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    MultiMatch< uttt::Move, uttt::State > match;
-    match.play_match(
+    MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, fst_depth, data1 ); },
         [&game, &data2]() { return new uttt::minimax::tree::Player( game, 9.0, snd_depth, data2 ); },
-        100 );
+        100, 1 );
 
     if (verbose)
         cout
@@ -864,15 +858,14 @@ void ttt_alphazero_nn_vs_minimax()
     mt19937 g( seed );
     ttt::minimax::Data data( g );
 
-    MultiMatch< ttt::Move, ttt::State > match;
     const size_t rounds = 100;
 
-    match.play_match(
+    MultiMatch< ttt::Move, ttt::State > match(
         game,
         [&]() { return new ttt::alphazero::libtorch::sync::Player(
             game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
         [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); },
-        rounds );
+        rounds, 1 );
 
     if (verbose)
         cout
@@ -962,9 +955,9 @@ void uttt_alphazero_nn_vs_minimax()
         return;
     }
 
-    torch::Device device = torch::kCPU; //libtorch::get_device();
+    torch::Device device = libtorch::get_device(); // torch::kCPU; //
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
-    cout << "load model " << model_path << endl;
+    cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
 
     libtorch::InferenceManager inference_manager(
@@ -974,19 +967,23 @@ void uttt_alphazero_nn_vs_minimax()
     uttt::alphazero::NodeAllocator allocator;
     mt19937 g( seed );
     uttt::minimax::Data data( g );
+    // problem is: minimax player running concurrently with a single
+    // data objects are subject to data races
+    //         [&game]() { return new uttt::minimax::Player( game, 9.0, 3, data ); },
 
-    MultiMatch< uttt::Move, uttt::State > match;
-    const size_t rounds = 1;
-
-    match.play_match(
+    const size_t rounds = 15;
+    const size_t threads = 10;
+    MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp.c_base, hp.c_init, 800, allocator, inference_manager ); },
-        [&game, &data]() { return new uttt::minimax::Player( game, 9.0, 3, data ); },
-        rounds );
+            game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
+        [&]() { return new uttt::alphazero::libtorch::async::Player(
+            game, hp.c_base, hp.c_init, 100, allocator, inference_manager ); },
+        rounds, threads );
 
     if (verbose)
         cout
+            << "rounds = " << rounds << ", threads = " << threads << '\n'
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "fst player duration: " << match.fst_player_duration << '\n'
             << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
