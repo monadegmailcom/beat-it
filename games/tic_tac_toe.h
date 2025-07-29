@@ -41,29 +41,28 @@ namespace minimax {
 
 double score( State const& state );
 
-using Data = ::minimax::Data< Move >;
 using PlayerFactory = ::PlayerFactory< Move >;
 
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, Data& data )
-    : ::minimax::Player< Move, State >( game, depth, data ) {}
+    Player( Game const& game, unsigned depth, unsigned seed )
+    : ::minimax::Player< Move, State >( game, depth, seed ) {}
     double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
 
 namespace tree {
 
-using Data = ::minimax::tree::Data< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, Data& data )
-    : ::minimax::tree::Player< Move, State >( game, depth, data ) {}
+    Player( Game const& game, unsigned depth, unsigned seed,
+        NodeAllocator& allocator )
+    : ::minimax::tree::Player< Move, State >( game, depth, seed, allocator ) {}
     double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
@@ -75,7 +74,6 @@ public:
 namespace montecarlo
 {
 
-using Data = ::montecarlo::Data< Move, State >;
 using Player = ::montecarlo::Player< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;

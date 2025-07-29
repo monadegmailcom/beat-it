@@ -44,12 +44,10 @@ private:
 
 namespace minimax {
 
-using Data = ::minimax::Data< Move >;
-
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, double weight, unsigned depth, Data& );
+    Player( Game const& game, double weight, unsigned depth, unsigned seed );
     double score( Game const& game ) const override;
 private:
     const double weight;
@@ -59,14 +57,14 @@ using PlayerFactory = ::PlayerFactory< uttt::Move >;
 
 namespace tree {
 
-using Data = ::minimax::tree::Data< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
-    Player( Game const& game, double weight, unsigned depth, Data& );
+    Player( Game const& game, double weight, unsigned depth, unsigned seed,
+        NodeAllocator& allocator );
     double score( Game const& game ) const override;
 private:
     const double weight;
@@ -78,7 +76,6 @@ private:
 namespace montecarlo
 {
 
-using Data = ::montecarlo::Data< Move, State >;
 using Player = ::montecarlo::Player< Move, State >;
 using Buffer = char[sizeof( Player )];
 using PlayerFactory = ::PlayerFactory< Move >;

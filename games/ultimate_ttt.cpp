@@ -124,8 +124,8 @@ double score_function( uttt::State const& state, double weight )
 namespace minimax {
 
 Player::Player(
-    Game const& game, double weight, unsigned depth, Data& data )
-    : ::minimax::Player< Move, State >( game, depth, data ), weight( weight ) {}
+    Game const& game, double weight, unsigned depth, unsigned seed )
+    : ::minimax::Player< Move, State >( game, depth, seed ), weight( weight ) {}
 
 double Player::score( Game const& game ) const
 {
@@ -135,8 +135,10 @@ double Player::score( Game const& game ) const
 namespace tree {
 
 Player::Player(
-    Game const& game, double weight, unsigned depth, Data& data )
-    : ::minimax::tree::Player< Move, State >( game, depth, data ), weight( weight ) {}
+    Game const& game, double weight, unsigned depth, unsigned seed,
+        NodeAllocator& allocator )
+    : ::minimax::tree::Player< Move, State >( game, depth, seed, allocator ),
+      weight( weight ) {}
 
 double Player::score( Game const& game ) const
 {
@@ -155,9 +157,7 @@ BasePlayer::BasePlayer(
     size_t simulations,
     NodeAllocator& allocator )
 : ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator)
-{
-    cout << "uttt::alphazero::BasePlayer::BasePlayer()" << endl;
-}
+{}
 
 size_t BasePlayer::move_to_policy_index( Move const& move ) const
 {

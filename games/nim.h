@@ -29,7 +29,6 @@ template< size_t N >
 using Player = ::minimax::Player< Move, State< N > >;
 
 template< size_t N >
-using Data = ::minimax::Data< Move >;
 
 using PlayerFactory = ::PlayerFactory< Move >;
 
@@ -48,8 +47,8 @@ public:
         std::vector< nim::Move > valid_moves;
         auto const& heaps = game.get_state();
         append_valid_moves( valid_moves, heaps );
-        return choose( 
-            game.current_player_index(), 
+        return choose(
+            game.current_player_index(),
             std::vector< size_t >( heaps.begin(), heaps.end()), valid_moves );
     }
     void apply_opponent_move( Move const& move ) override
@@ -66,9 +65,9 @@ Move choose( PlayerIndex, std::vector< size_t > const& heaps, std::vector< nim::
 } // namespace nim {
 
 template< size_t N >
-struct GameState< nim::Move, nim::State< N > > 
+struct GameState< nim::Move, nim::State< N > >
 {
-    static void next_valid_move( 
+    static void next_valid_move(
         std::optional< nim::Move >& move, PlayerIndex, nim::State< N > const& state )
     {
         if (!move)
@@ -84,11 +83,11 @@ struct GameState< nim::Move, nim::State< N > >
             }
             else if (move->count <= state[move->heap_index]) // move is valid
                 break;
-    
+
             // try next move
-            ++move->heap_index; 
+            ++move->heap_index;
             move->count = 1;
-        }    
+        }
     }
 
    static void get_valid_moves(
@@ -103,15 +102,15 @@ struct GameState< nim::Move, nim::State< N > >
     static nim::State< N > apply( nim::Move const& move, PlayerIndex, nim::State< N > const& state )
     {
         if (move.heap_index >= state.size())
-            throw std::invalid_argument( 
+            throw std::invalid_argument(
                 "invalid move heap index (" + std::to_string(move.heap_index) + ")" );
         if (move.count > state[move.heap_index])
-            throw std::invalid_argument( 
-                "heap size (" + std::to_string(state[move.heap_index]) 
+            throw std::invalid_argument(
+                "heap size (" + std::to_string(state[move.heap_index])
                 + ") < move count (" + std::to_string(move.count) + ")" );
 
         nim::State< N > new_state( state );
-        new_state[move.heap_index] -= move.count;  
+        new_state[move.heap_index] -= move.count;
 
         return new_state;
     }

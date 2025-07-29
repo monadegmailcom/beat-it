@@ -73,9 +73,7 @@ void build_game()
     cout << __func__ << endl;
 
     TestGame game( Player2, GameResult::Undecided );
-    std::mt19937 g;
-    minimax::Data< char > data( g );
-    minimax::Player< char, GameResult > player( game, 0, data );
+    minimax::Player< char, GameResult > player( game, 0, seed );
 
     assert( game.current_player_index() == Player2);
     if (game.current_player_index() != Player2)
@@ -203,16 +201,12 @@ void nim_match()
 
     const size_t HEAPS = 5;
 
-    mt19937 g( seed );
-    nim::minimax::Data< HEAPS > data1( g );
-    nim::minimax::Data< HEAPS > data2( g );
-
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
     MultiMatch< nim::Move, nim::State< HEAPS > > match(
         game,
-        [&game, &data1]() { return new nim::minimax::Player< HEAPS >( game, 2, data1 ); },
-        [&game, &data2]() { return new nim::minimax::Player< HEAPS >( game, 3, data2 ); },
+        [&game]() { return new nim::minimax::Player< HEAPS >( game, 2, seed ); },
+        [&game]() { return new nim::minimax::Player< HEAPS >( game, 3, seed ); },
         100, 1 );
 
     if (verbose)
@@ -220,18 +214,11 @@ void nim_match()
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
             << "draws: " << match.draws << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player eval calls: " << data1.eval_calls << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data2.eval_calls << endl;
+            << endl;
 
     assert (match.fst_player_wins < 50);
     assert (match.snd_player_wins > 50);
     assert (match.draws == 0);
-    assert (data1.move_stack.capacity() == 16);
-    assert (data2.move_stack.capacity() == 16);
-    assert (data1.eval_calls > 50000 && data1.eval_calls < 100000);
-    assert (data2.eval_calls > 200000 && data2.eval_calls < 400000);
 }
 
 void ttt_game()
@@ -335,9 +322,7 @@ void ttt_human()
 
     ttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
-    mt19937 g( seed );
-    ttt::minimax::Data data( g );
-    ttt::minimax::Player player( game, 0, data );
+    ttt::minimax::Player player( game, 0, seed );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player);
     if (GameResult result = match.play( game, human, human_duration,
@@ -348,9 +333,7 @@ void ttt_human()
         cout << "player 2 wins\n";
     else
         cout << "draw\n";
-    cout << '\n'
-        << "player move stack capacity: " << data.move_stack.capacity() << '\n'
-        << "player eval calls: " << data.eval_calls << endl;
+    cout << endl;
 }
 
 void tic_tac_toe_match()
@@ -363,46 +346,31 @@ void tic_tac_toe_match()
         return;
     }
 
-    mt19937 g( seed );
-
-    ttt::minimax::Data data1( g );
-    ttt::minimax::Data data2( g );
-
     ttt::Game game( Player1, ttt::empty_state );
 
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game, &data1]() { return new ttt::minimax::Player( game, 0, data1 ); },
-        [&game, &data2]() { return new ttt::minimax::Player( game, 5, data2 ); },
+        [&game]() { return new ttt::minimax::Player( game, 0, seed ); },
+        [&game]() { return new ttt::minimax::Player( game, 5, seed ); },
         100, 1 );
 
     if (verbose)
         cout
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player eval calls: " << data1.eval_calls << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data2.eval_calls << endl;
+            << "draws: " << match.draws << endl;
 
     assert (match.fst_player_wins == 0);
     assert (match.draws > 50);
-    assert (data1.move_stack.capacity() == 9);
-    assert (data2.move_stack.capacity() == 9);
-    assert (data1.eval_calls > 1000 && data1.eval_calls < 3000);
-    assert (data2.eval_calls > 300000 && data2.eval_calls < 800000);
 }
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 {
     UltimateTicTacToeMatch(
-        uttt::minimax::Player const& minimax_player,
-        uttt::minimax::Data const& data )
-        : minimax_player( minimax_player ), data( data ) {}
+        uttt::minimax::Player const& minimax_player )
+        : minimax_player( minimax_player ) {}
 
     uttt::minimax::Player const& minimax_player;
-    uttt::minimax::Data const& data;
 
     void report( uttt::Game const& game, uttt::Move const& move ) override
     {
@@ -410,8 +378,7 @@ struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
             << "player " << game.current_player_index() << " ("
             << (int)move.big_move << "," << (int)move.small_move << ")\n"
             << "resulting board:\n" << game << '\n'
-            << "score: " << minimax_player.score( game ) << '\n'
-            << "best score: " << data.best_score << endl;
+            << "score: " << minimax_player.score( game ) << endl;
     }
 };
 
@@ -453,13 +420,10 @@ void uttt_human()
     uttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
 
-    mt19937 g( seed );
-    uttt::minimax::Data data( g );
-
-    uttt::minimax::Player player( game, 9.0, 5, data );
+    uttt::minimax::Player player( game, 9.0, 5, seed );
     chrono::microseconds player_duration;
 
-    UltimateTicTacToeMatch match( player, data );
+    UltimateTicTacToeMatch match( player );
     if (GameResult result = match.play( game, human, human_duration,
                                         player, player_duration );
         result == GameResult::Player1Win)
@@ -467,10 +431,7 @@ void uttt_human()
     else if (result == GameResult::Player2Win)
         cout << "player 2 wins\n";
     else
-        cout << "draw\n";
-    cout << '\n'
-        << "player move stack capacity: " << data.move_stack.capacity() << '\n'
-        << "player eval calls: " << data.eval_calls << endl;
+        cout << "draw" << endl;
 }
 
 void uttt_match()
@@ -484,34 +445,24 @@ void uttt_match()
     }
 
     mt19937 g( seed );
-    uttt::minimax::Data data1( g );
-    uttt::minimax::Data data2( g );
 
     uttt::Game game( Player1, uttt::empty_state );
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, 1, data1 ); },
-        [&game, &data2]() { return new uttt::minimax::Player( game, 9.0, 4, data2 ); },
+        [&game]() { return new uttt::minimax::Player( game, 9.0, 1, seed ); },
+        [&game]() { return new uttt::minimax::Player( game, 9.0, 4, seed ); },
         100, 1 );
 
     if (verbose)
         cout
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player eval calls: " << data1.eval_calls << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data2.eval_calls << endl;
+            << "draws: " << match.draws << endl;
 
     assert (match.fst_player_wins < 50);
     assert (match.snd_player_wins > 50);
     assert (match.draws > 0);
-    assert (data1.move_stack.capacity() == 81);
-    assert (data2.move_stack.capacity() == 81);
-    assert (data1.eval_calls > 100000 && data1.eval_calls < 300000);
-    assert (data2.eval_calls > 12000000 && data2.eval_calls < 15000000);
 }
 
 void montecarlo_node()
@@ -544,11 +495,9 @@ void montecarlo_player()
 {
     cout << __func__ << endl;
 
-    mt19937 g( seed );
     ttt::montecarlo::NodeAllocator allocator;
-    ttt::montecarlo::Data data( g, allocator );
     ttt::Game game( Player1, ttt::empty_state );
-    ttt::montecarlo::Player player( game, 1.0, 2, data );
+    ttt::montecarlo::Player player( game, 1.0, 2, seed, allocator );
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
@@ -577,10 +526,8 @@ void montecarlo_ttt_human()
 
     ttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
-    mt19937 g( seed );
     ttt::montecarlo::NodeAllocator allocator;
-    ttt::montecarlo::Data data( g, allocator );
-    ttt::montecarlo::Player player( game, 0.4, 100, data );
+    ttt::montecarlo::Player player( game, 0.4, 100, seed, allocator );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player );
     if (GameResult result = match.play( game, human, human_duration,
@@ -590,10 +537,7 @@ void montecarlo_ttt_human()
     else if (result == GameResult::Player2Win)
         cout << "player 2 wins\n";
     else
-        cout << "draw\n";
-    cout << '\n'
-        << "player move stack capacity: " << data.move_stack.capacity() << '\n'
-        << "player playout count: " << data.playout_count << endl;
+        cout << "draw" << endl;
 }
 
 void montecarlo_ttt_match()
@@ -606,11 +550,7 @@ void montecarlo_ttt_match()
         return;
     }
 
-    mt19937 g( seed );
     ttt::montecarlo::NodeAllocator allocator;
-
-    ttt::montecarlo::Data data1( g, allocator );
-    ttt::montecarlo::Data data2( g, allocator );
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -618,19 +558,19 @@ void montecarlo_ttt_match()
     const size_t rounds = 100;
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 100, data1 ); },
-        [&game, exploration, &data2]() { return new ttt::montecarlo::Player( game, exploration, 500, data2 ); },
+        [&game, &allocator, exploration]()
+            { return new ttt::montecarlo::Player( game, exploration, 100, seed,
+                                                    allocator ); },
+        [&game, &allocator, exploration]()
+            { return new ttt::montecarlo::Player( game, exploration, 500, seed,
+                                                    allocator ); },
         rounds, 1 );
 
     if (verbose)
         cout
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player playouts: " << data1.playout_count << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player playouts: " << data2.playout_count << endl;
+            << "draws: " << match.draws << endl;
 
     assert (match.draws > 0);
 }
@@ -645,30 +585,25 @@ void montecarlo_minimax_ttt_match()
         return;
     }
 
-    mt19937 g( seed );
     ttt::montecarlo::NodeAllocator allocator;
-
-    ttt::montecarlo::Data data1( g, allocator );
-    ttt::minimax::Data data2( g );
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    ;
     const double exploration = 0.4;
     const size_t rounds = 100;
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game, exploration, &data1]() { return new ttt::montecarlo::Player( game, exploration, 400, data1 ); },
-        [&game, &data2]() { return new ttt::minimax::Player( game, 2, data2 ); },
+        [&game, &allocator, exploration]()
+            { return new ttt::montecarlo::Player( game, exploration, 400, seed,
+                                                    allocator ); },
+        [&game]() { return new ttt::minimax::Player( game, 2, seed ); },
         rounds, 1 );
 
     if (verbose)
         cout
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player playouts: " << data1.playout_count << endl;
+            << "draws: " << match.draws << endl;
 
     assert (match.draws > 0);
 }
@@ -683,17 +618,13 @@ void montecarlo_minimax_uttt_match()
         return;
     }
 
-    mt19937 g( seed );
-
     uttt::Game game( Player1, uttt::empty_state );
 
     uttt::montecarlo::NodeAllocator allocator;
-    uttt::montecarlo::Data data1( g, allocator );
     const double exploration = 0.4;
     const size_t simulations = 3200;
     //const size_t simulations = 100;
 
-    uttt::minimax::Data data2( g );
     const size_t depth = 6;
     const double factor = 9.0;
 
@@ -701,10 +632,11 @@ void montecarlo_minimax_uttt_match()
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game, exploration, &data1]()
-            { return new uttt::montecarlo::Player( game, exploration, simulations, data1 ); },
-        [&game, factor, &data2]()
-            { return new uttt::minimax::Player( game, factor, depth, data2 ); },
+        [&game, exploration, &allocator]()
+            { return new uttt::montecarlo::Player( game, exploration, simulations, seed,
+                                                    allocator ); },
+        [&game, factor]()
+            { return new uttt::minimax::Player( game, factor, depth, seed ); },
         rounds, 1 );
 
     if (verbose)
@@ -714,12 +646,8 @@ void montecarlo_minimax_uttt_match()
             << "draws: " << match.draws << '\n'
             << "fst player simulations: " << simulations << '\n'
             << "fst player exploration: " << exploration << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player playouts: " << data1.playout_count << '\n'
             << "fst player duration: " << match.fst_player_duration << '\n'
             << "snd player depth: " << depth << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data2.eval_calls << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
@@ -743,9 +671,6 @@ void uttt_match_mm_vs_tree_mm()
     mt19937 g( seed );
     uttt::minimax::tree::NodeAllocator allocator;
 
-    uttt::minimax::Data data1( g );
-    uttt::minimax::tree::Data data2( g, allocator );
-
     const size_t fst_depth = 2; // 2
     const size_t snd_depth = 2; // 2
 
@@ -753,8 +678,9 @@ void uttt_match_mm_vs_tree_mm()
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game, &data1]() { return new uttt::minimax::Player( game, 9.0, fst_depth, data1 ); },
-        [&game, &data2]() { return new uttt::minimax::tree::Player( game, 9.0, snd_depth, data2 ); },
+        [&game]() { return new uttt::minimax::Player( game, 9.0, fst_depth, seed ); },
+        [&game, &allocator]() { return new uttt::minimax::tree::Player(
+                        game, 9.0, snd_depth, seed, allocator ); },
         100, 1 );
 
     if (verbose)
@@ -764,12 +690,8 @@ void uttt_match_mm_vs_tree_mm()
             << "draws: " << match.draws << '\n'
             << "fst player depth: " << fst_depth << '\n'
             << "fst player duration: " << match.fst_player_duration << '\n'
-            << "fst player move stack capacity: " << data1.move_stack.capacity() << '\n'
-            << "fst player eval calls: " << data1.eval_calls << '\n'
             << "snd player depth: " << snd_depth << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
-            << "snd player move stack capacity: " << data2.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data2.eval_calls << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
                     match.fst_player_duration ).count()) /
@@ -779,10 +701,6 @@ void uttt_match_mm_vs_tree_mm()
     assert (match.fst_player_wins != 0);
     assert (match.snd_player_wins != 0);
     assert (match.draws > 0);
-    assert (data1.move_stack.capacity() == 81);
-    assert (data2.move_stack.capacity() == 81);
-    assert (data1.eval_calls > 800000 && data1.eval_calls < 1000000);
-    assert (data2.eval_calls > 400000 && data2.eval_calls < 600000);
 }
 
 vector< ttt::alphazero::training::Position > selfplay_worker(
@@ -855,8 +773,6 @@ void ttt_alphazero_nn_vs_minimax()
 
     ttt::Game game( Player1, ttt::empty_state );
     ttt::alphazero::NodeAllocator allocator;
-    mt19937 g( seed );
-    ttt::minimax::Data data( g );
 
     const size_t rounds = 100;
 
@@ -864,7 +780,7 @@ void ttt_alphazero_nn_vs_minimax()
         game,
         [&]() { return new ttt::alphazero::libtorch::sync::Player(
             game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
-        [&game, &data]() { return new ttt::minimax::Player( game, 3, data ); },
+        [&game]() { return new ttt::minimax::Player( game, 3, seed ); },
         rounds, 1 );
 
     if (verbose)
@@ -874,8 +790,6 @@ void ttt_alphazero_nn_vs_minimax()
             << "snd player wins: " << match.snd_player_wins << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
             << "draws: " << match.draws << '\n'
-            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data.eval_calls << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
                     match.fst_player_duration ).count()) /
@@ -924,13 +838,13 @@ void uttt_alphazero_training()
         return;
     }
 
-    torch::Device device = torch::kCPU; // libtorch::get_device();
+    torch::Device device = libtorch::get_device(); // torch::kCPU; //
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
     auto [model, hp] = libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
 
-    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 1 );
+    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 10 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
     for (auto& future : thread_pool)
         future = async( uttt_selfplay_worker, ref(inference_manager), hp, 1 );
@@ -942,7 +856,10 @@ void uttt_alphazero_training()
         auto positions = future.get();
         total_positions += positions.size();
     }
-    cout << "total positions: " << total_positions << endl;
+    cout << "total positions: " << total_positions << endl
+        << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
+        << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
+        << endl;
 }
 
 void uttt_alphazero_nn_vs_minimax()
@@ -965,11 +882,6 @@ void uttt_alphazero_nn_vs_minimax()
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
-    mt19937 g( seed );
-    uttt::minimax::Data data( g );
-    // problem is: minimax player running concurrently with a single
-    // data objects are subject to data races
-    //         [&game]() { return new uttt::minimax::Player( game, 9.0, 3, data ); },
 
     const size_t rounds = 15;
     const size_t threads = 10;
@@ -977,8 +889,7 @@ void uttt_alphazero_nn_vs_minimax()
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(
             game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
-        [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp.c_base, hp.c_init, 100, allocator, inference_manager ); },
+        [&game]() { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
         rounds, threads );
 
     if (verbose)
@@ -991,8 +902,6 @@ void uttt_alphazero_nn_vs_minimax()
             << "snd player wins: " << match.snd_player_wins << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
             << "draws: " << match.draws << '\n'
-            << "snd player move stack capacity: " << data.move_stack.capacity() << '\n'
-            << "snd player eval calls: " << data.eval_calls << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
                     match.fst_player_duration ).count()) /
@@ -1037,8 +946,7 @@ int main()
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
         */
-        test::uttt_alphazero_nn_vs_minimax();
-//        test::uttt_alphazero_training();
+        test::uttt_alphazero_training();
         cout << "\neverything ok" << endl;
         return 0;
     }
