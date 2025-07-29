@@ -82,7 +82,7 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     model_data_stream.str( string( model_data, model_data_len ));
 
     auto model = make_unique< torch::jit::script::Module >( torch::jit::load(
-        model_data_stream ));
+        model_data_stream, device ));
     model->eval();
 
     auto hyperparameters( string(metadata_json, metadata_len));
@@ -134,6 +134,21 @@ float sync_predict(
     return value_tensor[0].item< float >();
 }
 
+float async_predict( InferenceManager& im, float const* game_state_players, float* policies )
+{
+    try
+    {
+        auto future = im.queue_request( game_state_players, policies );
+        return future.get(); // blocking call
+    }
+    catch (exception const& e)
+    {
+        ostringstream stream;
+        stream << "libtorch::predict: " << e.what() << endl;
+        throw runtime_error( stream.str());
+    }
+}
+
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
     torch::Device device,
@@ -167,7 +182,7 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
     auto future = promise.get_future();
     {
         lock_guard< mutex > lock(queue_mutex);
-        request_queue.push( { state, policies, std::move( promise )});
+        request_queue.emplace( state, policies, std::move( promise ));
     }
     cv.notify_one();
     return future;
@@ -187,6 +202,7 @@ void InferenceManager::update_model(
 void InferenceManager::inference_loop()
 {
     vector< InferenceRequest > request_batch;
+    request_batch.reserve( max_batch_size );
 
     while (!stop_flag)
     {
@@ -203,6 +219,7 @@ void InferenceManager::inference_loop()
 
             // Pull requests from the queue to form a batch.
             request_batch.clear();
+
             while (!request_queue.empty() && request_batch.size() < max_batch_size)
             {
                 request_batch.push_back( std::move( request_queue.front()));
@@ -213,10 +230,16 @@ void InferenceManager::inference_loop()
         if (request_batch.empty())
             continue;
 
+        auto start = std::chrono::steady_clock::now();
+
         // Increment the histogram bin corresponding to the current batch size.
-        const size_t batch_size = batch.size();
-        if (batch_size < inference_histogram.size())
-            inference_histogram[batch_size]++;
+        queue_size_stats_.update( request_batch.size());
+
+        // update inference histogram (has at least 1 size 1)
+        // accumulate too large batch sizes in the last bucket
+        ++inference_histogram[
+            request_batch.size() < inference_histogram.size()
+            ? request_batch.size() : inference_histogram.size() - 1];
 
         // Prepare the batch tensor for the model.
         batch_tensors.clear();
@@ -229,7 +252,7 @@ void InferenceManager::inference_loop()
         torch::jit::IValue output_ivalue;
         {
             // Lock the module while running inference to prevent it from being
-            // swapped out by an update call from another thread mid-operation.
+            // replaced by an update call from another thread mid-operation.
             lock_guard< mutex > lock( model_update_mutex);
             output_ivalue = model->forward({input_batch});
         }
@@ -247,6 +270,11 @@ void InferenceManager::inference_loop()
 
             request_batch[i].promise.set_value( value_batch[i].item< float >());
         }
+
+        inference_time_stats_.update(
+            chrono::duration_cast< std::chrono::microseconds >(
+                chrono::steady_clock::now() - start ).count() /
+                    request_batch.size());
     }
 }
 

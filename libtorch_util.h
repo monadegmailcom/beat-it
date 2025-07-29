@@ -1,7 +1,12 @@
 #pragma once
 
+#include "node.h"
+#include "statistics.h"
+
 #include <torch/script.h> // Main LibTorch header for loading models
 #include <torch/torch.h>
+
+#include <boost/json.hpp>
 
 #include <iostream>
 #include <future>
@@ -11,9 +16,6 @@
 #include <condition_variable>
 #include <atomic>
 #include <vector>
-#include <boost/json.hpp>
-
-#include "node.h"
 
 namespace libtorch {
 
@@ -21,6 +23,16 @@ torch::Device get_device();
 
 struct InferenceRequest
 {
+    // needed for usage in std::deque
+    InferenceRequest( float const* state, float* policies, std::promise< float >&& promise )
+    : state( state ), policies( policies ), promise( std::move( promise ) ) {}
+    InferenceRequest( InferenceRequest&& req ) noexcept
+        : state( req.state ), policies( req.policies ), promise( std::move( req.promise ) ) {}
+
+    InferenceRequest() = delete;
+    InferenceRequest( InferenceRequest const& ) = delete;
+    InferenceRequest& operator=( InferenceRequest const& ) = delete;
+
     float const* state;
     float* policies;
     std::promise< float > promise;
@@ -43,10 +55,10 @@ struct Hyperparameters
     size_t threads = 0;
 };
 
-// promise: - model is set to eval mode
-//          - model is moved to the most powerful device on the machine
+// promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     const char* model_path, torch::Device );
+// promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
     const char* metadata_json, size_t metadata_len, torch::Device );
@@ -69,6 +81,7 @@ public:
         std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
 
     // be sure not to copy or assign the inference manager accidentally
+    InferenceManager() = delete;
     InferenceManager( const InferenceManager& ) = delete;
     InferenceManager& operator=( const InferenceManager& ) = delete;
     InferenceManager( InferenceManager&& ) = delete;
@@ -84,8 +97,11 @@ public:
     // memory for predicted policies is provided by the caller.
     std::future< float > queue_request( float const* state, float* policies );
 
-    // This moves the log data out of the manager. Should only be called once at the end.
     std::vector<size_t> const& get_inference_histogram() const;
+    Statistics const& queue_size_stats() const noexcept
+        { return queue_size_stats_; }
+    Statistics const& inference_time_stats() const noexcept
+        { return inference_time_stats_; }
 private:
     void inference_loop();
 
@@ -104,6 +120,8 @@ private:
     std::atomic< bool > stop_flag;
     std::vector<size_t> inference_histogram;
     std::future< void > inference_future;
+    Statistics queue_size_stats_;
+    Statistics inference_time_stats_;
 };
 
 namespace sync {
@@ -160,14 +178,15 @@ protected:
     {
         // provide the buffer to copy predicted policies into
         std::array< float, BasePlayerT::policy_size > policies;
-
-        auto future = inference_manager.queue_request(
-            game_state_players.data(), policies.data());
-        auto value = future.get(); // blocking call
-
+        // blocking call
+        float value = async_predict( inference_manager, game_state_players.data(),
+            policies.data());
         return std::make_pair( value, policies );
     }
 };
 
 } // namespace async {
+
+float async_predict( InferenceManager&, float const* game_state_players, float* policies );
+
 } // namespace libtorch {

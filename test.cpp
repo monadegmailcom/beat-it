@@ -933,7 +933,7 @@ void uttt_alphazero_training()
 
     torch::Device device = torch::kCPU; // libtorch::get_device();
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
-    auto [model, hp] =  libtorch::load_model( model_path, device );
+    auto [model, hp] = libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
 
@@ -962,10 +962,13 @@ void uttt_alphazero_nn_vs_minimax()
         return;
     }
 
-    torch::Device device = libtorch::get_device();
+    torch::Device device = torch::kCPU; //libtorch::get_device();
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
     cout << "load model " << model_path << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
+
+    libtorch::InferenceManager inference_manager(
+        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
@@ -977,8 +980,8 @@ void uttt_alphazero_nn_vs_minimax()
 
     match.play_match(
         game,
-        [&]() { return new uttt::alphazero::libtorch::sync::Player(
-            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
+        [&]() { return new uttt::alphazero::libtorch::async::Player(
+            game, hp.c_base, hp.c_init, 800, allocator, inference_manager ); },
         [&game, &data]() { return new uttt::minimax::Player( game, 9.0, 3, data ); },
         rounds );
 
@@ -986,6 +989,8 @@ void uttt_alphazero_nn_vs_minimax()
         cout
             << "fst player wins: " << match.fst_player_wins << '\n'
             << "fst player duration: " << match.fst_player_duration << '\n'
+            << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
+            << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
             << "snd player wins: " << match.snd_player_wins << '\n'
             << "snd player duration: " << match.snd_player_duration << '\n'
             << "draws: " << match.draws << '\n'
@@ -1035,8 +1040,8 @@ int main()
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
         */
-//        test::uttt_alphazero_nn_vs_minimax();
-        test::uttt_alphazero_training();
+        test::uttt_alphazero_nn_vs_minimax();
+//        test::uttt_alphazero_training();
         cout << "\neverything ok" << endl;
         return 0;
     }
