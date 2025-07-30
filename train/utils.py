@@ -2,6 +2,7 @@ import torch
 import numpy as np
 import ctypes
 import io
+import os
 import time
 import json
 import subprocess
@@ -108,6 +109,8 @@ def save_checkpoint(
     """Saves a full checkpoint including model, metadata, and optimizer state
        to a file.
     """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+
     model_bytes, metadata_json = create_inference_model_bundle(
         model, step, current_loss, game_config, self_play_config,
         training_hyperparams
@@ -115,6 +118,7 @@ def save_checkpoint(
     optimizer_state_buffer = io.BytesIO()
     torch.save(optimizer.state_dict(), optimizer_state_buffer)
     loaded_model = torch.jit.load(io.BytesIO(model_bytes))
+
     torch.jit.save(loaded_model, path, _extra_files={
         'metadata.json': metadata_json,
         'optimizer_state.pt': optimizer_state_buffer.getvalue()

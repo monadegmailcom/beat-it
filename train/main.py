@@ -263,8 +263,7 @@ if __name__ == '__main__':
                     writer.add_histogram(f'Weights/{name}', param.data, step)
                 print(f"Step {step+1}/{training_hyperparams[
                     'total_training_steps']} | Loss: {loss.item():.4f} |"
-                    f" Step Time: {duration*1000:.2f}ms | Fetch Time: "
-                    f"{fetch_duration*1000:.2f}ms")
+                    f" Step Time: {duration*1000:.2f}ms")
 
             if (step + 1) % training_hyperparams['model_update_freq_steps']\
                     == 0:
@@ -305,7 +304,6 @@ if __name__ == '__main__':
             # The log_dir is like 'runs/ttt_alphazero_experiment_6'
             final_model_path = os.path.join(
                 "models", os.path.basename(log_dir), "final_model.pt")
-            os.makedirs(os.path.dirname(final_model_path), exist_ok=True)
             print(f"\nSaving final trained model to {final_model_path}...")
             save_checkpoint(
                 model,
