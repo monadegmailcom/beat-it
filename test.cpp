@@ -1,8 +1,3 @@
-#include <iostream>
-#include <exception>
-#include <cassert>
-#include <fstream>
-
 #include "games/nim.h"
 #include "games/ultimate_ttt.h"
 #include "match.h"
@@ -10,7 +5,14 @@
 #include "minimax-tree.h"
 #include "alphazero.h"
 #include "libtorch_util.h"
+#include "mp_game.h"
+
 #include <boost/json.hpp>
+
+#include <iostream>
+#include <exception>
+#include <cassert>
+#include <fstream>
 
 using namespace std;
 
@@ -909,6 +911,14 @@ void uttt_alphazero_nn_vs_minimax()
                     match.snd_player_duration ).count() << '\n' << endl;
 }
 
+void multiplayer_game()
+{
+    namespace mp = multiplayer;
+    cout << __func__ << endl;
+    mp::GameResult r = mp::Winner { 3 };
+    cout << "game result = " << r << endl;
+}
+
 } // namespace test {
 
 int main()
@@ -945,8 +955,9 @@ int main()
         test::uttt_multimatch_alphazero_vs_minimax();
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
-        */
         test::uttt_alphazero_training();
+        */
+        test::multiplayer_game();
         cout << "\neverything ok" << endl;
         return 0;
     }
