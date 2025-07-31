@@ -180,7 +180,7 @@ if __name__ == '__main__':
         c_fetch_data_func = getattr(
             alphazero_lib, game_module.fetch_data_func_name)
         c_fetch_data_func.restype = ctypes.c_int
-        c_fetch_data_func.argtypes = [DataPointers, ctypes.c_int32]
+        c_fetch_data_func.argtypes = [DataPointers, ctypes.c_uint32]
 
         model_bytes, metadata_json = create_inference_model_bundle(
             model,

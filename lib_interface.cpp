@@ -84,7 +84,7 @@ void set_model(
 
 template< size_t G, size_t P >
 int fetch_selfplay_data(
-    DataPointers data_pointers_out, int32_t number_of_positions,
+    DataPointers data_pointers_out, uint32_t number_of_positions,
     queue< ::alphazero::training::Position< G, P >>& position_queue )
 {
     if (!inference_manager)
@@ -212,7 +212,8 @@ void selfplay_worker(
 
         {
             lock_guard< mutex > lock( position_queue_mutex );
-            position_queue.push_range( positions );
+            for (auto const& pos : positions)
+                position_queue.push( pos );
         }
 
         position_queue_cv.notify_one();
@@ -300,7 +301,7 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
 
  data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
  returns number of queued position or a negative value on error. */
-int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_positions )
+int fetch_ttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of_positions )
 {
     try
     {
@@ -318,7 +319,7 @@ int fetch_ttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_p
     }
 }
 
-int fetch_uttt_selfplay_data( DataPointers data_pointers_out, int32_t number_of_positions )
+int fetch_uttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of_positions )
 {
     try
     {
