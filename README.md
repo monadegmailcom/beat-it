@@ -48,8 +48,10 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
   - resume training in point 1.
 
 ## Todos
-- make `play_match` parallel
 
+- add weight_decay parameter to adam optimizer as hyperparameter
+- use optuna for hyperparameter optimization
+  
 ## Further potential optimizations
 
 1. use subnormal number optimization
