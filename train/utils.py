@@ -146,6 +146,21 @@ def log_histogram_as_image(writer, tag, data, step):
         print(f"Warning: Failed to generate histogram image: {e}")
 
 
+def split_and_add_data(
+        data, train_buffer, validation_buffer, validation_split_percentage):
+    """Splits the fetched data into training and validation sets and adds it
+       to the respective buffers.
+    """
+    if not data:
+        return
+
+    num_positions = len(data['game_states'])
+    split_idx = int(num_positions * (1 - validation_split_percentage))
+
+    train_buffer.add({k: v[:split_idx] for k, v in data.items()})
+    validation_buffer.add({k: v[split_idx:] for k, v in data.items()})
+
+
 class ReplayBuffer:
     """
     A fixed-size circular buffer to store self-play experience for training.
@@ -161,8 +176,14 @@ class ReplayBuffer:
         self.policies = np.zeros((capacity, p_size), dtype=np.float32)
         self.values = np.zeros((capacity,), dtype=np.float32)
         self.player_indices = np.zeros((capacity,), dtype=np.int32)
+        self.g_size = g_size
+        self.p_size = p_size
 
-    def add(self, states, policies, values, player_indices):
+    def add(self, data_dict):
+        """Adds a batch of new experience to the buffer."""
+        states, policies, values, player_indices = \
+            data_dict['game_states'], data_dict['policy_targets'], \
+            data_dict['value_targets'], data_dict['player_indices']
         """Adds a batch of new experience to the buffer."""
         num_positions = len(states)
         with self.lock:

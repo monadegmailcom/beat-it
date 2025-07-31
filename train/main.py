@@ -14,7 +14,8 @@ import argparse
 from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp,
     create_inference_model_bundle, save_checkpoint, log_histogram_as_image,
-    DataPointers
+    DataPointers, split_and_add_data
+
 )
 
 # 2. Training Setup
@@ -59,6 +60,8 @@ if __name__ == '__main__':
             'replay_buffer_size': 20000,
             'min_replay_buffer_size': 1000,
             'target_replay_ratio': 4.0,
+            'validation_split_percentage': 0.05,  # 5% of data for validation
+            'validation_freq_steps': 500,  # Run validation every 500 steps
         }
 
         # Configuration for the self-play run
@@ -96,9 +99,16 @@ if __name__ == '__main__':
         basename = game_module.basename
 
         # Replay Buffer
+        train_buffer_size = int(
+            training_hyperparams['replay_buffer_size'] *
+            (1 - training_hyperparams['validation_split_percentage']))
+        validation_buffer_size = \
+            training_hyperparams['replay_buffer_size'] - train_buffer_size
+
         replay_buffer = ReplayBuffer(
-            training_hyperparams['replay_buffer_size'],
-            G_SIZE, P_SIZE, device)
+            train_buffer_size, G_SIZE, P_SIZE, device)
+        validation_buffer = ReplayBuffer(
+            validation_buffer_size, G_SIZE, P_SIZE, device)
 
         # Optimizer
         optimizer = optim.Adam(
@@ -203,9 +213,9 @@ if __name__ == '__main__':
             fetch_duration = time.time() - fetch_start_time
 
             if new_data:
-                replay_buffer.add(
-                    new_data['game_states'], new_data['policy_targets'],
-                    new_data['value_targets'], new_data['player_indices'])
+                split_and_add_data(
+                    new_data, replay_buffer, validation_buffer,
+                    training_hyperparams['validation_split_percentage'])
 
             # Check if the buffer is large enough to start training.
             # This elegantly combines the pre-filling and training phases.
@@ -264,6 +274,35 @@ if __name__ == '__main__':
                 print(f"Step {step+1}/{training_hyperparams[
                     'total_training_steps']} | Loss: {loss.item():.4f} |"
                     f" Step Time: {duration*1000:.2f}ms")
+
+        # --- Periodic Validation Step ---
+        if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
+            if len(validation_buffer) > training_hyperparams['batch_size']:
+                print("\nRunning validation...")
+                model.eval()  # Set model to evaluation mode
+                with torch.no_grad():  # Disable gradient calculations
+                    val_batch_states, val_batch_policies, val_batch_values = \
+                        validation_buffer.sample(
+                            training_hyperparams['batch_size'])
+
+                    pred_values, pred_policy_logits = model(val_batch_states)
+
+                    val_loss_policy = -torch.sum(
+                        val_batch_policies * F.log_softmax(pred_policy_logits,
+                                                           dim=1),
+                        dim=1).mean()
+                    val_loss_value = value_loss_fn(
+                        pred_values.squeeze(-1), val_batch_values)
+                    val_loss_total = val_loss_policy + val_loss_value
+
+                    writer.add_scalar('Loss/Validation_Total',
+                                      val_loss_total.item(), step)
+                    writer.add_scalar('Loss/Validation_Policy',
+                                      val_loss_policy.item(), step)
+                    writer.add_scalar('Loss/Validation_Value',
+                                      val_loss_value.item(), step)
+                    print(f"Validation Loss: {val_loss_total.item():.4f}\n")
+                model.train()  # Set model back to training mode
 
             if (step + 1) % training_hyperparams['model_update_freq_steps']\
                     == 0:
