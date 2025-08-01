@@ -20,7 +20,7 @@ else ifeq ($(UNAME_S), Linux)
     LIBTORCH_PATH=/usr/local/lib/python3.11/dist-packages/torch
     # Pre-built PyTorch binaries for Linux are often compiled with the old C++ ABI.
     # This flag ensures our code is compatible, preventing linker errors.
-    CXX_ABI_FLAGS=-D_GLIBCXX_USE_CXX11_ABI=0
+    CXX_ABI_FLAGS=
 else
     $(error Unknown OS "$(UNAME_S)". Please add a configuration for it in the Makefile.)
 endif
