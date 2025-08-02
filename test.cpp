@@ -1,5 +1,6 @@
 #include "games/nim.h"
 #include "games/ultimate_ttt.h"
+#include "games/tron.h"
 #include "match.h"
 #include "montecarlo.h"
 #include "minimax-tree.h"
@@ -915,8 +916,16 @@ void multiplayer_game()
 {
     namespace mp = multiplayer;
     cout << __func__ << endl;
-    mp::GameResult r = mp::Winner { 3 };
+    mp::GameResult< size_t > r = mp::Winner< size_t > { 3 };
     cout << "game result = " << r << endl;
+}
+
+void tron()
+{
+    namespace mp = multiplayer;
+    cout << __func__ << endl;
+    tron::Game< 3, 2 > game( tron::initial_state< 3, 2 >());
+    game.apply( tron::Move::Up );
 }
 
 } // namespace test {
@@ -958,6 +967,8 @@ int main()
         test::uttt_alphazero_training();
         */
         test::multiplayer_game();
+        test::tron();
+
         cout << "\neverything ok" << endl;
         return 0;
     }
