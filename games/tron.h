@@ -122,6 +122,9 @@ struct RuleSet<
         else if (move == tron::Move::Down)
             set_player( idx + BoardSize, new_state, player_index );
 
+        new_state.next_player_index =
+            (new_state.next_player_index + 1) % NumberOfPlayers;
+
         return new_state;
     }
 
