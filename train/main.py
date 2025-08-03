@@ -275,34 +275,39 @@ if __name__ == '__main__':
                     'total_training_steps']} | Loss: {loss.item():.4f} |"
                     f" Step Time: {duration*1000:.2f}ms")
 
-        # --- Periodic Validation Step ---
-        if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
-            if len(validation_buffer) > training_hyperparams['batch_size']:
-                print("\nRunning validation...")
-                model.eval()  # Set model to evaluation mode
-                with torch.no_grad():  # Disable gradient calculations
-                    val_batch_states, val_batch_policies, val_batch_values = \
-                        validation_buffer.sample(
+            # --- Periodic Validation Step ---
+            if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
+                if len(validation_buffer) > training_hyperparams['batch_size']:
+                    print("\nRunning validation...")
+                    model.eval()  # Set model to evaluation mode
+                    with torch.no_grad():  # Disable gradient calculations
+                        val_batch_states, val_batch_policies, val_batch_values\
+                         = validation_buffer.sample(
                             training_hyperparams['batch_size'])
 
-                    pred_values, pred_policy_logits = model(val_batch_states)
+                        pred_values, pred_policy_logits = model(
+                            val_batch_states)
 
-                    val_loss_policy = -torch.sum(
-                        val_batch_policies * F.log_softmax(pred_policy_logits,
-                                                           dim=1),
-                        dim=1).mean()
-                    val_loss_value = value_loss_fn(
-                        pred_values.squeeze(-1), val_batch_values)
-                    val_loss_total = val_loss_policy + val_loss_value
+                        val_loss_policy = -torch.sum(
+                            val_batch_policies * F.log_softmax(
+                                pred_policy_logits, dim=1),
+                            dim=1).mean()
+                        val_loss_value = value_loss_fn(
+                            pred_values.squeeze(-1), val_batch_values)
+                        val_loss_total = val_loss_policy + val_loss_value
 
-                    writer.add_scalar('Loss/Validation_Total',
-                                      val_loss_total.item(), step)
-                    writer.add_scalar('Loss/Validation_Policy',
-                                      val_loss_policy.item(), step)
-                    writer.add_scalar('Loss/Validation_Value',
-                                      val_loss_value.item(), step)
-                    print(f"Validation Loss: {val_loss_total.item():.4f}\n")
-                model.train()  # Set model back to training mode
+                        writer.add_scalar(
+                            'Loss/Validation_Total',
+                            val_loss_total.item(), step)
+                        writer.add_scalar(
+                            'Loss/Validation_Policy',
+                            val_loss_policy.item(), step)
+                        writer.add_scalar(
+                            'Loss/Validation_Value',
+                            val_loss_value.item(), step)
+                        print(
+                            f"Validation Loss: {val_loss_total.item():.4f}\n")
+                    model.train()  # Set model back to training mode
 
             if (step + 1) % training_hyperparams['model_update_freq_steps']\
                     == 0:

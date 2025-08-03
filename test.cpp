@@ -860,6 +860,37 @@ void uttt_alphazero_training()
         << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
         << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
         << endl;
+
+/*
+run tests with seed 1392513404
+
+uttt_alphazero_training
+start 10 worker threads
+wait for all threads to finish...
+selfplay run duration for 0x16b6eb000: 142906320µs
+selfplay run duration for 0x16b65f000: 147978799µs
+selfplay run duration for 0x16b777000: 157836637µs
+selfplay run duration for 0x16babf000: 162950441µs
+selfplay run duration for 0x16b91b000: 164458507µs
+selfplay run duration for 0x16b9a7000: 166672635µs
+selfplay run duration for 0x16b803000: 166960549µs
+selfplay run duration for 0x16b88f000: 168363974µs
+selfplay run duration for 0x16b5d3000: 176948216µs
+selfplay run duration for 0x16ba33000: 180757133µs
+total positions: 573
+inference manager queue size stats:
+mean = 3.62442, stddev = 2.31959
+min = 1, max = 10
+count = 55964
+
+inference manager time stats:
+mean = 1049.96, stddev = 936.701
+min = 183, max = 102504
+count = 55964
+
+everything ok
+obj/test  196,74s user 28,04s system 123% cpu 3:01,46 total
+*/
 }
 
 void uttt_alphazero_nn_vs_minimax()

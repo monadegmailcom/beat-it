@@ -97,7 +97,7 @@ int fetch_selfplay_data(
         if (position_queue.size() < number_of_positions)
             position_queue_cv.wait( lock );
 
-        // check again, may be waked up spurious!
+        // check again, may be spurious wake up!
         if (const size_t queue_size = position_queue.size();
             queue_size >= number_of_positions)
         {
