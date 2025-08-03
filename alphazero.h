@@ -192,7 +192,7 @@ protected:
             q = -value.nn_value_sum / value.visits;
         const float p = value.nn_policy;
 
-        return q + c * p * std::sqrt( parent_visits / (value.visits + 1));
+        return q + c * p * std::sqrt( parent_visits ) / (value.visits + 1);
     }
 
     // require: node has children
