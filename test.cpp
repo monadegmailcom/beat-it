@@ -800,18 +800,21 @@ void ttt_alphazero_nn_vs_minimax()
 }
 
 vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
-    libtorch::InferenceManager& inference_manager, libtorch::Hyperparameters const& hp,
-    size_t runs_per_thread )
+    libtorch::InferenceManager& inference_manager,
+    libtorch::Hyperparameters const& hp, size_t runs_per_thread )
 {
     mt19937 g = mt19937( random_device{}());
     uttt::alphazero::NodeAllocator node_allocator;
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
+
     for (; runs_per_thread; --runs_per_thread)
     {
         auto start = std::chrono::steady_clock::now();
-        uttt::alphazero::libtorch::async::Player player( uttt::Game( player_index, uttt::empty_state ),
-            hp.c_base, hp.c_init, hp.simulations, node_allocator, inference_manager );
+        uttt::alphazero::libtorch::async::Player player(
+            uttt::Game( player_index, uttt::empty_state ),
+            hp.c_base, hp.c_init, hp.simulations, node_allocator,
+            inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
             hp.opening_moves, g, positions );
@@ -842,9 +845,10 @@ void uttt_alphazero_training()
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
     auto [model, hp] = libtorch::load_model( model_path, device );
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P,
+        hp.threads / 2 );
+    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( hp.threads );
 
-    vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( 10 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
     for (auto& future : thread_pool)
         future = async( uttt_selfplay_worker, ref(inference_manager), hp, 1 );

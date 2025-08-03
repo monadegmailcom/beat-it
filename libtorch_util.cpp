@@ -154,10 +154,12 @@ InferenceManager::InferenceManager(
     torch::Device device,
     Hyperparameters const& hp,
     size_t state_size, size_t policies_size,
-    size_t max_batch_size, std::chrono::milliseconds batch_timeout )
-: max_batch_size( max_batch_size ), batch_timeout( batch_timeout ), state_size( state_size ),
-  policies_size( policies_size ), device( device ), model( std::move( model )), stop_flag( false ),
-  inference_histogram( hp.threads + 1, 0 )
+    size_t min_batch_size, size_t max_batch_size,
+    chrono::milliseconds batch_timeout )
+:   min_batch_size( min_batch_size ), max_batch_size( max_batch_size ),
+    batch_timeout( batch_timeout ), state_size( state_size ),
+    policies_size( policies_size ), device( device ), model( std::move( model )),
+    stop_flag( false ), inference_histogram( hp.threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.
     inference_future = std::async( &InferenceManager::inference_loop, this );
@@ -211,8 +213,10 @@ void InferenceManager::inference_loop()
             // Wait until the queue has items or a timeout occurs.
             // The timeout is crucial to process incomplete batches with low latency.
             // lock is released while waiting
-            cv.wait_for(
-                lock, batch_timeout, [this] () { return !request_queue.empty() || stop_flag; });
+            cv.wait_for(lock, batch_timeout, [this] {
+                // Wait until the queue has a reasonable number of items, or we need to stop.
+                // This prevents waking up for every single request and helps form larger batches.
+                return request_queue.size() >= min_batch_size || stop_flag; });
 
             if (stop_flag)
                 return;
