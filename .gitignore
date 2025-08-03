@@ -10,3 +10,4 @@ gdb-entitlement.xml
 .DS_Store
 .swp
 .mypy_cache/
+train/__pycache__

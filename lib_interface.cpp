@@ -63,7 +63,8 @@ void set_model(
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
-            std::move( model ), device, hp, state_size, policies_size ));
+            std::move( model ), device, hp, state_size, policies_size,
+            hp.threads / 2 ));
         hyperparameters = hp;
 
         // Set the thread pool size based on the model's hyperparameters
@@ -97,7 +98,7 @@ int fetch_selfplay_data(
         if (position_queue.size() < number_of_positions)
             position_queue_cv.wait( lock );
 
-        // check again, may be waked up spurious!
+        // check again, may be spurious wake up!
         if (const size_t queue_size = position_queue.size();
             queue_size >= number_of_positions)
         {

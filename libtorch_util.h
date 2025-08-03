@@ -77,6 +77,7 @@ public:
         torch::Device,
         const Hyperparameters& hp,
         size_t state_size, size_t policies_size,
+        size_t min_batch_size = 1,
         size_t max_batch_size = 128,
         std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
 
@@ -105,6 +106,7 @@ public:
 private:
     void inference_loop();
 
+    const size_t min_batch_size;
     const size_t max_batch_size;
     const std::chrono::milliseconds batch_timeout;
 
