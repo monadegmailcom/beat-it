@@ -47,7 +47,7 @@ ki engine for two player games
     tensorboard --logdir=runs
     ```
     - open tensorboard website from another machine
-      - ssh -L 8888:localhost:6006
+      - ssh -L 8888:localhost:6006 x10dri
       - open browser at http://localhost:8888
 
 - **Export linux Window Manager**
