@@ -14,10 +14,10 @@ const PlayerIndex no_player = -1;
 enum class Move : uint8_t
 { Left, Right, Up, Down };
 
-using Winner = multiplayer::Winner< PlayerIndex >;
-using Draw = multiplayer::Draw;
-using Undecided = multiplayer::Undecided;
-using GameResult = multiplayer::GameResult< PlayerIndex >;
+using Winner = mp::Winner< PlayerIndex >;
+using Draw = mp::Draw;
+using Undecided = mp::Undecided;
+using GameResult = mp::GameResult< PlayerIndex >;
 
 struct PlayerState
 {
@@ -37,7 +37,7 @@ struct State
 };
 
 template< size_t BoardSize, size_t NumberOfPlayers >
-using Game = multiplayer::Game<
+using Game = mp::Game<
     Move, PlayerIndex, State< BoardSize, NumberOfPlayers >>;
 
 template< size_t BoardSize, size_t NumberOfPlayers >
@@ -61,7 +61,7 @@ State< BoardSize, NumberOfPlayers > initial_state()
 
 } // tron
 
-namespace multiplayer {
+namespace mp {
 
 // deliberately restrict the number of possible players to type uint8_t,
 //  choose a bigger type if necessary
@@ -145,4 +145,4 @@ struct RuleSet<
     }
 };
 
-} // multiplayer
+} // mp

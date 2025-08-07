@@ -7,7 +7,7 @@
 #include <variant>
 #include <iostream>
 
-namespace multiplayer {
+namespace mp {
 
 // -> possible game results
 struct Draw {};
@@ -117,7 +117,7 @@ public:
         // pre-increment operator
         void increment()
         {
-            move = rule_set_type::next_valid_move( game.state());
+            rule_set_type::next_valid_move( move, game.state());
         }
 
         // equality comparison
@@ -143,4 +143,4 @@ private:
     StateT state_;
 };
 
-} // namespace multiplayer
+} // namespace mp

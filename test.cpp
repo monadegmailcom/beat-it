@@ -6,7 +6,7 @@
 #include "minimax-tree.h"
 #include "alphazero.h"
 #include "libtorch_util.h"
-#include "mp_game.h"
+#include "mp_mcts.h"
 
 #include <boost/json.hpp>
 
@@ -949,18 +949,35 @@ void uttt_alphazero_nn_vs_minimax()
 
 void multiplayer_game()
 {
-    namespace mp = multiplayer;
     cout << __func__ << endl;
+
     mp::GameResult< size_t > r = mp::Winner< size_t > { 3 };
     cout << "game result = " << r << endl;
 }
 
 void tron()
 {
-    namespace mp = multiplayer;
     cout << __func__ << endl;
+
     tron::Game< 3, 2 > game( tron::initial_state< 3, 2 >());
     game.apply( tron::Move::Up );
+}
+
+void mcts_player()
+{
+    cout << __func__ << endl;
+
+    const size_t BoardSize = 3;
+    const size_t NumberOfPlayers = 2;
+    using Move = tron::Move;
+    using State = tron::State< BoardSize, NumberOfPlayers >;
+    using PlayerIndex = tron::PlayerIndex;
+
+    mp::mcts::playout::NodeAllocator< Move, State, PlayerIndex > allocator;
+    auto game( tron::initial_state< BoardSize, NumberOfPlayers >());
+    const size_t simulations = 100;
+    mp::mcts::playout::Player< Move, State, PlayerIndex > player(
+        game, simulations, allocator );
 }
 
 } // namespace test {
@@ -1003,6 +1020,7 @@ int main()
         */
         test::multiplayer_game();
         test::tron();
+        test::mcts_player();
 
         cout << "\neverything ok" << endl;
         return 0;

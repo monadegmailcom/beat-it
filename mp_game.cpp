@@ -2,6 +2,6 @@
 
 using namespace std;
 
-namespace multiplayer {
+namespace mp {
 
-} // namespace multiplayer
+} // namespace mp
