@@ -118,24 +118,48 @@ if __name__ == '__main__':
         if args.resume_from:
             print(f"Attempting to resume training from: {args.resume_from}")
             if os.path.exists(args.resume_from):
+                # Load the scripted model and extract extra files in one go.
                 extra_files = {'optimizer_state.pt': b'', 'metadata.json': b''}
-                model = torch.jit.load(
+                old_model_scripted = torch.jit.load(
                     args.resume_from, map_location=device,
                     _extra_files=extra_files)
+
+                # Load metadata and configs
+                metadata = json.loads(extra_files['metadata.json'])
+                old_game_config = metadata['game_config']
+                new_game_config = game_module.game_config
+
+                # Create a new model instance with the current configuration.
+                model = game_module.model.to(device)
+                old_state_dict = old_model_scripted.state_dict()
+
+                # Smartly transfer weights
+                if old_game_config.get('num_res_blocks') != \
+                   new_game_config.get('num_res_blocks'):
+                    print(f"Model architecture changed. Resizing from "
+                          f"{old_game_config.get('num_res_blocks')} to "
+                          f"{new_game_config.get('num_res_blocks')} res blocks.")
+                    new_state_dict = model.state_dict()
+                    for name, param in old_state_dict.items():
+                        if name in new_state_dict and \
+                           new_state_dict[name].shape == param.shape:
+                            new_state_dict[name].copy_(param)
+                    model.load_state_dict(new_state_dict)
+                    print("Transferred compatible weights to the new model.")
+                else:
+                    print("Checkpoint architecture matches. "
+                          "Loading weights directly.")
+                    model.load_state_dict(old_state_dict)
 
                 # Load optimizer state
                 optimizer_state_buffer = io.BytesIO(
                     extra_files['optimizer_state.pt'])
                 optimizer.load_state_dict(torch.load(optimizer_state_buffer))
 
-                # Load metadata to get the step count
-                metadata = json.loads(extra_files['metadata.json'])
-                # Load hyperparameters from the checkpoint to ensure
-                # consistency
+                # Load metadata for step count and hyperparameters
                 training_hyperparams = metadata.get(
                     'hyperparameters', training_hyperparams)
                 start_step = metadata.get('training_steps', 0)
-                # Correctly determine the original run's log directory
                 run_name = os.path.basename(os.path.dirname(args.resume_from))
                 log_dir = os.path.join("runs", run_name)
                 print(f"Resuming from step {start_step}. "
