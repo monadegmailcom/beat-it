@@ -156,9 +156,21 @@ if __name__ == '__main__':
                     extra_files['optimizer_state.pt'])
                 optimizer.load_state_dict(torch.load(optimizer_state_buffer))
 
-                # Load metadata for step count and hyperparameters
-                training_hyperparams = metadata.get(
-                    'hyperparameters', training_hyperparams)
+                # Load configurations from checkpoint, then overwrite with
+                # current script's settings
+                loaded_hyperparams = metadata.get('hyperparameters', {})
+                loaded_self_play_config = metadata.get('self_play_config', {})
+
+                loaded_hyperparams.update(training_hyperparams)
+                loaded_self_play_config.update(self_play_config)
+
+                training_hyperparams = loaded_hyperparams
+                self_play_config = loaded_self_play_config
+
+                print("Loaded and merged configurations. Script settings "
+                      "take precedence.")
+
+                # Load metadata for step count
                 start_step = metadata.get('training_steps', 0)
                 run_name = os.path.basename(os.path.dirname(args.resume_from))
                 log_dir = os.path.join("runs", run_name)
