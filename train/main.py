@@ -133,9 +133,11 @@ if __name__ == '__main__':
                 model = game_module.model.to(device)
                 old_state_dict = old_model_scripted.state_dict()
 
+                architecture_changed = old_game_config.get('num_res_blocks') \
+                    != new_game_config.get('num_res_blocks')
+
                 # Smartly transfer weights
-                if old_game_config.get('num_res_blocks') != \
-                   new_game_config.get('num_res_blocks'):
+                if architecture_changed:
                     print(f"Model architecture changed. Resizing from "
                           f"{old_game_config.get('num_res_blocks')} to "
                           f"{new_game_config.get('num_res_blocks')} res blocks.")
@@ -151,10 +153,15 @@ if __name__ == '__main__':
                           "Loading weights directly.")
                     model.load_state_dict(old_state_dict)
 
-                # Load optimizer state
-                optimizer_state_buffer = io.BytesIO(
-                    extra_files['optimizer_state.pt'])
-                optimizer.load_state_dict(torch.load(optimizer_state_buffer))
+                # Conditionally load optimizer state
+                if architecture_changed:
+                    print("Warning: Model architecture changed. "
+                          "Optimizer state will not be loaded.")
+                else:
+                    optimizer_state_buffer = io.BytesIO(
+                        extra_files['optimizer_state.pt'])
+                    optimizer.load_state_dict(
+                        torch.load(optimizer_state_buffer))
 
                 # Load configurations from checkpoint, then overwrite with
                 # current script's settings
