@@ -976,8 +976,10 @@ void mcts_player()
     mp::mcts::playout::NodeAllocator< Move, State, PlayerIndex > allocator;
     auto game( tron::initial_state< BoardSize, NumberOfPlayers >());
     const size_t simulations = 100;
+    const float exploration = 0.4;
+
     mp::mcts::playout::Player< Move, State, PlayerIndex > player(
-        game, simulations, allocator );
+        game, simulations, allocator, exploration, seed );
 }
 
 } // namespace test {

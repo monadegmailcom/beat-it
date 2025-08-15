@@ -10,14 +10,14 @@
 namespace mp {
 
 // -> possible game results
-struct Draw {};
 struct Undecided {};
+struct Draw {};
 template< typename PlayerIndexT >
 struct Winner { PlayerIndexT player_index; };
 // <-
 
 template< typename PlayerIndexT >
-using GameResult = std::variant< Draw, Undecided, Winner< PlayerIndexT >>;
+using GameResult = std::variant< Undecided, Draw, Winner< PlayerIndexT >>;
 
 template< typename PlayerIndexT >
 std::ostream& operator<<(
