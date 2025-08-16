@@ -105,9 +105,10 @@ def create_inference_model_bundle(
 
 def save_checkpoint(
         model, optimizer, step, current_loss, game_config,
-        self_play_config, training_hyperparams, path):
-    """Saves a full checkpoint including model, metadata, and optimizer state
-       to a file.
+        self_play_config, training_hyperparams, path, train_buffer,
+        validation_buffer):
+    """Saves a full checkpoint including model, metadata, train buffer,
+       validation buffer, and optimizer state to a file.
     """
     os.makedirs(os.path.dirname(path), exist_ok=True)
 
@@ -119,10 +120,25 @@ def save_checkpoint(
     torch.save(optimizer.state_dict(), optimizer_state_buffer)
     loaded_model = torch.jit.load(io.BytesIO(model_bytes))
 
-    torch.jit.save(loaded_model, path, _extra_files={
+    extra_files_dict = {
         'metadata.json': metadata_json,
         'optimizer_state.pt': optimizer_state_buffer.getvalue()
-    })
+    }
+
+    if train_buffer:
+        train_buffer_bytes = train_buffer.save_to_bytes()
+        extra_files_dict['train_buffer_data.npz'] = train_buffer_bytes['data']
+        extra_files_dict['train_buffer_metadata.json'] = \
+            train_buffer_bytes['metadata']
+
+    if validation_buffer:
+        val_buffer_bytes = validation_buffer.save_to_bytes()
+        extra_files_dict['validation_buffer_data.npz'] = \
+            val_buffer_bytes['data']
+        extra_files_dict['validation_buffer_metadata.json'] = \
+            val_buffer_bytes['metadata']
+
+    torch.jit.save(loaded_model, path, _extra_files=extra_files_dict)
 
 
 def log_histogram_as_image(writer, tag, data, step):
@@ -223,3 +239,55 @@ class ReplayBuffer:
     def __len__(self):
         with self.lock:
             return self.size
+
+    def save_to_bytes(self):
+        """Serializes the buffer's state and data into byte dictionaries."""
+        with self.lock:
+            # Use np.savez_compressed for efficient storage
+            data_buffer = io.BytesIO()
+            np.savez_compressed(
+                data_buffer,
+                states=self.states,
+                policies=self.policies,
+                values=self.values,
+                player_indices=self.player_indices
+            )
+            data_buffer.seek(0)
+
+            metadata = {
+                'ptr': self.ptr,
+                'size': self.size,
+                'capacity': self.capacity,
+                'g_size': self.g_size,
+                'p_size': self.p_size
+            }
+            metadata_bytes = json.dumps(metadata).encode('utf-8')
+
+            return {
+                'data': data_buffer.getvalue(),
+                'metadata': metadata_bytes
+            }
+
+    def load_from_bytes(self, data_bytes, metadata_bytes):
+        """Loads the buffer's state from byte strings."""
+        metadata = json.loads(metadata_bytes.decode('utf-8'))
+
+        if metadata['capacity'] != self.capacity or \
+           metadata['g_size'] != self.g_size or \
+           metadata['p_size'] != self.p_size:
+            print("Warning: Replay buffer configuration mismatch. "
+                  "Not loading buffer data.")
+            return False
+
+        with self.lock:
+            data_buffer = io.BytesIO(data_bytes)
+            data = np.load(data_buffer, allow_pickle=False)
+
+            self.states[:] = data['states']
+            self.policies[:] = data['policies']
+            self.values[:] = data['values']
+            self.player_indices[:] = data['player_indices']
+            self.ptr = metadata['ptr']
+            self.size = metadata['size']
+        print(f"Successfully loaded replay buffer with {self.size} elements.")
+        return True

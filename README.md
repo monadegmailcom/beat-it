@@ -65,19 +65,16 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ## Resume training
 1. **Resume training from checkpoint**
   ```bash
-  python -m train.main --game ttt --resume_from runs/models/ttt_alphazero_experiment_2/checkpoint.pt
+  python -m train.main --game ttt --resume_from models/ttt_alphazero_experiment_2/checkpoint.pt
   ```
-2. **Extend training steps**
+2. **Inspect metadata**
   - extract metadata.json :
   ```bash
   mkdir -p checkpoint/extra
   unzip -p runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json > checkpoint/extra/metadata.json
   ```
-  - edit metadata.json and replace hyperparameter "total_training_steps" with a higher value
-  - replace metadata.json in the model file:
-  ```bash
-  zip -u runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json
-  ```
+3. **Extend training steps**
+  - overwrite configurations in train/main.py and train/uttt.py
   - resume training in point 1.
 
 ## Todos

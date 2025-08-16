@@ -52,6 +52,7 @@ if __name__ == '__main__':
         # logging.
         training_hyperparams = {
             'learning_rate': 0.0005,
+            'weight_decay': 1e-4,  # L2 regularization strength
             'batch_size': 64,
             'log_freq_steps': 100,
             'total_training_steps': 2000,
@@ -112,17 +113,47 @@ if __name__ == '__main__':
 
         # Optimizer
         optimizer = optim.Adam(
-            model.parameters(), lr=training_hyperparams['learning_rate'])
+            model.parameters(),
+            lr=training_hyperparams['learning_rate'],
+            weight_decay=training_hyperparams['weight_decay'])
 
         # --- Resume from Checkpoint Logic ---
         if args.resume_from:
             print(f"Attempting to resume training from: {args.resume_from}")
             if os.path.exists(args.resume_from):
                 # Load the scripted model and extract extra files in one go.
-                extra_files = {'optimizer_state.pt': b'', 'metadata.json': b''}
+                extra_files = {
+                    'optimizer_state.pt': b'',
+                    'metadata.json': b'',
+                    'train_buffer_data.npz': b'',
+                    'train_buffer_metadata.json': b'',
+                    'validation_buffer_data.npz': b'',
+                    'validation_buffer_metadata.json': b''
+                }
                 old_model_scripted = torch.jit.load(
                     args.resume_from, map_location=device,
                     _extra_files=extra_files)
+
+                # Load replay buffers
+                if extra_files['train_buffer_data.npz']:
+                    print("Found training replay buffer in checkpoint.")
+                    replay_buffer.load_from_bytes(
+                        extra_files['train_buffer_data.npz'],
+                        extra_files['train_buffer_metadata.json']
+                    )
+                else:
+                    print("No training replay buffer found in checkpoint. "
+                          "Starting with an empty one.")
+
+                if extra_files['validation_buffer_data.npz']:
+                    print("Found validation replay buffer in checkpoint.")
+                    validation_buffer.load_from_bytes(
+                        extra_files['validation_buffer_data.npz'],
+                        extra_files['validation_buffer_metadata.json']
+                    )
+                else:
+                    print("No validation replay buffer found in checkpoint. "
+                          "Starting with an empty one.")
 
                 # Load metadata and configs
                 metadata = json.loads(extra_files['metadata.json'])
@@ -138,9 +169,10 @@ if __name__ == '__main__':
 
                 # Smartly transfer weights
                 if architecture_changed:
-                    print(f"Model architecture changed. Resizing from "
-                          f"{old_game_config.get('num_res_blocks')} to "
-                          f"{new_game_config.get('num_res_blocks')} res blocks.")
+                    print(
+                        f"Model architecture changed. Resizing from "
+                        f"{old_game_config.get('num_res_blocks')} to "
+                        f"{new_game_config.get('num_res_blocks')} res blocks.")
                     new_state_dict = model.state_dict()
                     for name, param in old_state_dict.items():
                         if name in new_state_dict and \
@@ -242,15 +274,21 @@ if __name__ == '__main__':
 
         print(f"Starting training loop from step {start_step} up to "
               f"{training_hyperparams['total_training_steps']} steps...")
+        # 1. Fetch a small batch of new data to keep the buffer fresh.
+        num_positions_to_fetch = max(
+            1,
+            int(training_hyperparams['batch_size']
+                / training_hyperparams['target_replay_ratio']))
+
+        # Initialize accumulators for averaging metrics over a logging window
+        total_duration_in_window = 0.0
+        total_loss_in_window = 0.0
+        steps_in_window = 0
+
         while step < training_hyperparams['total_training_steps']:
-            # 1. Fetch a small batch of new data to keep the buffer fresh.
+            fetch_start_time = time.time()
             # This call blocks until the C++ workers have produced enough
             #  games.
-            num_positions_to_fetch = max(
-                1, int(training_hyperparams['batch_size']
-                       / training_hyperparams['target_replay_ratio']))
-
-            fetch_start_time = time.time()
             new_data, queue_size = fetch_selfplay_data_from_cpp(
                 c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
@@ -295,6 +333,11 @@ if __name__ == '__main__':
             optimizer.step()
             duration = time.time() - start_time
 
+            # Accumulate metrics for periodic console logging
+            total_duration_in_window += duration
+            total_loss_in_window += loss.item()
+            steps_in_window += 1
+
             # 3. Log metrics and update the C++ model periodically.
             writer.add_scalar('Loss/Total', loss.item(), step)
             writer.add_scalar('Loss/Policy', loss_policy.item(), step)
@@ -314,9 +357,19 @@ if __name__ == '__main__':
                 for name, param in model.named_parameters():
                     writer.add_histogram(f'Gradients/{name}', param.grad, step)
                     writer.add_histogram(f'Weights/{name}', param.data, step)
-                print(f"Step {step+1}/{training_hyperparams[
-                    'total_training_steps']} | Loss: {loss.item():.4f} |"
-                    f" Step Time: {duration*1000:.2f}ms")
+
+                avg_loss = total_loss_in_window / steps_in_window
+                avg_step_time_ms = (total_duration_in_window /
+                                    steps_in_window) * 1000
+                print(
+                    f"Step {step+1}/"
+                    f"{training_hyperparams['total_training_steps']} | "
+                    f"Avg Loss: {avg_loss:.4f} | "
+                    f"Avg Step Time: {avg_step_time_ms:.2f}ms")
+
+                # Reset accumulators for the next window
+                total_duration_in_window, total_loss_in_window, \
+                    steps_in_window = 0.0, 0.0, 0
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
@@ -379,7 +432,9 @@ if __name__ == '__main__':
                     game_config=game_config,
                     self_play_config=self_play_config,
                     training_hyperparams=training_hyperparams,
-                    path=checkpoint_path
+                    path=checkpoint_path,
+                    train_buffer=replay_buffer,
+                    validation_buffer=validation_buffer
                 )
 
             step += 1
@@ -400,7 +455,9 @@ if __name__ == '__main__':
                 game_config=game_config,
                 self_play_config=self_play_config,
                 training_hyperparams=training_hyperparams,
-                path=final_model_path
+                path=final_model_path,
+                train_buffer=replay_buffer,
+                validation_buffer=validation_buffer
             )
 
         print("\nFetching final inference batch size histogram from C++...")

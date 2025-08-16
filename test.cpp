@@ -908,7 +908,8 @@ void uttt_alphazero_nn_vs_minimax()
     }
 
     torch::Device device = libtorch::get_device(); // torch::kCPU; //
-    const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
+    const char* const model_path = "models/final_model.pt"; // Adjust if needed
+//    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
 
@@ -925,6 +926,59 @@ void uttt_alphazero_nn_vs_minimax()
         [&]() { return new uttt::alphazero::libtorch::async::Player(
             game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
         [&game]() { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
+        rounds, threads );
+
+    if (verbose)
+        cout
+            << "rounds = " << rounds << ", threads = " << threads << '\n'
+            << "fst player wins: " << match.fst_player_wins << '\n'
+            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
+            << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
+            << "snd player wins: " << match.snd_player_wins << '\n'
+            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "draws: " << match.draws << '\n'
+            << "fst/snd player duration ratio: "
+            << double( chrono::duration_cast< std::chrono::microseconds >(
+                    match.fst_player_duration ).count()) /
+               chrono::duration_cast< std::chrono::microseconds >(
+                    match.snd_player_duration ).count() << '\n' << endl;
+}
+
+void uttt_alphazero_nn_vs_alphazero()
+{
+    if (extensive)
+        cout << __func__ << endl;
+    else
+    {
+        cout << __func__ << " (extensive mode off)" << endl;
+        return;
+    }
+
+    torch::Device device = libtorch::get_device(); // torch::kCPU; //
+    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
+    const char* const model_path2 = "models/final_model.pt"; // Adjust if needed
+    cout << "load models for player1 " << model_path << " and player2"
+        << model_path2 << " to device " << device << endl;
+    auto [model, hp] = libtorch::load_model( model_path, device );
+    auto [model2, hp2] = libtorch::load_model( model_path2, device );
+
+    libtorch::InferenceManager inference_manager(
+        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
+    libtorch::InferenceManager inference_manager2(
+        std::move( model2 ), device, hp2, uttt::alphazero::G, uttt::alphazero::P );
+
+    uttt::Game game( Player1, uttt::empty_state );
+    uttt::alphazero::NodeAllocator allocator;
+
+    const size_t rounds = 15;
+    const size_t threads = 10;
+    MultiMatch< uttt::Move, uttt::State > match(
+        game,
+        [&]() { return new uttt::alphazero::libtorch::async::Player(
+            game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
+        [&]() { return new uttt::alphazero::libtorch::async::Player(
+            game, hp2.c_base, hp2.c_init, 400, allocator, inference_manager2 ); },
         rounds, threads );
 
     if (verbose)
@@ -980,8 +1034,9 @@ int main()
         test::uttt_multimatch_alphazero_vs_minimax();
         test::alphazero_training();
         test::ttt_alphazero_nn_vs_minimax();
-        */
         test::uttt_alphazero_training();
+        */
+        test::uttt_alphazero_nn_vs_alphazero();
         cout << "\neverything ok" << endl;
         return 0;
     }
