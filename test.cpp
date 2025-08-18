@@ -738,8 +738,9 @@ void alphazero_training()
     torch::Device device = libtorch::get_device();
     const char* const model_path = "runs/models/ttt_alphazero_experiment_6/final_model.pt"; // Adjust if needed
     auto [model, hp] =  libtorch::load_model( model_path, device );
+    const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, hp, ttt::alphazero::G, ttt::alphazero::P );
+        std::move( model ), device, threads, ttt::alphazero::G, ttt::alphazero::P );
 
     vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
@@ -844,9 +845,10 @@ void uttt_alphazero_training()
     torch::Device device = libtorch::get_device(); // torch::kCPU; //
     const char* const model_path = "models/uttt_alphazero_experiment_2/final_model.pt"; // Adjust if needed
     auto [model, hp] = libtorch::load_model( model_path, device );
+    const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P,
-        hp.threads / 2 );
+        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P,
+        threads / 2 );
     vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( hp.threads );
 
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
@@ -912,15 +914,14 @@ void uttt_alphazero_nn_vs_minimax()
 //    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
-
+    const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 15;
-    const size_t threads = 10;
     MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(
@@ -962,17 +963,16 @@ void uttt_alphazero_nn_vs_alphazero()
         << model_path2 << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
     auto [model2, hp2] = libtorch::load_model( model_path2, device );
-
+    const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, hp, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
     libtorch::InferenceManager inference_manager2(
-        std::move( model2 ), device, hp2, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model2 ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 100;
-    const size_t threads = 20;
     MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(

@@ -24,10 +24,12 @@ torch::Device get_device();
 struct InferenceRequest
 {
     // needed for usage in std::deque
-    InferenceRequest( float const* state, float* policies, std::promise< float >&& promise )
+    InferenceRequest(
+        float const* state, float* policies, std::promise< float >&& promise )
     : state( state ), policies( policies ), promise( std::move( promise ) ) {}
     InferenceRequest( InferenceRequest&& req ) noexcept
-        : state( req.state ), policies( req.policies ), promise( std::move( req.promise ) ) {}
+    : state( req.state ), policies( req.policies ),
+      promise( std::move( req.promise ) ) {}
 
     InferenceRequest() = delete;
     InferenceRequest( InferenceRequest const& ) = delete;
@@ -56,10 +58,12 @@ struct Hyperparameters
 };
 
 // promise: model is set to eval mode
-std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
-    const char* model_path, torch::Device );
+std::pair< std::unique_ptr< torch::jit::script::Module >,
+           Hyperparameters > load_model(
+                const char* model_path, torch::Device );
 // promise: model is set to eval mode
-std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
+std::pair< std::unique_ptr< torch::jit::script::Module >,
+           Hyperparameters > load_model(
     char const* model_data, size_t model_data_len,
     const char* metadata_json, size_t metadata_len, torch::Device );
 
@@ -75,11 +79,12 @@ public:
     InferenceManager(
         std::unique_ptr< torch::jit::script::Module >&&,
         torch::Device,
-        const Hyperparameters& hp,
+        size_t threads,
         size_t state_size, size_t policies_size,
         size_t min_batch_size = 1,
         size_t max_batch_size = 128,
-        std::chrono::milliseconds batch_timeout = std::chrono::milliseconds( 5 ));
+        std::chrono::milliseconds batch_timeout
+            = std::chrono::milliseconds( 5 ));
 
     // be sure not to copy or assign the inference manager accidentally
     InferenceManager() = delete;
@@ -91,7 +96,7 @@ public:
     ~InferenceManager();
 
     // threadsafe replacement of model
-    void update_model( std::unique_ptr< torch::jit::script::Module >&&, const Hyperparameters& hp );
+    void update_model( std::unique_ptr< torch::jit::script::Module >&& );
 
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,

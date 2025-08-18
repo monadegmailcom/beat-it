@@ -152,14 +152,14 @@ float async_predict( InferenceManager& im, float const* game_state_players, floa
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
     torch::Device device,
-    Hyperparameters const& hp,
+    size_t threads,
     size_t state_size, size_t policies_size,
     size_t min_batch_size, size_t max_batch_size,
     chrono::milliseconds batch_timeout )
 :   min_batch_size( min_batch_size ), max_batch_size( max_batch_size ),
     batch_timeout( batch_timeout ), state_size( state_size ),
     policies_size( policies_size ), device( device ), model( std::move( model )),
-    stop_flag( false ), inference_histogram( hp.threads + 1, 0 )
+    stop_flag( false ), inference_histogram( threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.
     inference_future = std::async( &InferenceManager::inference_loop, this );
@@ -191,14 +191,12 @@ future< float > InferenceManager::queue_request( float const* state, float* poli
 }
 
 void InferenceManager::update_model(
-    unique_ptr< torch::jit::script::Module >&& new_model,
-    Hyperparameters const& hp )
+    unique_ptr< torch::jit::script::Module >&& new_model )
 {
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
     lock_guard< mutex > lock( model_update_mutex );
     model = std::move( new_model );
-    inference_histogram.resize( hp.threads + 1, 0 );
 }
 
 void InferenceManager::inference_loop()

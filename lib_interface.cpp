@@ -63,7 +63,7 @@ void set_model(
     {
         // create the InferenceManager instance
         inference_manager.reset( new libtorch::InferenceManager(
-            std::move( model ), device, hp, state_size, policies_size,
+            std::move( model ), device, hp.threads, state_size, policies_size,
             hp.threads / 2 ));
         hyperparameters = hp;
 
@@ -77,7 +77,7 @@ void set_model(
     }
     else // Subsequent calls: update the model in-place for efficiency.
     {
-        inference_manager->update_model( std::move( model ), hp);
+        inference_manager->update_model( std::move( model ));
         lock_guard< shared_mutex > lock( hp_mutex );
         hyperparameters = hp;
     }
