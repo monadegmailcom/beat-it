@@ -957,7 +957,7 @@ void uttt_alphazero_nn_vs_alphazero()
 
     torch::Device device = libtorch::get_device(); // torch::kCPU; //
     const char* const model_path = "models/model_15000.pt"; // Adjust if needed
-    const char* const model_path2 = "models/final_model.pt"; // Adjust if needed
+    const char* const model_path2 = "models/model_20000.pt"; // Adjust if needed
     cout << "load models for player1 " << model_path << " and player2"
         << model_path2 << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
@@ -971,8 +971,8 @@ void uttt_alphazero_nn_vs_alphazero()
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
-    const size_t rounds = 15;
-    const size_t threads = 10;
+    const size_t rounds = 100;
+    const size_t threads = 20;
     MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(

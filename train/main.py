@@ -282,6 +282,7 @@ if __name__ == '__main__':
 
         # Initialize accumulators for averaging metrics over a logging window
         total_duration_in_window = 0.0
+        total_selfplay_duration_in_window = 0.0
         total_loss_in_window = 0.0
         steps_in_window = 0
 
@@ -292,6 +293,7 @@ if __name__ == '__main__':
             new_data, queue_size = fetch_selfplay_data_from_cpp(
                 c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
+            total_selfplay_duration_in_window += fetch_duration
 
             if new_data:
                 split_and_add_data(
@@ -361,15 +363,19 @@ if __name__ == '__main__':
                 avg_loss = total_loss_in_window / steps_in_window
                 avg_step_time_ms = (total_duration_in_window /
                                     steps_in_window) * 1000
+                avg_selfplay_time_ms = (total_selfplay_duration_in_window /
+                                        steps_in_window) * 1000
                 print(
                     f"Step {step+1}/"
                     f"{training_hyperparams['total_training_steps']} | "
                     f"Avg Loss: {avg_loss:.4f} | "
-                    f"Avg Step Time: {avg_step_time_ms:.2f}ms")
+                    f"Avg Step Time: {avg_step_time_ms:.2f}ms | "
+                    f"Avg Selfplay Time: {avg_selfplay_time_ms:.2f}ms")
 
                 # Reset accumulators for the next window
                 total_duration_in_window, total_loss_in_window, \
-                    steps_in_window = 0.0, 0.0, 0
+                    total_selfplay_duration_in_window, \
+                    steps_in_window = 0.0, 0.0, 0.0, 0
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:

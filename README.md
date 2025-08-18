@@ -13,6 +13,7 @@ ki engine for two player games
     - xattr -d com.apple.quarantine /Users/wrqpjzc/source/libtorch/lib/*.dylib
 
 ## Requirements on linux (ubuntu 25.04)
+- sudo apt-get install libboost-all-dev
 - ubuntu has python 3.13 installed, but this version is broken with pytorch
 - pytorch recommends python 3.12
 - ubuntu 25.04 does not have python 3.12 as an apt package, repo deadsnakes/ppa neither
@@ -29,6 +30,28 @@ ki engine for two player games
 - . .venv/bin/activate
 - pip3 install torch torchvision tensorboard matplotlib flake8 mypy
 
+## setup google compute engine (debian based)
+- install gemini
+  - `sudo npm install -g @google/gemini-cli`
+  - return url to authorize api key in browser
+- install newer gcc
+  - `gcc --version` gives 10.2.1 (no c++ 23 support)
+  - add testing repo, standard apt repo does not have it
+    - `echo "deb http://deb.debian.org/debian testing main" | sudo tee                                │
+ │   /etc/apt/sources.list.d/testing.list`
+  - apt pinning
+    - `echo 'Package: *\nPin: release a=stable\nPin-Priority: 900\n\nPackage: *\nPin:                 │
+ │   release a=testing\nPin-Priority: 300\n' | sudo tee                                             │
+ │   /etc/apt/preferences.d/99-testing-pref`
+    - `sudo apt-get update`
+    - `sudo apt-get install -t testing g++-12 -y`
+    - `apt --fix-broken install`
+  - install boost
+    - `sudo apt-get install -y libboost-json-dev`
+  - setup venv and install torch in it
+    - `pip install torch torchvision tensorboard matplotlib`
+  - to upload file with the ssh-in-browser tool you may retry to update outdated ssh keys
+  
 ## How to Run
 
 -  **Activate the virtual environment:**
