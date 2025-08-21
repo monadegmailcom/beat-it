@@ -910,7 +910,7 @@ void uttt_alphazero_nn_vs_minimax()
     }
 
     torch::Device device = libtorch::get_device(); // torch::kCPU; //
-    const char* const model_path = "models/final_model.pt"; // Adjust if needed
+    const char* const model_path = "models/model_20000.pt"; // Adjust if needed
 //    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
@@ -921,11 +921,11 @@ void uttt_alphazero_nn_vs_minimax()
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
-    const size_t rounds = 15;
+    const size_t rounds = 10;
     MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
+            game, hp.c_base, hp.c_init, 1600, allocator, inference_manager ); },
         [&game]() { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
         rounds, threads );
 
@@ -957,7 +957,7 @@ void uttt_alphazero_nn_vs_alphazero()
     }
 
     torch::Device device = libtorch::get_device(); // torch::kCPU; //
-    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
+    const char* const model_path = "models/model_31000.pt"; // Adjust if needed
     const char* const model_path2 = "models/model_20000.pt"; // Adjust if needed
     cout << "load models for player1 " << model_path << " and player2"
         << model_path2 << " to device " << device << endl;
@@ -972,7 +972,7 @@ void uttt_alphazero_nn_vs_alphazero()
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
-    const size_t rounds = 100;
+    const size_t rounds = 10;
     MultiMatch< uttt::Move, uttt::State > match(
         game,
         [&]() { return new uttt::alphazero::libtorch::async::Player(
@@ -1036,7 +1036,8 @@ int main()
         test::ttt_alphazero_nn_vs_minimax();
         test::uttt_alphazero_training();
         */
-        test::uttt_alphazero_nn_vs_alphazero();
+//        test::uttt_alphazero_nn_vs_alphazero();
+        test::uttt_alphazero_nn_vs_minimax();
         cout << "\neverything ok" << endl;
         return 0;
     }

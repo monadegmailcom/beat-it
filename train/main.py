@@ -211,10 +211,12 @@ if __name__ == '__main__':
 
                 # Load metadata for step count
                 start_step = metadata.get('training_steps', 0)
-                run_name = os.path.basename(os.path.dirname(args.resume_from))
-                log_dir = os.path.join("runs", run_name)
+
                 print(f"Resuming from step {start_step}. "
                       "Optimizer state loaded.")
+
+                run_name = os.path.basename(os.path.dirname(args.resume_from))
+                log_dir = os.path.join("runs", run_name)
             else:
                 print(f"Warning: Checkpoint file not found at "
                       f"{args.resume_from}. Starting a new run.")
@@ -284,6 +286,8 @@ if __name__ == '__main__':
         total_duration_in_window = 0.0
         total_selfplay_duration_in_window = 0.0
         total_loss_in_window = 0.0
+        loss_policy_in_window = 0.0
+        loss_value_in_window = 0.0
         steps_in_window = 0
 
         while step < training_hyperparams['total_training_steps']:
@@ -338,22 +342,10 @@ if __name__ == '__main__':
             # Accumulate metrics for periodic console logging
             total_duration_in_window += duration
             total_loss_in_window += loss.item()
+            loss_policy_in_window += loss_policy.item()
+            loss_value_in_window += loss_value.item()
             steps_in_window += 1
 
-            # 3. Log metrics and update the C++ model periodically.
-            writer.add_scalar('Loss/Total', loss.item(), step)
-            writer.add_scalar('Loss/Policy', loss_policy.item(), step)
-            writer.add_scalar('Loss/Value', loss_value.item(), step)
-            writer.add_scalar(
-                'Performance/Training_Step_Time_ms',
-                duration * 1000, step)
-            writer.add_scalar(
-                'Performance/SelfPlay_Fetch_Time_ms',
-                fetch_duration * 1000, step)
-            writer.add_scalar(
-                'Buffer/ReplayBuffer_Size', len(replay_buffer), step)
-            writer.add_scalar(
-                'Buffer/SelfPlay_Queue_Size', queue_size, step)
             if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
                 # Log weights and gradients for each layer
                 for name, param in model.named_parameters():
@@ -361,10 +353,28 @@ if __name__ == '__main__':
                     writer.add_histogram(f'Weights/{name}', param.data, step)
 
                 avg_loss = total_loss_in_window / steps_in_window
+                avg_policy_loss = loss_policy_in_window / steps_in_window
+                avg_value_loss = loss_value_in_window / steps_in_window
                 avg_step_time_ms = (total_duration_in_window /
                                     steps_in_window) * 1000
                 avg_selfplay_time_ms = (total_selfplay_duration_in_window /
                                         steps_in_window) * 1000
+
+                # Log metrics periodically.
+                writer.add_scalar('Loss/Total', avg_loss, step)
+                writer.add_scalar('Loss/Policy', avg_policy_loss, step)
+                writer.add_scalar('Loss/Value', avg_value_loss, step)
+                writer.add_scalar(
+                    'Performance/Training_Step_Time_ms',
+                    duration * 1000, step)
+                writer.add_scalar(
+                    'Performance/SelfPlay_Fetch_Time_ms',
+                    fetch_duration * 1000, step)
+                writer.add_scalar(
+                    'Buffer/ReplayBuffer_Size', len(replay_buffer), step)
+                writer.add_scalar(
+                    'Buffer/SelfPlay_Queue_Size', queue_size, step)
+
                 print(
                     f"Step {step+1}/"
                     f"{training_hyperparams['total_training_steps']} | "
@@ -375,7 +385,8 @@ if __name__ == '__main__':
                 # Reset accumulators for the next window
                 total_duration_in_window, total_loss_in_window, \
                     total_selfplay_duration_in_window, \
-                    steps_in_window = 0.0, 0.0, 0.0, 0
+                    loss_policy_in_window, loss_value_in_window, \
+                    steps_in_window = 0.0, 0.0, 0.0, 0.0, 0.0, 0
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:

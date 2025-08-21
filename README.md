@@ -51,7 +51,13 @@ ki engine for two player games
   - setup venv and install torch in it
     - `pip install torch torchvision tensorboard matplotlib`
   - to upload file with the ssh-in-browser tool you may retry to update outdated ssh keys
-  
+
+## Patch paths for local machine
+- create patch:
+  - `diff -u /home/monade/source/beat-it/Makefile /home/monade/source/beat-it/Makefile.modified > /home/monade/source/beat-it/libtorch.patch`
+- run patch
+  - `patch < libtorch.patch`
+
 ## How to Run
 
 -  **Activate the virtual environment:**
@@ -86,34 +92,38 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ```
 
 ## Resume training
-1. **Resume training from checkpoint**
+### Resume training from checkpoint**
   ```bash
-  python -m train.main --game ttt --resume_from models/ttt_alphazero_experiment_2/checkpoint.pt
+  python -m train.main --game ttt --resume_from experiment_name/checkpoint.pt
   ```
-2. **Inspect metadata**
+### Inspect metadata**
   - extract metadata.json :
   ```bash
   mkdir -p checkpoint/extra
   unzip -p runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json > checkpoint/extra/metadata.json
   ```
-3. **Extend training steps**
+  
+### Extend training steps**
   - overwrite configurations in train/main.py and train/uttt.py
   - resume training in point 1.
 
-## Todos
+## Monitor machine
+- monitor cpu, memory and gpu usage: `watch 'ps -p $(pgrep python) -o %cpu,%mem ; nvidia-smi'`
+- `sensors`
 
-- add weight_decay parameter to adam optimizer as hyperparameter
+## Hyperparameter tuning
+
 - use optuna for hyperparameter optimization
 
 ## Further potential optimizations
-
-1. use subnormal number optimization
+- try Int8 arithmetic for gpu
+- use subnormal number optimization
 ```cpp
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
 #include <xmmintrin.h> // For SSE intrinsics to control floating-point behavior
 #endif
   ```
-   2. in the code before using libtorch
+-  in the code before using libtorch
    ```cpp
 #if defined(__x86_64__) || defined(_M_X64) || defined(__i386) || defined(_M_IX86)
     // Enable Flush-to-Zero and Denormals-are-Zero modes for this inference thread.
@@ -121,4 +131,4 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
     // models that might produce many subnormal floating-point values.
     _mm_setcsr(_mm_getcsr() | 0x8040);
 #endif
-````
+```
