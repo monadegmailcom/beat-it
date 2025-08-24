@@ -4,6 +4,7 @@
 #include <boost/iterator/iterator_facade.hpp>
 #include <optional>
 #include <vector>
+#include <iostream>
 
 enum PlayerIndex : uint8_t
 {
@@ -20,6 +21,8 @@ enum GameResult : char
     Player2Win,
     Undecided
 };
+
+std::ostream& operator<<( std::ostream&, GameResult );
 
 // Helper base class to provide a default get_valid_moves implementation
 template<typename DerivedGameState, typename MoveT, typename StateT>
@@ -119,3 +122,31 @@ private:
     PlayerIndex player_index;
     StateT state;
 };
+
+template< typename TagT, typename T >
+struct TaggedDispatch
+{
+    TaggedDispatch( T const& v ) : value( v ) {}
+    T value;
+};
+
+// generic player serializations
+// overload for specific games
+template< typename StateT >
+std::ostream& operator<<(
+    std::ostream& os,
+    TaggedDispatch< StateT, PlayerIndex > const& player_index )
+{
+    os << player_index.value;
+    return os;
+}
+
+// generic move serializations
+// overload for specific games
+template< typename StateT, typename MoveT >
+std::ostream& operator<<(
+    std::ostream& os, TaggedDispatch< StateT, MoveT > const& move )
+{
+    os << move.value;
+    return os;
+}

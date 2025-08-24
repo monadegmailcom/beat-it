@@ -205,20 +205,21 @@ void nim_match()
 
     MultiMatch< nim::Move, nim::State< HEAPS > > match(
         game,
-        [&game]() { return new nim::minimax::Player< HEAPS >( game, 2, seed ); },
-        [&game]() { return new nim::minimax::Player< HEAPS >( game, 3, seed ); },
-        100, 1 );
+        [&game](unsigned seed) { return new nim::minimax::Player< HEAPS >( game, 2, seed ); },
+        [&game](unsigned seed) { return new nim::minimax::Player< HEAPS >( game, 3, seed ); },
+        100, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << endl;
 
-    assert (match.fst_player_wins < 50);
-    assert (match.snd_player_wins > 50);
-    assert (match.draws == 0);
+    assert (match.get_fst_player_wins() < 50);
+    assert (match.get_snd_player_wins() > 50);
+    assert (match.get_draws() == 0);
 }
 
 void ttt_game()
@@ -350,18 +351,19 @@ void tic_tac_toe_match()
 
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game]() { return new ttt::minimax::Player( game, 0, seed ); },
-        [&game]() { return new ttt::minimax::Player( game, 5, seed ); },
-        100, 1 );
+        [&game](unsigned seed) { return new ttt::minimax::Player( game, 0, seed ); },
+        [&game](unsigned seed) { return new ttt::minimax::Player( game, 5, seed ); },
+        100, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << endl;
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << endl;
 
-    assert (match.fst_player_wins == 0);
-    assert (match.draws > 50);
+    assert (match.get_fst_player_wins() == 0);
+    assert (match.get_draws() > 50);
 }
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
@@ -450,19 +452,20 @@ void uttt_match()
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game]() { return new uttt::minimax::Player( game, 9.0, 1, seed ); },
-        [&game]() { return new uttt::minimax::Player( game, 9.0, 4, seed ); },
-        100, 1 );
+        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 1, seed ); },
+        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 4, seed ); },
+        100, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << endl;
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << endl;
 
-    assert (match.fst_player_wins < 50);
-    assert (match.snd_player_wins > 50);
-    assert (match.draws > 0);
+    assert (match.get_fst_player_wins() < 50);
+    assert (match.get_snd_player_wins() > 50);
+    assert (match.get_draws() > 0);
 }
 
 void montecarlo_node()
@@ -558,21 +561,22 @@ void montecarlo_ttt_match()
     const size_t rounds = 100;
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game, &allocator, exploration]()
+        [&game, &allocator, exploration](unsigned seed)
             { return new ttt::montecarlo::Player( game, exploration, 100, seed,
                                                     allocator ); },
-        [&game, &allocator, exploration]()
+        [&game, &allocator, exploration](unsigned seed)
             { return new ttt::montecarlo::Player( game, exploration, 500, seed,
                                                     allocator ); },
-        rounds, 1 );
+        rounds, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << endl;
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << endl;
 
-    assert (match.draws > 0);
+    assert (match.get_draws() > 0);
 }
 
 void montecarlo_minimax_ttt_match()
@@ -593,19 +597,20 @@ void montecarlo_minimax_ttt_match()
     const size_t rounds = 100;
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&game, &allocator, exploration]()
+        [&game, &allocator, exploration](unsigned seed)
             { return new ttt::montecarlo::Player( game, exploration, 400, seed,
                                                     allocator ); },
-        [&game]() { return new ttt::minimax::Player( game, 2, seed ); },
-        rounds, 1 );
+        [&game](unsigned seed) { return new ttt::minimax::Player( game, 2, seed ); },
+        rounds, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << endl;
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << endl;
 
-    assert (match.draws > 0);
+    assert (match.get_draws() > 0);
 }
 
 void montecarlo_minimax_uttt_match()
@@ -632,30 +637,31 @@ void montecarlo_minimax_uttt_match()
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game, exploration, &allocator]()
+        [&game, exploration, &allocator](unsigned seed)
             { return new uttt::montecarlo::Player( game, exploration, simulations, seed,
                                                     allocator ); },
-        [&game, factor]()
+        [&game, factor](unsigned seed)
             { return new uttt::minimax::Player( game, factor, depth, seed ); },
-        rounds, 1 );
+        rounds, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << "fst player simulations: " << simulations << '\n'
             << "fst player exploration: " << exploration << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "fst player duration: " << match.get_fst_player_duration() << '\n'
             << "snd player depth: " << depth << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.fst_player_duration ).count()) /
+                    match.get_fst_player_duration() ).count()) /
                chrono::duration_cast< std::chrono::microseconds >(
-                    match.snd_player_duration ).count() << '\n';
+                    match.get_snd_player_duration() ).count() << '\n';
 
-    assert (match.draws > 0);
+    assert (match.get_draws() > 0);
 }
 
 void uttt_match_mm_vs_tree_mm()
@@ -678,29 +684,30 @@ void uttt_match_mm_vs_tree_mm()
 
     MultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&game]() { return new uttt::minimax::Player( game, 9.0, fst_depth, seed ); },
-        [&game, &allocator]() { return new uttt::minimax::tree::Player(
+        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, fst_depth, seed ); },
+        [&game, &allocator](unsigned seed) { return new uttt::minimax::tree::Player(
                         game, 9.0, snd_depth, seed, allocator ); },
-        100, 1 );
+        100, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "draws: " << match.draws << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << "fst player depth: " << fst_depth << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "fst player duration: " << match.get_fst_player_duration() << '\n'
             << "snd player depth: " << snd_depth << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n'
+            << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.fst_player_duration ).count()) /
+                    match.get_fst_player_duration() ).count()) /
                chrono::duration_cast< std::chrono::microseconds >(
-                    match.snd_player_duration ).count() << '\n' << endl;
+                    match.get_snd_player_duration() ).count() << '\n' << endl;
 
-    assert (match.fst_player_wins != 0);
-    assert (match.snd_player_wins != 0);
-    assert (match.draws > 0);
+    assert (match.get_fst_player_wins() != 0);
+    assert (match.get_snd_player_wins() != 0);
+    assert (match.get_draws() > 0);
 }
 
 vector< ttt::alphazero::training::Position > selfplay_worker(
@@ -713,11 +720,12 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     PlayerIndex player_index = PlayerIndex::Player1;
     for (; runs_per_thread; --runs_per_thread)
     {
-        ttt::alphazero::libtorch::async::Player player( ttt::Game( player_index, ttt::empty_state ),
-            hp.c_base, hp.c_init, hp.simulations, node_allocator, inference_manager );
+        ttt::alphazero::libtorch::async::Player player(
+            ttt::Game( player_index, ttt::empty_state ), hp.c_base, hp.c_init,
+            hp.simulations, hp.opening_moves, seed, node_allocator,
+            inference_manager );
         alphazero::training::SelfPlay self_play(
-            player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
-            hp.opening_moves, g, positions );
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
         self_play.run();
         player_index = toggle(player_index);
     }
@@ -779,25 +787,27 @@ void ttt_alphazero_nn_vs_minimax()
 
     MultiMatch< ttt::Move, ttt::State > match(
         game,
-        [&]() { return new ttt::alphazero::libtorch::sync::Player(
-            game, hp.c_base, hp.c_init, hp.simulations, allocator, *model, device ); },
-        [&game]() { return new ttt::minimax::Player( game, 3, seed ); },
-        rounds, 1 );
+        [&](unsigned seed) { return new ttt::alphazero::libtorch::sync::Player( game,
+            hp.c_base, hp.c_init, hp.simulations, hp.opening_moves, seed,
+            allocator, *model, device ); },
+        [&game](unsigned seed) { return new ttt::minimax::Player( game, 3, seed ); },
+        rounds, 1, seed );
+    match.run();
 
     if (verbose)
         cout
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n'
-            << "draws: " << match.draws << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "fst player duration: " << match.get_fst_player_duration() << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "snd player duration: " << match.get_snd_player_duration() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.fst_player_duration ).count()) /
+                    match.get_fst_player_duration() ).count()) /
                chrono::duration_cast< std::chrono::microseconds >(
-                    match.snd_player_duration ).count() << '\n' << endl;
+                    match.get_snd_player_duration() ).count() << '\n' << endl;
 
-    assert (match.draws > 0);
+    assert (match.get_draws() > 0);
 }
 
 vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
@@ -814,11 +824,10 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
         auto start = std::chrono::steady_clock::now();
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ),
-            hp.c_base, hp.c_init, hp.simulations, node_allocator,
-            inference_manager );
+            hp.c_base, hp.c_init, hp.simulations, hp.opening_moves, seed,
+            node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
-            player, hp.dirichlet_alpha, hp.dirichlet_epsilon,
-            hp.opening_moves, g, positions );
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
 
         self_play.run();
 
@@ -899,6 +908,53 @@ obj/test  196,74s user 28,04s system 123% cpu 3:01,46 total
 */
 }
 
+template< typename MoveT, typename StateT >
+class LogMultiMatch : public MultiMatch< MoveT, StateT >
+{
+public:
+    LogMultiMatch(
+        Game< MoveT, StateT > const& game,
+        PlayerFactory< MoveT > fst_player_factory,
+        PlayerFactory< MoveT > snd_player_factory,
+        int rounds,
+        size_t number_of_threads,
+        unsigned seed )
+    : MultiMatch< MoveT, StateT >( game, fst_player_factory, snd_player_factory,
+        rounds, number_of_threads, seed ) {}
+private:
+    map< thread::id, vector< pair< PlayerIndex, MoveT >>> games;
+    mutex games_mutex;
+    mutex cout_mutex;
+    void report( Game< MoveT, StateT > const& game, MoveT const& move )
+        override
+    {
+        vector< pair< PlayerIndex, MoveT >>* moves = nullptr;
+        {
+            // only get/insert of new thread id has to be synchronized
+            lock_guard< mutex > lock( games_mutex );
+            moves = &games[this_thread::get_id()];
+        }
+
+        moves->push_back( make_pair( game.current_player_index(), move ));
+        if (game.result() != GameResult::Undecided)
+        {
+            {
+                // print game moves and result to console
+                lock_guard< mutex > lock( cout_mutex );
+                for (auto const& [player_index, move] : *moves)
+                    // toggle the player index because it's the opponent's move
+                    cout << uttt::PlayerIndexDispatch( toggle( player_index ))
+                        << ":" << uttt::MoveDispatch( move ) << ", " << flush;
+                cout << "[" << moves->size() << "] -> " << game.result()
+                    << "\n" << endl;
+            }
+            // clear moves container for next game
+            lock_guard< mutex > lock( games_mutex );
+            games[this_thread::get_id()].clear();
+        }
+    }
+};
+
 void uttt_alphazero_nn_vs_minimax()
 {
     if (extensive)
@@ -921,29 +977,32 @@ void uttt_alphazero_nn_vs_minimax()
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
-    const size_t rounds = 10;
-    MultiMatch< uttt::Move, uttt::State > match(
+    const size_t rounds = 20;
+    const size_t simulations = 1600;
+    LogMultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp.c_base, hp.c_init, 1600, allocator, inference_manager ); },
-        [&game]() { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
-        rounds, threads );
+        [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
+            game, hp.c_base, hp.c_init, simulations, hp.opening_moves, seed, allocator,
+            inference_manager ); },
+        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
+        rounds, threads, seed );
+    match.run();
 
     if (verbose)
         cout
             << "rounds = " << rounds << ", threads = " << threads << '\n'
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "fst player duration: " << match.get_fst_player_duration() << '\n'
             << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
             << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n'
-            << "draws: " << match.draws << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "snd player duration: " << match.get_snd_player_duration() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.fst_player_duration ).count()) /
+                    match.get_fst_player_duration() ).count()) /
                chrono::duration_cast< std::chrono::microseconds >(
-                    match.snd_player_duration ).count() << '\n' << endl;
+                    match.get_snd_player_duration() ).count() << '\n' << endl;
 }
 
 void uttt_alphazero_nn_vs_alphazero()
@@ -973,29 +1032,32 @@ void uttt_alphazero_nn_vs_alphazero()
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 10;
-    MultiMatch< uttt::Move, uttt::State > match(
+    LogMultiMatch< uttt::Move, uttt::State > match(
         game,
-        [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp.c_base, hp.c_init, 400, allocator, inference_manager ); },
-        [&]() { return new uttt::alphazero::libtorch::async::Player(
-            game, hp2.c_base, hp2.c_init, 400, allocator, inference_manager2 ); },
-        rounds, threads );
+        [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
+            game, hp.c_base, hp.c_init, 400, hp.opening_moves, seed,
+            allocator, inference_manager ); },
+        [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
+            game, hp2.c_base, hp2.c_init, 400, hp2.opening_moves, seed,
+            allocator, inference_manager2 ); },
+        rounds, threads, seed );
+    match.run();
 
     if (verbose)
         cout
             << "rounds = " << rounds << ", threads = " << threads << '\n'
-            << "fst player wins: " << match.fst_player_wins << '\n'
-            << "fst player duration: " << match.fst_player_duration << '\n'
+            << "fst player wins: " << match.get_fst_player_wins() << '\n'
+            << "fst player duration: " << match.get_fst_player_duration() << '\n'
             << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
             << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
-            << "snd player wins: " << match.snd_player_wins << '\n'
-            << "snd player duration: " << match.snd_player_duration << '\n'
-            << "draws: " << match.draws << '\n'
+            << "snd player wins: " << match.get_snd_player_wins() << '\n'
+            << "snd player duration: " << match.get_snd_player_duration() << '\n'
+            << "draws: " << match.get_draws() << '\n'
             << "fst/snd player duration ratio: "
             << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.fst_player_duration ).count()) /
+                    match.get_fst_player_duration() ).count()) /
                chrono::duration_cast< std::chrono::microseconds >(
-                    match.snd_player_duration ).count() << '\n' << endl;
+                    match.get_snd_player_duration() ).count() << '\n' << endl;
 }
 
 } // namespace test {

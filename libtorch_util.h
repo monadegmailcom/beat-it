@@ -137,11 +137,13 @@ class Player : public BasePlayerT
 {
 public:
     Player(
-        typename BasePlayerT::game_type const& game,
-        float c_base, float c_init, size_t simulations,
+        typename BasePlayerT::game_type const& game, float c_base,
+        float c_init, size_t simulations, size_t opening_moves,
+        unsigned seed,
         NodeAllocator< typename BasePlayerT::value_type >& allocator,
         torch::jit::Module& model, torch::Device device )
-    : BasePlayerT( game, c_base, c_init, simulations, allocator),
+    : BasePlayerT( game, c_base, c_init, simulations, opening_moves, seed,
+                   allocator ),
       model( model ), device( device ) {}
 protected:
     torch::jit::Module& model;
@@ -170,12 +172,12 @@ class Player : public BasePlayerT
 {
 public:
     Player(
-        BasePlayerT::game_type const& game,
-        float c_base, float c_init,
-        size_t simulations, // may be different from model training
+        typename BasePlayerT::game_type const& game, float c_base,
+        float c_init, size_t simulations, size_t opening_moves,
+        unsigned seed,
         NodeAllocator< typename BasePlayerT::value_type >& allocator,
         InferenceManager& im )
-: BasePlayerT( game, c_base, c_init, simulations, allocator),
+: BasePlayerT( game, c_base, c_init, simulations, opening_moves, seed, allocator),
   inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;

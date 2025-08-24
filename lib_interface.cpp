@@ -142,11 +142,12 @@ int fetch_selfplay_data(
 template< typename PlayerT >
 AlphazeroPlayer< PlayerT >* player_factory(
     typename PlayerT::game_type const& game,
-    libtorch::Hyperparameters const& hp,
+    libtorch::Hyperparameters const& hp, unsigned seed,
     AlphazeroNodeAllocator< PlayerT >& node_allocator )
 {
     return new PlayerT(
-        game, hp.c_base, hp.c_init, hp.simulations,
+        game, hp.c_base, hp.c_init, hp.simulations, hp.opening_moves,
+        seed,
         node_allocator, *inference_manager );
 }
 
@@ -165,8 +166,8 @@ AlphazeroSelfPlay< PlayerT >* selfplay_factory(
     mt19937& g )
 {
     return new AlphazeroSelfPlay< PlayerT >(
-        player, hyperparameters.dirichlet_alpha, hyperparameters.dirichlet_epsilon,
-        hyperparameters.opening_moves, g, positions );
+        player, hyperparameters.dirichlet_alpha,
+        hyperparameters.dirichlet_epsilon, g, positions );
 }
 
 // run self play in worker thread
@@ -203,8 +204,8 @@ void selfplay_worker(
 
         unique_ptr< AlphazeroPlayer< PlayerT >> player(
             player_factory< PlayerT >(
-                 typename PlayerT::game_type( player_index, initial_state ),
-                 hp, node_allocator ));
+                typename PlayerT::game_type( player_index, initial_state ), hp,
+                g(), node_allocator ) );
 
         positions.clear();
         unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay(

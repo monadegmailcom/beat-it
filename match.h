@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <chrono>
+#include <random>
 
 template< typename MoveT, typename StateT >
 class Match
@@ -34,9 +35,10 @@ public:
             op->apply_opponent_move( move );
             *op_dur += std::chrono::duration_cast< std::chrono::microseconds >(
                        std::chrono::steady_clock::now() - start );
-            report( game, move );
             std::swap( pl, op );
             std::swap( pl_dur, op_dur );
+            // report the game move after the move is applied
+            report( game, move );
         }
     }
 protected:
@@ -44,30 +46,62 @@ protected:
 };
 
 template< typename MoveT, typename StateT >
-struct MultiMatch : public ::Match< MoveT, StateT >
+class MultiMatch : public ::Match< MoveT, StateT >
 {
+public:
     // we need a new player each round, so we use factories
     MultiMatch(
         Game< MoveT, StateT > const& game,
         PlayerFactory< MoveT > fst_player_factory,
         PlayerFactory< MoveT > snd_player_factory,
         int rounds,
-        size_t number_of_threads )
-    : rounds( rounds )
+        size_t number_of_threads,
+        unsigned seed)
+    : rounds(rounds),
+      g(seed),
+      game(game),
+      fst_player_factory(fst_player_factory),
+      snd_player_factory(snd_player_factory),
+      number_of_threads(number_of_threads)
+    {}
+
+    void run()
     {
         std::vector< std::thread > threads( number_of_threads );
         for (std::thread& thread : threads)
             thread = std::thread(
-                [this, &game, fst_player_factory, snd_player_factory]()
-                { worker( game, fst_player_factory, snd_player_factory ); });
+                [this]() { worker(); });
         for (auto& thread : threads)
             thread.join();
     }
 
-    void worker(
-        Game< MoveT, StateT > const& game,
-        PlayerFactory< MoveT > fst_player_factory,
-        PlayerFactory< MoveT > snd_player_factory )
+    size_t get_draws() const
+    {
+        std::lock_guard< std::mutex > lock( mutex );
+        return draws;
+    }
+    size_t get_fst_player_wins() const
+    {
+        std::lock_guard< std::mutex > lock( mutex );
+        return fst_player_wins;
+    }
+    size_t get_snd_player_wins() const
+    {
+        std::lock_guard< std::mutex > lock( mutex );
+        return snd_player_wins;
+    }
+    std::chrono::microseconds get_fst_player_duration() const
+    {
+        std::lock_guard< std::mutex > lock( mutex );
+        return fst_player_duration;
+    }
+    std::chrono::microseconds get_snd_player_duration() const
+    {
+        std::lock_guard< std::mutex > lock( mutex );
+        return snd_player_duration;
+    }
+private:
+    void worker()
     {
         size_t tls_draws = 0;
         size_t tls_fst_player_wins = 0;
@@ -76,34 +110,49 @@ struct MultiMatch : public ::Match< MoveT, StateT >
         std::chrono::microseconds tls_fst_player_duration {0};
         std::chrono::microseconds tls_snd_player_duration {0};
 
-        PlayerIndex fst_player_index = game.current_player_index();
-        PlayerIndex snd_player_index = toggle( fst_player_index );
+        /* Pointers to the factories and their corresponding TLS win/duration
+            counters. These will be swapped each round to alternate which
+            factory goes first. */
+        auto* p_fst_factory = &fst_player_factory;
+        auto* p_snd_factory = &snd_player_factory;
+        auto* p_fst_wins = &tls_fst_player_wins;
+        auto* p_snd_wins = &tls_snd_player_wins;
+        auto* p_fst_duration = &tls_fst_player_duration;
+        auto* p_snd_duration = &tls_snd_player_duration;
 
-        auto player_factory = &fst_player_factory;
-        auto player_duration = &fst_player_duration;
-
-        auto opponent_factory = &snd_player_factory;
-        auto opponent_duration = &snd_player_duration;
+        // The starting player index also alternates each round.
+        PlayerIndex current_starter_index = game.current_player_index();
 
         while (rounds.fetch_sub(1, std::memory_order_relaxed) > 0)
         {
+            // For each game, create a new Game instance with the correct
+            // starting player, but with the original game's initial state.
+            Game<MoveT, StateT> round_game(
+                current_starter_index, game.get_state());
+
+            const unsigned round_seed = g();
             const GameResult game_result = this->play(
-                game, *(std::unique_ptr< Player< MoveT > >((*player_factory)())), *player_duration,
-                *(std::unique_ptr< Player< MoveT > >((*opponent_factory)())), *opponent_duration );
+                round_game,
+                *(std::unique_ptr< Player< MoveT > >((*p_fst_factory)(
+                    round_seed ))), *p_fst_duration,
+                *(std::unique_ptr< Player< MoveT > >((*p_snd_factory)(
+                    round_seed ))), *p_snd_duration );
+
             if (game_result == GameResult::Draw)
                 ++tls_draws;
-            else if (game_result == GameResult::Player1Win)
-                fst_player_index == Player1
-                    ? ++tls_fst_player_wins
-                    : ++tls_snd_player_wins;
-            else if (game_result == GameResult::Player2Win)
-                 fst_player_index == Player2
-                    ? ++tls_fst_player_wins
-                    : ++tls_snd_player_wins;
+            // Check if the winner matches the starting player of the round.
+            else if (game_result == (current_starter_index == Player1
+                        ? GameResult::Player1Win
+                        : GameResult::Player2Win))
+                (*p_fst_wins)++; // The first player for this round won.
+            else
+                (*p_snd_wins)++; // The second player for this round won.
 
-            std::swap( player_factory, opponent_factory );
-            std::swap( player_duration, opponent_duration );
-            std::swap( fst_player_index, snd_player_index );
+            // Swap the roles for the next round.
+            std::swap(p_fst_factory, p_snd_factory);
+            std::swap(p_fst_wins, p_snd_wins);
+            std::swap(p_fst_duration, p_snd_duration);
+            current_starter_index = toggle(current_starter_index);
         }
 
         // accumulate results thread safe
@@ -116,13 +165,18 @@ struct MultiMatch : public ::Match< MoveT, StateT >
         snd_player_duration += tls_snd_player_duration;
     }
 
-    std::mutex mutex;
-    // has to be a signed type because we test for positiv
+    mutable std::mutex mutex;
+    // has to be a signed type because we test for positivity
     std::atomic< int > rounds;
+    std::mt19937 g;
     size_t draws = 0;
     size_t fst_player_wins = 0;
     size_t snd_player_wins = 0;
     std::chrono::microseconds fst_player_duration {0};
     std::chrono::microseconds snd_player_duration {0};
-};
 
+    Game< MoveT, StateT > const& game;
+    PlayerFactory< MoveT > fst_player_factory;
+    PlayerFactory< MoveT > snd_player_factory;
+    size_t number_of_threads;
+};

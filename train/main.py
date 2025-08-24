@@ -55,10 +55,10 @@ if __name__ == '__main__':
             'weight_decay': 1e-4,  # L2 regularization strength
             'batch_size': 64,
             'log_freq_steps': 100,
-            'total_training_steps': 2000,
+            'total_training_steps': 20000,
             'model_update_freq_steps': 500,
             'checkpoint_freq_steps': 1000,
-            'replay_buffer_size': 20000,
+            'replay_buffer_size': 200000,
             'min_replay_buffer_size': 1000,
             'target_replay_ratio': 4.0,
             'validation_split_percentage': 0.05,  # 5% of data for validation

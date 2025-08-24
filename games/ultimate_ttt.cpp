@@ -150,15 +150,6 @@ double Player::score( Game const& game ) const
 
 namespace alphazero {
 
-BasePlayer::BasePlayer(
-    Game const& game,
-    float c_base,
-    float c_init,
-    size_t simulations,
-    NodeAllocator& allocator )
-: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator)
-{}
-
 size_t BasePlayer::move_to_policy_index( Move const& move ) const
 {
     return size_t( move.big_move * 9 + move.small_move );
@@ -392,4 +383,20 @@ ostream& operator<<( ostream& stream, uttt::Game const& game )
     stream << ")\n";
 
     return stream;
+}
+
+ostream& operator<<(
+    ostream& os,
+    TaggedDispatch< uttt::State, PlayerIndex > const& player_index )
+{
+    os << (player_index.value == PlayerIndex::Player1 ? "x" : "o");
+    return os;
+}
+
+ostream& operator<<(
+    ostream& os, TaggedDispatch< uttt::State, uttt::Move > const& move )
+{
+    os << "(" << (int) move.value.big_move << ','
+        << (int) move.value.small_move << ")";
+    return os;
 }

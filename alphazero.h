@@ -51,16 +51,19 @@ public:
         Game< MoveT, StateT > const& game,
         float c_base,
         float c_init,
-        size_t simulations,
+        size_t simulations, // may be different from model training
+        size_t opening_moves,
+        unsigned seed,
         NodeAllocator< MoveT, StateT >& allocator )
     : root( new (allocator.allocate(1))
             node_type( value_type( game, MoveT()), allocator ),
             // The custom deleter now only needs to destruct and deallocate the single
             // node pointer it is given. The Node's destructor is responsible for
             // recursively cleaning up its children.
-            [&allocator](node_type* ptr) { if (ptr) { ptr->~node_type(); allocator.deallocate(ptr, 1); } }
-          ),
-      c_base( c_base ), c_init( c_init ), simulations( simulations ), allocator( allocator )
+            [&allocator](node_type* ptr) {
+                if (ptr) { ptr->~node_type(); allocator.deallocate(ptr, 1); } } ),
+      c_base( c_base ), c_init( c_init ), simulations( simulations ),
+      opening_moves( opening_moves ), g( seed ), allocator( allocator )
     {
         if (!simulations)
             throw std::invalid_argument( "simulations must be > 0" );
@@ -70,7 +73,7 @@ public:
     {
         for (size_t i = simulations; i != 0; --i)
             simulation( *root );
-        auto itr = choose_best_move();
+        auto itr = select_move_iterator();
 
         if (itr == root->get_children().end())
             throw std::runtime_error( "no move choosen" );
@@ -107,6 +110,22 @@ public:
 
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
+
+    auto select_move_iterator()
+    {
+        auto& root = *this->root;
+        // expand node if not expanded
+        if (root.get_children().empty())
+            nn_eval( root );
+
+        auto itr = root.get_children().begin();
+        if (++move_count <= opening_moves)
+            itr = choose_opening_move();
+        else
+            itr = choose_best_move();
+        return itr;
+    }
+
 
     // promise: node is expanded
     float nn_eval( node_type& node )
@@ -168,16 +187,6 @@ public:
         return nn_value;
     }
 
-    // Apple clang version 17.0.0 (clang-1700.0.13.3) produces strange errors
-    // when i specify the return value iterator type explicitly:
-    // Node< ValueT > member boost::intrusive::list< Node > children has incomplete type
-    auto choose_best_move()
-    {
-        // choose child with most visits
-        return std::ranges::max_element( root->get_children(),
-            [](auto const& a, auto const& b)
-            { return a.get_value().visits < b.get_value().visits; } );
-    }
 
     virtual std::array< float, G > serialize_state( Game< MoveT, StateT > const& ) const = 0;
 protected:
@@ -195,6 +204,43 @@ protected:
         return q + c * p * std::sqrt( parent_visits ) / (value.visits + 1);
     }
 
+    // Apple clang version 17.0.0 (clang-1700.0.13.3) produces strange errors
+    // when i specify the return value iterator type explicitly:
+    // Node< ValueT > member boost::intrusive::list< Node > children has incomplete type
+    auto choose_best_move()
+    {
+        // choose child with most visits
+        return std::ranges::max_element( root->get_children(),
+            [](auto const& a, auto const& b)
+            { return a.get_value().visits < b.get_value().visits; } );
+    }
+
+private:
+    auto choose_opening_move()
+    {
+        auto& children = root->get_children();
+
+        // sample from children in opening phase by visit distribution
+        // so we are more versatile in the opening
+        size_t total_visits = 0;
+        for (auto const& child : children)
+            total_visits += child.get_value().visits;
+
+        if (!total_visits)
+            throw std::runtime_error( "no opening move choosen");
+
+        std::uniform_int_distribution< size_t > dist(0, total_visits - 1);
+        size_t r = dist( g );
+
+        for (auto itr = children.begin(); itr != children.end(); ++itr)
+        {
+            if (r < itr->get_value().visits)
+                return itr;
+            r -= itr->get_value().visits;
+        }
+
+        return children.begin(); // Fallback, should ideally not be reached
+    }
     // require: node has children
     node_type& select( node_type& node )
     {
@@ -216,7 +262,9 @@ protected:
     float c_base;
     float c_init;
     const size_t simulations;
-
+    const size_t opening_moves;
+    size_t move_count = 0;
+    std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
 };
 
@@ -239,21 +287,33 @@ public:
         Player< MoveT, StateT, G, P >& player,
         float dirichlet_alpha,
         float dirichlet_epsilon,
-        size_t opening_moves,
         std::mt19937& g,
         std::vector< Position< G, P >>& positions )
-    : player( player ), opening_moves( opening_moves ), dirichlet_epsilon( dirichlet_epsilon ),
+    : player( player ), dirichlet_epsilon( dirichlet_epsilon ),
       g( g ), gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ) {}
 
     void run()
     {
         const size_t prev_size = positions.size();
         GameResult game_result;
-
         for (game_result = player.get_root()->get_value().game_result;
              game_result == GameResult::Undecided;
              game_result = player.get_root()->get_value().game_result)
-            choose_move();
+        {
+            add_dirichlet_noise();
+            auto& root = *player.get_root();
+            for (size_t i = player.get_simulations(); i != 0; --i)
+                player.simulation( root );
+            auto itr = player.select_move_iterator();
+            if (itr == root.get_children().end())
+                throw std::runtime_error( "no move choosen" );
+
+            append_training_data();
+
+            auto new_root = &*itr;
+            root.get_children().erase( itr );
+            player.get_root().reset( new_root );
+        }
 
         for (auto itr = positions.begin() + prev_size; itr != positions.end(); ++itr)
             itr->target_value = detail::game_result_2_score( game_result, itr->current_player );
@@ -275,35 +335,6 @@ protected:
             policy *= 1.0 - dirichlet_epsilon;
             policy += gamma_dist( g ) * dirichlet_epsilon;
         }
-    }
-
-    MoveT choose_move()
-    {
-        // add dirichlet noise to root node before first simulation
-        add_dirichlet_noise();
-
-        auto& root = *player.get_root();
-
-        // root node is expanded now
-        for (size_t i = player.get_simulations(); i != 0; --i)
-            player.simulation( root );
-
-        auto itr = root.get_children().begin();
-        if (++move_count <= opening_moves)
-            itr = choose_opening_move();
-        else
-            itr = player.choose_best_move();
-
-        if (itr == root.get_children().end())
-            throw std::runtime_error( "no move choosen" );
-
-        append_training_data();
-
-        auto new_root = &*itr;
-        root.get_children().erase( itr );
-        player.get_root().reset( new_root );
-
-        return new_root->get_value().move;
     }
 
     void append_training_data()
@@ -337,39 +368,11 @@ protected:
         }
     }
 
-    auto choose_opening_move()
-    {
-        auto& children = player.get_root()->get_children();
-
-        // sample from children in opening phase by visit distribution
-        // so we are more versatile in the opening
-        size_t total_visits = 0;
-        for (auto const& child : children)
-            total_visits += child.get_value().visits;
-
-        if (!total_visits)
-            throw std::runtime_error( "no opening move choosen");
-
-        std::uniform_int_distribution< size_t > dist(0, total_visits - 1);
-        size_t r = dist( g );
-
-        for (auto itr = children.begin(); itr != children.end(); ++itr)
-        {
-            if (r < itr->get_value().visits)
-                return itr;
-            r -= itr->get_value().visits;
-        }
-
-        return children.begin(); // Fallback, should ideally not be reached
-    }
-
     Player< MoveT, StateT, G, P >& player;
-    size_t opening_moves;
     float dirichlet_epsilon;
     std::mt19937& g;
     std::gamma_distribution< float > gamma_dist;
     std::vector< Position< G, P >>& positions;
-    size_t move_count = 0;
 };
 
 } // namespace training

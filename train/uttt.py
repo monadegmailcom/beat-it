@@ -5,7 +5,7 @@ game_config = {
     'board_size': 9,
     'num_actions': 81,
     'input_channels': 4,  # X pieces, O pieces, valid-moves, player-to-move
-    'num_res_blocks': 2,
+    'num_res_blocks': 6,
     'res_block_channels': 64,
     'fc_hidden_size': 256  # Hidden layer size for value/policy heads
 }

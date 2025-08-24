@@ -42,14 +42,6 @@ double score( State const& state )
 
 namespace alphazero {
 
-BasePlayer::BasePlayer(
-    Game const& game,
-    float c_base,
-    float c_init,
-    size_t simulations,
-    NodeAllocator& allocator )
-: ::alphazero::Player< Move, State, G, P >( game, c_base, c_init, simulations, allocator) {}
-
 size_t BasePlayer::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );

@@ -8,7 +8,7 @@ class Player
 {
 public:
     using move_type = MoveT;
-    
+
     virtual ~Player() = default;
 
     // promise: return a valid move of game
@@ -20,4 +20,4 @@ public:
 
 // for match
 template< typename MoveT >
-using PlayerFactory = std::function< Player< MoveT >* () >;
+using PlayerFactory = std::function< Player< MoveT >* (unsigned seed) >;
