@@ -9,13 +9,13 @@ import io
 import json
 import time
 import importlib
+from typing import cast
 from torch.utils.tensorboard import SummaryWriter
 import argparse
 from .utils import (
-    ReplayBuffer, set_model, fetch_selfplay_data_from_cpp,
-    create_inference_model_bundle, save_checkpoint, log_histogram_as_image,
-    DataPointers, split_and_add_data
-
+    ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
+    TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
+    log_histogram_as_image, DataPointers, split_and_add_data
 )
 
 # 2. Training Setup
@@ -50,7 +50,7 @@ if __name__ == '__main__':
 
         # Group all training hyperparameters into a single dictionary for easy
         # logging.
-        training_hyperparams = {
+        training_hyperparams: TrainingHyperparameters = {
             'learning_rate': 0.0005,
             'weight_decay': 1e-4,  # L2 regularization strength
             'batch_size': 64,
@@ -63,6 +63,8 @@ if __name__ == '__main__':
             'target_replay_ratio': 4.0,
             'validation_split_percentage': 0.05,  # 5% of data for validation
             'validation_freq_steps': 500,  # Run validation every 500 steps
+            'lr_schedule_milestones': [10000, 15000],  # Steps to decay LR
+            'lr_schedule_gamma': 0.1,  # LR decay factor
         }
 
         # Configuration for the self-play run
@@ -117,6 +119,13 @@ if __name__ == '__main__':
             lr=training_hyperparams['learning_rate'],
             weight_decay=training_hyperparams['weight_decay'])
 
+        # Scheduler
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=training_hyperparams['lr_schedule_milestones'],
+            gamma=training_hyperparams['lr_schedule_gamma']
+        )
+
         # --- Resume from Checkpoint Logic ---
         if args.resume_from:
             print(f"Attempting to resume training from: {args.resume_from}")
@@ -125,6 +134,7 @@ if __name__ == '__main__':
                 extra_files = {
                     'optimizer_state.pt': b'',
                     'metadata.json': b'',
+                    'scheduler_state.pt': b'',
                     'train_buffer_data.npz': b'',
                     'train_buffer_metadata.json': b'',
                     'validation_buffer_data.npz': b'',
@@ -194,6 +204,12 @@ if __name__ == '__main__':
                         extra_files['optimizer_state.pt'])
                     optimizer.load_state_dict(
                         torch.load(optimizer_state_buffer))
+                    # Also load scheduler state if it exists
+                    if extra_files['scheduler_state.pt']:
+                        scheduler_state_buffer = io.BytesIO(
+                            extra_files['scheduler_state.pt'])
+                        scheduler.load_state_dict(
+                            torch.load(scheduler_state_buffer))
 
                 # Load configurations from checkpoint, then overwrite with
                 # current script's settings
@@ -203,7 +219,8 @@ if __name__ == '__main__':
                 loaded_hyperparams.update(training_hyperparams)
                 loaded_self_play_config.update(self_play_config)
 
-                training_hyperparams = loaded_hyperparams
+                training_hyperparams = cast(
+                    TrainingHyperparameters, loaded_hyperparams)
                 self_play_config = loaded_self_play_config
 
                 print("Loaded and merged configurations. Script settings "
@@ -279,6 +296,7 @@ if __name__ == '__main__':
         # 1. Fetch a small batch of new data to keep the buffer fresh.
         num_positions_to_fetch = max(
             1,
+
             int(training_hyperparams['batch_size']
                 / training_hyperparams['target_replay_ratio']))
 
@@ -289,6 +307,7 @@ if __name__ == '__main__':
         loss_policy_in_window = 0.0
         loss_value_in_window = 0.0
         steps_in_window = 0
+        logger = MetricLogger(writer)
 
         while step < training_hyperparams['total_training_steps']:
             fetch_start_time = time.time()
@@ -297,8 +316,7 @@ if __name__ == '__main__':
             new_data, queue_size = fetch_selfplay_data_from_cpp(
                 c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
-            total_selfplay_duration_in_window += fetch_duration
-
+            
             if new_data:
                 split_and_add_data(
                     new_data, replay_buffer, validation_buffer,
@@ -337,56 +355,26 @@ if __name__ == '__main__':
 
             loss.backward()
             optimizer.step()
+            scheduler.step()  # Update the learning rate
             duration = time.time() - start_time
 
-            # Accumulate metrics for periodic console logging
-            total_duration_in_window += duration
-            total_loss_in_window += loss.item()
-            loss_policy_in_window += loss_policy.item()
-            loss_value_in_window += loss_value.item()
-            steps_in_window += 1
+            logger.update(
+                loss_total=loss.item(),
+                loss_policy=loss_policy.item(),
+                loss_value=loss_value.item(),
+                step_time_ms=duration * 1000,
+                selfplay_time_ms=fetch_duration * 1000
+            )
 
             if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
                 # Log weights and gradients for each layer
                 for name, param in model.named_parameters():
                     writer.add_histogram(f'Gradients/{name}', param.grad, step)
                     writer.add_histogram(f'Weights/{name}', param.data, step)
-
-                avg_loss = total_loss_in_window / steps_in_window
-                avg_policy_loss = loss_policy_in_window / steps_in_window
-                avg_value_loss = loss_value_in_window / steps_in_window
-                avg_step_time_ms = (total_duration_in_window /
-                                    steps_in_window) * 1000
-                avg_selfplay_time_ms = (total_selfplay_duration_in_window /
-                                        steps_in_window) * 1000
-
-                # Log metrics periodically.
-                writer.add_scalar('Loss/Total', avg_loss, step)
-                writer.add_scalar('Loss/Policy', avg_policy_loss, step)
-                writer.add_scalar('Loss/Value', avg_value_loss, step)
-                writer.add_scalar(
-                    'Performance/Training_Step_Time_ms',
-                    duration * 1000, step)
-                writer.add_scalar(
-                    'Performance/SelfPlay_Fetch_Time_ms',
-                    fetch_duration * 1000, step)
-                writer.add_scalar(
-                    'Buffer/ReplayBuffer_Size', len(replay_buffer), step)
-                writer.add_scalar(
-                    'Buffer/SelfPlay_Queue_Size', queue_size, step)
-
-                print(
-                    f"Step {step+1}/"
-                    f"{training_hyperparams['total_training_steps']} | "
-                    f"Avg Loss: {avg_loss:.4f} | "
-                    f"Avg Step Time: {avg_step_time_ms:.2f}ms | "
-                    f"Avg Selfplay Time: {avg_selfplay_time_ms:.2f}ms")
-
-                # Reset accumulators for the next window
-                total_duration_in_window, total_loss_in_window, \
-                    total_selfplay_duration_in_window, \
-                    loss_policy_in_window, loss_value_in_window, \
-                    steps_in_window = 0.0, 0.0, 0.0, 0.0, 0.0, 0
+                logger.log_and_reset(
+                    step, training_hyperparams['total_training_steps'],
+                    len(replay_buffer), queue_size,
+                    optimizer.param_groups[0]['lr'])
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
@@ -444,6 +432,7 @@ if __name__ == '__main__':
                 save_checkpoint(
                     model,
                     optimizer,
+                    scheduler,
                     step=step + 1,
                     current_loss=loss,
                     game_config=game_config,
@@ -467,6 +456,7 @@ if __name__ == '__main__':
             save_checkpoint(
                 model,
                 optimizer,
+                scheduler,
                 step=step,
                 current_loss=loss,
                 game_config=game_config,

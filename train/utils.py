@@ -5,7 +5,9 @@ import io
 import os
 import time
 import json
+import collections
 import subprocess
+from typing import TypedDict
 import threading
 import matplotlib.pyplot as plt
 from PIL import Image
@@ -18,6 +20,24 @@ class DataPointers(ctypes.Structure):
         ("value_targets", ctypes.POINTER(ctypes.c_float)),
         ("player_indices", ctypes.POINTER(ctypes.c_int32)),
     ]
+
+
+class TrainingHyperparameters(TypedDict):
+    """A TypedDict to enforce the structure of training hyperparameters."""
+    learning_rate: float
+    weight_decay: float
+    batch_size: int
+    log_freq_steps: int
+    total_training_steps: int
+    model_update_freq_steps: int
+    checkpoint_freq_steps: int
+    replay_buffer_size: int
+    min_replay_buffer_size: int
+    target_replay_ratio: float
+    validation_split_percentage: float
+    validation_freq_steps: int
+    lr_schedule_milestones: list[int]
+    lr_schedule_gamma: float
 
 
 def set_model(
@@ -104,9 +124,9 @@ def create_inference_model_bundle(
 
 
 def save_checkpoint(
-        model, optimizer, step, current_loss, game_config,
-        self_play_config, training_hyperparams, path, train_buffer,
-        validation_buffer):
+        model, optimizer, scheduler, step, current_loss, game_config,
+        self_play_config, training_hyperparams: TrainingHyperparameters, path,
+        train_buffer, validation_buffer):
     """Saves a full checkpoint including model, metadata, train buffer,
        validation buffer, and optimizer state to a file.
     """
@@ -118,11 +138,15 @@ def save_checkpoint(
     )
     optimizer_state_buffer = io.BytesIO()
     torch.save(optimizer.state_dict(), optimizer_state_buffer)
+    scheduler_state_buffer = io.BytesIO()
+    torch.save(scheduler.state_dict(), scheduler_state_buffer)
+
     loaded_model = torch.jit.load(io.BytesIO(model_bytes))
 
     extra_files_dict = {
         'metadata.json': metadata_json,
-        'optimizer_state.pt': optimizer_state_buffer.getvalue()
+        'optimizer_state.pt': optimizer_state_buffer.getvalue(),
+        'scheduler_state.pt': scheduler_state_buffer.getvalue()
     }
 
     if train_buffer:
@@ -175,6 +199,62 @@ def split_and_add_data(
 
     train_buffer.add({k: v[:split_idx] for k, v in data.items()})
     validation_buffer.add({k: v[split_idx:] for k, v in data.items()})
+
+
+class MetricLogger:
+    """A helper class to accumulate and log training metrics."""
+    def __init__(self, writer):
+        self.writer = writer
+        self.metrics = collections.defaultdict(float)
+        self.counts = collections.defaultdict(int)
+
+    def update(self, **kwargs):
+        """Update metrics for the current step."""
+        for key, value in kwargs.items():
+            self.metrics[key] += value
+            self.counts[key] += 1
+
+    def log_and_reset(
+        self, step: int, total_steps: int, replay_buffer_len: int,
+        queue_size: int, lr: float
+    ):
+        """Averages metrics, logs to console and TensorBoard, then resets."""
+        if self.counts['step_time_ms'] == 0:
+            return  # Avoid division by zero if no steps were logged
+
+        avg_loss = self.metrics['loss_total'] / self.counts['loss_total']
+        avg_policy_loss =\
+            self.metrics['loss_policy'] / self.counts['loss_policy']
+        avg_value_loss = self.metrics['loss_value'] / self.counts['loss_value']
+        avg_step_time_ms =\
+            self.metrics['step_time_ms'] / self.counts['step_time_ms']
+        avg_selfplay_time_ms =\
+            self.metrics['selfplay_time_ms'] / self.counts['selfplay_time_ms']
+
+        # Log to TensorBoard
+        self.writer.add_scalar('Loss/Total', avg_loss, step)
+        self.writer.add_scalar('Loss/Policy', avg_policy_loss, step)
+        self.writer.add_scalar('Loss/Value', avg_value_loss, step)
+        self.writer.add_scalar(
+            'Performance/Training_Step_Time_ms', avg_step_time_ms, step)
+        self.writer.add_scalar(
+            'Performance/SelfPlay_Fetch_Time_ms', avg_selfplay_time_ms, step)
+        self.writer.add_scalar(
+            'Buffer/ReplayBuffer_Size', replay_buffer_len, step)
+        self.writer.add_scalar('Buffer/SelfPlay_Queue_Size', queue_size, step)
+        self.writer.add_scalar('Hyperparameters/Learning_Rate', lr, step)
+
+        # Log to console
+        print(
+            f"Step {step+1}/{total_steps} | "
+            f"Avg Loss: {avg_loss:.4f} | "
+            f"Avg Step Time: {avg_step_time_ms:.2f}ms | "
+            f"Avg Selfplay Time: {avg_selfplay_time_ms:.2f}ms"
+        )
+
+        # Reset for the next logging window
+        self.metrics.clear()
+        self.counts.clear()
 
 
 class ReplayBuffer:
