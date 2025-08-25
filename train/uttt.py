@@ -7,7 +7,9 @@ game_config = {
     'input_channels': 4,  # X pieces, O pieces, valid-moves, player-to-move
     'num_res_blocks': 6,
     'res_block_channels': 64,
-    'fc_hidden_size': 256  # Hidden layer size for value/policy heads
+    'fc_hidden_size': 256,  # Hidden layer size for value/policy heads
+    'policy_head_channels': 32,  # Widen policy head bottleneck
+    'value_head_channels': 4     # Widen value head bottleneck
 }
 
 # --- Model Instantiation ---

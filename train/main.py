@@ -37,6 +37,8 @@ if __name__ == '__main__':
         # --- Initial Setup ---
         start_step = 0
         log_dir = None
+        architecture_changed = False
+        extra_files_to_load = {}
 
         # --- Dynamically Load Game Configuration ---
         print(f"Loading configuration for game: {args.game}")
@@ -55,7 +57,7 @@ if __name__ == '__main__':
             'weight_decay': 1e-4,  # L2 regularization strength
             'batch_size': 64,
             'log_freq_steps': 100,
-            'total_training_steps': 20000,
+            'total_training_steps': 200000,
             'model_update_freq_steps': 500,
             'checkpoint_freq_steps': 1000,
             'replay_buffer_size': 200000,
@@ -63,7 +65,7 @@ if __name__ == '__main__':
             'target_replay_ratio': 4.0,
             'validation_split_percentage': 0.05,  # 5% of data for validation
             'validation_freq_steps': 500,  # Run validation every 500 steps
-            'lr_schedule_milestones': [10000, 15000],  # Steps to decay LR
+            'lr_schedule_milestones': [100000, 150000],  # Steps to decay LR
             'lr_schedule_gamma': 0.1,  # LR decay factor
         }
 
@@ -113,25 +115,12 @@ if __name__ == '__main__':
         validation_buffer = ReplayBuffer(
             validation_buffer_size, G_SIZE, P_SIZE, device)
 
-        # Optimizer
-        optimizer = optim.Adam(
-            model.parameters(),
-            lr=training_hyperparams['learning_rate'],
-            weight_decay=training_hyperparams['weight_decay'])
-
-        # Scheduler
-        scheduler = torch.optim.lr_scheduler.MultiStepLR(
-            optimizer,
-            milestones=training_hyperparams['lr_schedule_milestones'],
-            gamma=training_hyperparams['lr_schedule_gamma']
-        )
-
         # --- Resume from Checkpoint Logic ---
         if args.resume_from:
             print(f"Attempting to resume training from: {args.resume_from}")
             if os.path.exists(args.resume_from):
                 # Load the scripted model and extract extra files in one go.
-                extra_files = {
+                extra_files_to_load = {
                     'optimizer_state.pt': b'',
                     'metadata.json': b'',
                     'scheduler_state.pt': b'',
@@ -142,48 +131,62 @@ if __name__ == '__main__':
                 }
                 old_model_scripted = torch.jit.load(
                     args.resume_from, map_location=device,
-                    _extra_files=extra_files)
+                    _extra_files=extra_files_to_load)
 
                 # Load replay buffers
-                if extra_files['train_buffer_data.npz']:
+                if extra_files_to_load['train_buffer_data.npz']:
                     print("Found training replay buffer in checkpoint.")
                     replay_buffer.load_from_bytes(
-                        extra_files['train_buffer_data.npz'],
-                        extra_files['train_buffer_metadata.json']
+                        extra_files_to_load['train_buffer_data.npz'],
+                        extra_files_to_load['train_buffer_metadata.json']
                     )
                 else:
                     print("No training replay buffer found in checkpoint. "
                           "Starting with an empty one.")
 
-                if extra_files['validation_buffer_data.npz']:
+                if extra_files_to_load['validation_buffer_data.npz']:
                     print("Found validation replay buffer in checkpoint.")
                     validation_buffer.load_from_bytes(
-                        extra_files['validation_buffer_data.npz'],
-                        extra_files['validation_buffer_metadata.json']
+                        extra_files_to_load['validation_buffer_data.npz'],
+                        extra_files_to_load['validation_buffer_metadata.json']
                     )
                 else:
                     print("No validation replay buffer found in checkpoint. "
                           "Starting with an empty one.")
 
                 # Load metadata and configs
-                metadata = json.loads(extra_files['metadata.json'])
+                metadata = json.loads(extra_files_to_load['metadata.json'])
                 old_game_config = metadata['game_config']
                 new_game_config = game_module.game_config
 
                 # Create a new model instance with the current configuration.
                 model = game_module.model.to(device)
                 old_state_dict = old_model_scripted.state_dict()
+                new_state_dict = model.state_dict()
 
-                architecture_changed = old_game_config.get('num_res_blocks') \
-                    != new_game_config.get('num_res_blocks')
+                # Check for architecture changes by comparing state dict keys
+                # and shapes. This is more robust than just checking config
+                # values.
+                architecture_changed = False
+                if set(old_state_dict.keys()) != set(new_state_dict.keys()):
+                    architecture_changed = True
+                    print("Detected architecture change: layer names differ.")
+                else:
+                    for key in old_state_dict:
+                        if old_state_dict[key].shape \
+                             != new_state_dict[key].shape:
+                            architecture_changed = True
+                            print(f"Detected shape mismatch for layer "
+                                  f"'{key}': "
+                                  f"old={old_state_dict[key].shape}, "
+                                  f"new={new_state_dict[key].shape}")
+                            break
 
                 # Smartly transfer weights
                 if architecture_changed:
                     print(
-                        f"Model architecture changed. Resizing from "
-                        f"{old_game_config.get('num_res_blocks')} to "
-                        f"{new_game_config.get('num_res_blocks')} res blocks.")
-                    new_state_dict = model.state_dict()
+                        "Model architecture changed. "
+                        "Attempting to transfer compatible weights.")
                     for name, param in old_state_dict.items():
                         if name in new_state_dict and \
                            new_state_dict[name].shape == param.shape:
@@ -194,22 +197,6 @@ if __name__ == '__main__':
                     print("Checkpoint architecture matches. "
                           "Loading weights directly.")
                     model.load_state_dict(old_state_dict)
-
-                # Conditionally load optimizer state
-                if architecture_changed:
-                    print("Warning: Model architecture changed. "
-                          "Optimizer state will not be loaded.")
-                else:
-                    optimizer_state_buffer = io.BytesIO(
-                        extra_files['optimizer_state.pt'])
-                    optimizer.load_state_dict(
-                        torch.load(optimizer_state_buffer))
-                    # Also load scheduler state if it exists
-                    if extra_files['scheduler_state.pt']:
-                        scheduler_state_buffer = io.BytesIO(
-                            extra_files['scheduler_state.pt'])
-                        scheduler.load_state_dict(
-                            torch.load(scheduler_state_buffer))
 
                 # Load configurations from checkpoint, then overwrite with
                 # current script's settings
@@ -237,6 +224,38 @@ if __name__ == '__main__':
             else:
                 print(f"Warning: Checkpoint file not found at "
                       f"{args.resume_from}. Starting a new run.")
+
+        # Optimizer
+        optimizer = optim.Adam(
+            model.parameters(),
+            lr=training_hyperparams['learning_rate'],
+            weight_decay=training_hyperparams['weight_decay'])
+
+        # Scheduler
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(
+            optimizer,
+            milestones=training_hyperparams['lr_schedule_milestones'],
+            gamma=training_hyperparams['lr_schedule_gamma']
+        )
+
+        # If resuming, load the optimizer and scheduler state now that they are
+        # created
+        if args.resume_from and os.path.exists(args.resume_from):
+            # Conditionally load optimizer state
+            if architecture_changed:
+                print("Warning: Model architecture changed. "
+                      "Optimizer state will not be loaded.")
+            else:
+                optimizer_state_buffer = io.BytesIO(
+                    extra_files_to_load['optimizer_state.pt'])
+                optimizer.load_state_dict(
+                    torch.load(optimizer_state_buffer))
+                # Also load scheduler state if it exists
+                if extra_files_to_load['scheduler_state.pt']:
+                    scheduler_state_buffer = io.BytesIO(
+                        extra_files_to_load['scheduler_state.pt'])
+                    scheduler.load_state_dict(
+                        torch.load(scheduler_state_buffer))
 
         # --- TensorBoard Setup ---
         if log_dir is None:
@@ -316,7 +335,7 @@ if __name__ == '__main__':
             new_data, queue_size = fetch_selfplay_data_from_cpp(
                 c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
-            
+
             if new_data:
                 split_and_add_data(
                     new_data, replay_buffer, validation_buffer,

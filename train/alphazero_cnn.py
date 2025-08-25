@@ -32,7 +32,8 @@ class ResidualBlock(nn.Module):
 class AlphaZeroCNN(nn.Module):
     def __init__(
             self, board_size, num_actions, input_channels, num_res_blocks,
-            res_block_channels, fc_hidden_size):
+            res_block_channels, fc_hidden_size, policy_head_channels=2,
+            value_head_channels=1):
         """
         A configurable ResNet-based architecture inspired by AlphaZero.
 
@@ -46,6 +47,10 @@ class AlphaZeroCNN(nn.Module):
             blocks.
         fc_hidden_size (int): The number of neurons in the hidden layer of the
             value and policy heads.
+        policy_head_channels (int): The number of channels in the policy
+            head's bottleneck convolutional layer.
+        value_head_channels (int): The number of channels in the value
+            head's bottleneck convolutional layer.
         """
         super(AlphaZeroCNN, self).__init__()
         self.board_size = board_size
@@ -65,20 +70,27 @@ class AlphaZeroCNN(nn.Module):
 
         # --- Value Head ---
         self.value_head = nn.Sequential(
-            nn.Conv2d(res_block_channels, 1, kernel_size=1, bias=False),
-            nn.BatchNorm2d(1), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(1 * board_size * board_size, fc_hidden_size),
+            nn.Conv2d(
+                res_block_channels, value_head_channels, kernel_size=1,
+                bias=False),
+            nn.BatchNorm2d(value_head_channels), nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(value_head_channels * board_size * board_size,
+                      fc_hidden_size),
             nn.ReLU(inplace=True),
             nn.Linear(fc_hidden_size, 1), nn.Tanh()
         )
 
         # --- Policy Head ---
         self.policy_head = nn.Sequential(
-            nn.Conv2d(res_block_channels, 2, kernel_size=1, bias=False),
-            nn.BatchNorm2d(2), nn.ReLU(inplace=True), nn.Flatten(),
-            nn.Linear(2 * board_size * board_size, fc_hidden_size),
-            nn.ReLU(inplace=True),
-            nn.Linear(fc_hidden_size, num_actions)
+            nn.Conv2d(
+                res_block_channels, policy_head_channels, kernel_size=1,
+                bias=False),
+            nn.BatchNorm2d(policy_head_channels), nn.ReLU(inplace=True),
+            nn.Flatten(),
+            nn.Linear(policy_head_channels * board_size * board_size,
+                      fc_hidden_size),
+            nn.ReLU(inplace=True), nn.Linear(fc_hidden_size, num_actions)
         )
 
     def forward(self, x):
