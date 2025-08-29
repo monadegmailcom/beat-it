@@ -97,10 +97,10 @@ class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 public:
     BasePlayer( Game const& game, float c_base, float c_init,
                 size_t simulations, size_t opening_moves, unsigned seed,
-                NodeAllocator& allocator )
+                NodeAllocator& allocator, size_t threads )
         : ::alphazero::Player< Move, State, G, P >(
               game, c_base, c_init, simulations, opening_moves, seed,
-              allocator ) {}
+              allocator, threads ) {}
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;
@@ -110,11 +110,7 @@ namespace libtorch {
 namespace async {
 using Player = ::libtorch::async::Player< BasePlayer >;
 } // namespace async {
-namespace sync {
-using Player = ::libtorch::sync::Player< BasePlayer >;
-} // namespace sync {
 } // namespace libtorch {
-
 } // namespace alphazero {
 
 namespace console

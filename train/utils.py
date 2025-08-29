@@ -12,6 +12,9 @@ import threading
 import matplotlib.pyplot as plt
 from PIL import Image
 
+train_buffer_metadata_file = 'train_buffer_metadata.json'
+validation_buffer_metadata_file = 'validation_buffer_metadata.json'
+
 
 class DataPointers(ctypes.Structure):
     _fields_ = [
@@ -169,7 +172,7 @@ def log_histogram_as_image(writer, tag, data, step):
     """Creates a bar chart from histogram data and logs it as an image."""
     try:
         fig, ax = plt.subplots()
-        indices = np.where(data > 0)[0]
+        indices = np.nonzero(data > 0)[0]
         counts = data[indices]
         if len(indices) > 0:
             ax.bar(indices, counts, tick_label=indices)
@@ -262,7 +265,7 @@ class ReplayBuffer:
     A fixed-size circular buffer to store self-play experience for training.
     It uses pre-allocated NumPy arrays for efficiency.
     """
-    def __init__(self, capacity, g_size, p_size, device):
+    def __init__(self, capacity, g_size, p_size, device, seed=None):
         self.capacity = capacity
         self.device = device
         self.ptr = 0
@@ -274,6 +277,7 @@ class ReplayBuffer:
         self.player_indices = np.zeros((capacity,), dtype=np.int32)
         self.g_size = g_size
         self.p_size = p_size
+        self.rng = np.random.default_rng(seed)
 
     def add(self, data_dict):
         """Adds a batch of new experience to the buffer."""
@@ -309,7 +313,8 @@ class ReplayBuffer:
            device.
         """
         with self.lock:
-            indices = np.random.randint(0, self.size, size=batch_size)
+            indices = self.rng.integers(0, self.size, size=batch_size)
+
             return (
                 torch.from_numpy(self.states[indices]).to(self.device),
                 torch.from_numpy(self.policies[indices]).to(self.device),

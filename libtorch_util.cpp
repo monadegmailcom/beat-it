@@ -85,9 +85,10 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
         model_data_stream, device ));
     model->eval();
 
-    auto hyperparameters( string(metadata_json, metadata_len));
-
-    return make_pair( std::move( model ), hyperparameters );
+    return make_pair(
+        std::move( model ),
+        Hyperparameters( string( metadata_json, metadata_len ))
+    );
 }
 
 Hyperparameters::Hyperparameters( string const& metadata_json )
@@ -104,6 +105,7 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     simulations = get_required_value<int32_t>(sp_config, "simulations");
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
     threads = get_required_value<size_t>(sp_config, "threads");
+    selfplay_threads = get_required_value<size_t>(sp_config, "selfplay_threads");
 }
 
 float sync_predict(
@@ -152,7 +154,7 @@ float async_predict( InferenceManager& im, float const* game_state_players, floa
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
     torch::Device device,
-    size_t threads,
+    size_t threads /*for inference histogram size*/,
     size_t state_size, size_t policies_size,
     size_t min_batch_size, size_t max_batch_size,
     chrono::milliseconds batch_timeout )

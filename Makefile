@@ -7,12 +7,16 @@ UNAME_S=$(shell uname -s)
 
 ifeq ($(UNAME_S), Darwin)
     # macOS specific paths
-    $(info Compiling on macOS (Darwin))
+    $(info Compiling on macOS (Darwin) with Homebrew LLVM)
+    LLVM_PATH=/opt/homebrew/opt/llvm
+    CC=$(LLVM_PATH)/bin/clang++
     HOMEBREW=/opt/homebrew/Cellar
     BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
 	BOOST_INCLUDE_PATH=-isystem$(BOOST_PATH)/include/
     LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
 	CXX_ABI_FLAGS=
+    LLVM_INCLUDE_FLAGS=-isystem$(LLVM_PATH)/include
+    LLVM_LINK_FLAGS=-L$(LLVM_PATH)/lib/c++ -L$(LLVM_PATH)/lib/unwind -lunwind
 else ifeq ($(UNAME_S), Linux)
     # Linux specific paths
     $(info Compiling on Linux)
@@ -32,11 +36,14 @@ UNIVERSAL_FLAGS=
 
 INCLUDE=$(BOOST_INCLUDE_PATH) \
 		-isystem$(LIBTORCH_PATH)/include/ \
-		-isystem$(LIBTORCH_PATH)/include/torch/csrc/api/include/
-LINK=-L$(LIBTORCH_PATH)/lib -Wl,-rpath,$(LIBTORCH_PATH)/lib -ltorch -ltorch_cpu -lc10
+		-isystem$(LIBTORCH_PATH)/include/torch/csrc/api/include/ \
+		$(LLVM_INCLUDE_FLAGS)
+LINK=-L$(LIBTORCH_PATH)/lib -Wl,-rpath,$(LIBTORCH_PATH)/lib -ltorch -ltorch_cpu -lc10 $(LLVM_LINK_FLAGS)
 
-#DEBUG=-g
-DEBUG=-g -O3
+
+DEBUG=-g
+# use optimized code for matches in test mode
+#DEBUG=-g -O3
 RELEASE=-O3 -DNDEBUG
 
 # don't forget to clean if you change OPT

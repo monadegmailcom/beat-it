@@ -27,13 +27,12 @@ struct InferenceRequest
     InferenceRequest(
         float const* state, float* policies, std::promise< float >&& promise )
     : state( state ), policies( policies ), promise( std::move( promise ) ) {}
-    InferenceRequest( InferenceRequest&& req ) noexcept
-    : state( req.state ), policies( req.policies ),
-      promise( std::move( req.promise ) ) {}
 
     InferenceRequest() = delete;
-    InferenceRequest( InferenceRequest const& ) = delete;
-    InferenceRequest& operator=( InferenceRequest const& ) = delete;
+    InferenceRequest( const InferenceRequest& ) = delete;
+    InferenceRequest& operator=( const InferenceRequest& ) = delete;
+    InferenceRequest( InferenceRequest&& ) noexcept = default;
+    InferenceRequest& operator=( InferenceRequest&& ) noexcept = default;
 
     float const* state;
     float* policies;
@@ -42,11 +41,11 @@ struct InferenceRequest
 
 struct Hyperparameters
 {
+    Hyperparameters() = default;
     // require: metadata_json has to contain a self_play_config sub-object
     //          with the variables below, otherwise it will throw
     // promise: json is parsed and assigned to the variables below
-    Hyperparameters( std::string const& metadata_json );
-    Hyperparameters() {};
+    explicit Hyperparameters( std::string const& metadata_json );
 
     float c_base = 0.0f;
     float c_init = 0.0f;
@@ -55,6 +54,7 @@ struct Hyperparameters
     size_t simulations = 0;
     size_t opening_moves = 0;
     size_t threads = 0;
+    size_t selfplay_threads = 0;
 };
 
 // promise: model is set to eval mode
@@ -77,12 +77,9 @@ class InferenceManager
 {
 public:
     InferenceManager(
-        std::unique_ptr< torch::jit::script::Module >&&,
-        torch::Device,
-        size_t threads,
-        size_t state_size, size_t policies_size,
-        size_t min_batch_size = 1,
-        size_t max_batch_size = 128,
+        std::unique_ptr< torch::jit::script::Module >&&, torch::Device,
+        size_t threads, size_t state_size, size_t policies_size,
+        size_t min_batch_size, size_t max_batch_size,
         std::chrono::milliseconds batch_timeout
             = std::chrono::milliseconds( 5 ));
 
@@ -131,40 +128,6 @@ private:
     Statistics inference_time_stats_;
 };
 
-namespace sync {
-template< typename BasePlayerT >
-class Player : public BasePlayerT
-{
-public:
-    Player(
-        typename BasePlayerT::game_type const& game, float c_base,
-        float c_init, size_t simulations, size_t opening_moves,
-        unsigned seed,
-        NodeAllocator< typename BasePlayerT::value_type >& allocator,
-        torch::jit::Module& model, torch::Device device )
-    : BasePlayerT( game, c_base, c_init, simulations, opening_moves, seed,
-                   allocator ),
-      model( model ), device( device ) {}
-protected:
-    torch::jit::Module& model;
-    torch::Device device;
-
-    std::pair< float, std::array< float, BasePlayerT::policy_size >> predict(
-        std::array< float, BasePlayerT::game_size > const& game_state_players ) override
-    {
-        // provide the buffer to copy predicted policies into
-        std::array< float, BasePlayerT::policy_size > policies;
-
-        const float value = sync_predict(
-            model, device,
-            game_state_players.data(), BasePlayerT::game_size,
-            policies.data(), BasePlayerT::policy_size);
-
-        return make_pair( value, policies );
-    }
-};
-} // namespace sync {
-
 namespace async {
 
 template< typename BasePlayerT >
@@ -176,8 +139,9 @@ public:
         float c_init, size_t simulations, size_t opening_moves,
         unsigned seed,
         NodeAllocator< typename BasePlayerT::value_type >& allocator,
-        InferenceManager& im )
-: BasePlayerT( game, c_base, c_init, simulations, opening_moves, seed, allocator),
+        InferenceManager& im, size_t threads )
+: BasePlayerT(
+    game, c_base, c_init, simulations, opening_moves, seed, allocator, threads),
   inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;

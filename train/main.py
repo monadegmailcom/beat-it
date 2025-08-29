@@ -15,8 +15,15 @@ import argparse
 from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
-    log_histogram_as_image, DataPointers, split_and_add_data
+    log_histogram_as_image, DataPointers, split_and_add_data,
+    train_buffer_metadata_file
 )
+
+scheduler_state_file = 'scheduler_state.pt'
+optimizer_state_file = 'optimizer_state.pt'
+metadata_file = 'metadata.json'
+train_buffer_data_file = 'train_buffer_data.npz'
+validation_buffer_data_file = 'validation_buffer_data.npz'
 
 # 2. Training Setup
 if __name__ == '__main__':
@@ -73,6 +80,7 @@ if __name__ == '__main__':
         self_play_config = {  # This is now only for metadata logging
             # Oversubscribe threads to hide I/O latency
             'threads': int((os.cpu_count() or 1) * 1.5),
+            'selfplay_threads': int(os.cpu_count() or 1),
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,
@@ -121,12 +129,12 @@ if __name__ == '__main__':
             if os.path.exists(args.resume_from):
                 # Load the scripted model and extract extra files in one go.
                 extra_files_to_load = {
-                    'optimizer_state.pt': b'',
-                    'metadata.json': b'',
-                    'scheduler_state.pt': b'',
-                    'train_buffer_data.npz': b'',
-                    'train_buffer_metadata.json': b'',
-                    'validation_buffer_data.npz': b'',
+                    optimizer_state_file: b'',
+                    metadata_file: b'',
+                    scheduler_state_file: b'',
+                    train_buffer_data_file: b'',
+                    train_buffer_metadata_file: b'',
+                    validation_buffer_data_file: b'',
                     'validation_buffer_metadata.json': b''
                 }
                 old_model_scripted = torch.jit.load(
@@ -134,20 +142,20 @@ if __name__ == '__main__':
                     _extra_files=extra_files_to_load)
 
                 # Load replay buffers
-                if extra_files_to_load['train_buffer_data.npz']:
+                if extra_files_to_load[train_buffer_data_file]:
                     print("Found training replay buffer in checkpoint.")
                     replay_buffer.load_from_bytes(
-                        extra_files_to_load['train_buffer_data.npz'],
-                        extra_files_to_load['train_buffer_metadata.json']
+                        extra_files_to_load[train_buffer_data_file],
+                        extra_files_to_load[train_buffer_metadata_file]
                     )
                 else:
                     print("No training replay buffer found in checkpoint. "
                           "Starting with an empty one.")
 
-                if extra_files_to_load['validation_buffer_data.npz']:
+                if extra_files_to_load[validation_buffer_data_file]:
                     print("Found validation replay buffer in checkpoint.")
                     validation_buffer.load_from_bytes(
-                        extra_files_to_load['validation_buffer_data.npz'],
+                        extra_files_to_load[validation_buffer_data_file],
                         extra_files_to_load['validation_buffer_metadata.json']
                     )
                 else:
@@ -251,9 +259,9 @@ if __name__ == '__main__':
                 optimizer.load_state_dict(
                     torch.load(optimizer_state_buffer))
                 # Also load scheduler state if it exists
-                if extra_files_to_load['scheduler_state.pt']:
+                if extra_files_to_load[scheduler_state_file]:
                     scheduler_state_buffer = io.BytesIO(
-                        extra_files_to_load['scheduler_state.pt'])
+                        extra_files_to_load[scheduler_state_file])
                     scheduler.load_state_dict(
                         torch.load(scheduler_state_buffer))
 

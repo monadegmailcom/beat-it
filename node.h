@@ -6,6 +6,7 @@
 
 #include <iterator>
 #include <memory>
+#include <mutex>
 
 template< typename ValueT >
 class Node;
@@ -18,7 +19,7 @@ class Node : public boost::intrusive::list_base_hook<>
 {
 public:
     using value_type = ValueT;
-    Node( ValueT value, NodeAllocator< ValueT >& allocator )
+    Node( ValueT&& value, NodeAllocator< ValueT >& allocator )
     : value( std::move( value )), allocator( allocator ) {}
 
     Node( Node const& ) = delete;
@@ -47,11 +48,15 @@ public:
     ValueT const& get_value() const { return value; }
 
     boost::intrusive::list< Node >& get_children() { return children; }
-    boost::intrusive::list< Node > const& get_children() const { return children; }
+    boost::intrusive::list< Node > const& get_children() const
+    { return children; }
+    std::unique_lock< std::mutex > lock() const
+    { return std::unique_lock< std::mutex >( node_mutex ); }
 private:
     ValueT value;
     NodeAllocator< ValueT >& allocator;
     boost::intrusive::list< Node > children;
+    mutable std::mutex node_mutex;
 };
 
 template< typename ValueT >

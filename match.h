@@ -8,7 +8,7 @@ template< typename MoveT, typename StateT >
 class Match
 {
 public:
-    virtual ~Match() {}
+    virtual ~Match() = default;
     GameResult play(
         Game< MoveT, StateT > game,
         Player< MoveT >& player,
@@ -42,7 +42,8 @@ public:
         }
     }
 protected:
-    virtual void report( Game< MoveT, StateT > const&, MoveT const& ) {};
+    virtual void report( Game< MoveT, StateT > const&, MoveT const& )
+    { /* do nothing on default */};
 };
 
 template< typename MoveT, typename StateT >

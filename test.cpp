@@ -712,7 +712,7 @@ void uttt_match_mm_vs_tree_mm()
 
 vector< ttt::alphazero::training::Position > selfplay_worker(
     libtorch::InferenceManager& inference_manager, libtorch::Hyperparameters const& hp,
-    size_t runs_per_thread )
+    size_t runs_per_thread, size_t selfplay_threads )
 {
     mt19937 g = mt19937( random_device{}());
     ttt::alphazero::NodeAllocator node_allocator;
@@ -723,7 +723,7 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
         ttt::alphazero::libtorch::async::Player player(
             ttt::Game( player_index, ttt::empty_state ), hp.c_base, hp.c_init,
             hp.simulations, hp.opening_moves, seed, node_allocator,
-            inference_manager );
+            inference_manager, selfplay_threads );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
         self_play.run();
@@ -744,16 +744,23 @@ void alphazero_training()
     }
 
     torch::Device device = libtorch::get_device();
-    const char* const model_path = "runs/models/ttt_alphazero_experiment_6/final_model.pt"; // Adjust if needed
+    // Adjust if needed
+    const char* const model_path =
+        "runs/models/ttt_alphazero_experiment_6/final_model.pt";
     auto [model, hp] =  libtorch::load_model( model_path, device );
     const size_t threads = 10;
+    const size_t selfplay_threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, ttt::alphazero::G, ttt::alphazero::P );
+        std::move( model ), device, threads, ttt::alphazero::G,
+        ttt::alphazero::P, 1, 128 );
 
-    vector< future< vector< ttt::alphazero::training::Position >>> thread_pool( 8 );
+    vector< future< vector< ttt::alphazero::training::Position >>>
+        thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
     for (auto& future : thread_pool)
-        future = async( selfplay_worker, ref(inference_manager), hp, 500 );
+        future = async(
+            selfplay_worker, ref(inference_manager), hp, 500,
+            selfplay_threads );
 
     cout << "wait for all threads to finish..." << endl;
     size_t total_positions = 0;
@@ -765,51 +772,6 @@ void alphazero_training()
     cout << "total positions: " << total_positions << endl;
 }
 
-void ttt_alphazero_nn_vs_minimax()
-{
-    if (extensive)
-        cout << __func__ << endl;
-    else
-    {
-        cout << __func__ << " (extensive mode off)" << endl;
-        return;
-    }
-
-    torch::Device device = libtorch::get_device();
-    const char* const model_path = "models/ttt_alphazero_experiment_1/final_model.pt"; // Adjust if needed
-    cout << "load model " << model_path << endl;
-    auto [model, hp] = libtorch::load_model( model_path, device );
-
-    ttt::Game game( Player1, ttt::empty_state );
-    ttt::alphazero::NodeAllocator allocator;
-
-    const size_t rounds = 100;
-
-    MultiMatch< ttt::Move, ttt::State > match(
-        game,
-        [&](unsigned seed) { return new ttt::alphazero::libtorch::sync::Player( game,
-            hp.c_base, hp.c_init, hp.simulations, hp.opening_moves, seed,
-            allocator, *model, device ); },
-        [&game](unsigned seed) { return new ttt::minimax::Player( game, 3, seed ); },
-        rounds, 1, seed );
-    match.run();
-
-    if (verbose)
-        cout
-            << "fst player wins: " << match.get_fst_player_wins() << '\n'
-            << "fst player duration: " << match.get_fst_player_duration() << '\n'
-            << "snd player wins: " << match.get_snd_player_wins() << '\n'
-            << "snd player duration: " << match.get_snd_player_duration() << '\n'
-            << "draws: " << match.get_draws() << '\n'
-            << "fst/snd player duration ratio: "
-            << double( chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_fst_player_duration() ).count()) /
-               chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_snd_player_duration() ).count() << '\n' << endl;
-
-    assert (match.get_draws() > 0);
-}
-
 vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     libtorch::InferenceManager& inference_manager,
     libtorch::Hyperparameters const& hp, size_t runs_per_thread )
@@ -818,14 +780,14 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     uttt::alphazero::NodeAllocator node_allocator;
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
-
+    const size_t selfplay_threads = 10;
     for (; runs_per_thread; --runs_per_thread)
     {
         auto start = std::chrono::steady_clock::now();
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ),
             hp.c_base, hp.c_init, hp.simulations, hp.opening_moves, seed,
-            node_allocator, inference_manager );
+            node_allocator, inference_manager, selfplay_threads );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
 
@@ -856,8 +818,8 @@ void uttt_alphazero_training()
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P,
-        threads / 2 );
+        std::move( model ), device, threads, uttt::alphazero::G,
+        uttt::alphazero::P, 1, 128 );
     vector< future< vector< uttt::alphazero::training::Position >>> thread_pool( hp.threads );
 
     cout << "start " << thread_pool.size() << " worker threads"  << endl;
@@ -972,18 +934,20 @@ void uttt_alphazero_nn_vs_minimax()
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, threads, uttt::alphazero::G,
+        uttt::alphazero::P, 1, 128 );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 20;
-    const size_t simulations = 1600;
+    const size_t simulations = 400;
+    const size_t selfplay_threads = 10;
     LogMultiMatch< uttt::Move, uttt::State > match(
         game,
         [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
             game, hp.c_base, hp.c_init, simulations, hp.opening_moves, seed, allocator,
-            inference_manager ); },
+            inference_manager, selfplay_threads ); },
         [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
         rounds, threads, seed );
     match.run();
@@ -1024,22 +988,25 @@ void uttt_alphazero_nn_vs_alphazero()
     auto [model2, hp2] = libtorch::load_model( model_path2, device );
     const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model ), device, threads, uttt::alphazero::G,
+        uttt::alphazero::P, 1, 128 );
     libtorch::InferenceManager inference_manager2(
-        std::move( model2 ), device, threads, uttt::alphazero::G, uttt::alphazero::P );
+        std::move( model2 ), device, threads, uttt::alphazero::G,
+        uttt::alphazero::P, 1, 128 );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 10;
+    const size_t selfplay_threads = 10;
     LogMultiMatch< uttt::Move, uttt::State > match(
         game,
         [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
             game, hp.c_base, hp.c_init, 400, hp.opening_moves, seed,
-            allocator, inference_manager ); },
+            allocator, inference_manager, selfplay_threads ); },
         [&](unsigned seed) { return new uttt::alphazero::libtorch::async::Player(
             game, hp2.c_base, hp2.c_init, 400, hp2.opening_moves, seed,
-            allocator, inference_manager2 ); },
+            allocator, inference_manager2, selfplay_threads ); },
         rounds, threads, seed );
     match.run();
 
