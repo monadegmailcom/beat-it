@@ -82,13 +82,13 @@ public:
     static constexpr std::size_t policy_size = P;
 
     Player(
-        Game< MoveT, StateT > const& game,
+        Game< MoveT, StateT > game,
         params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
         NodeAllocator< MoveT, StateT >& allocator)
-    : root( new (allocator.allocate(1))
-                node_type( value_type( game, MoveT()), allocator ),
+    : root( new (allocator.allocate(1)) node_type(
+                value_type( std::move(game), MoveT()), allocator ),
             NodeDeleter<value_type>{allocator} ),
       ucb_params( ucb ), game_play( game_play ), g( seed ),
       allocator( allocator )

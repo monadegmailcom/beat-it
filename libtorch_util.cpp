@@ -67,19 +67,19 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
 
     // Call the other load_model overload that takes memory buffers.
     return load_model(
-        model_data.data(), model_data.size(),
-        metadata_json.data(), metadata_json.size(),
+        {model_data.data(), static_cast<int32_t>(model_data.size())},
+        {metadata_json.data(), static_cast<int32_t>(metadata_json.size())},
         device );
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
-    char const* model_data, size_t model_data_len,
-    const char* metadata_json, size_t metadata_len, torch::Device device )
+    DataBuffer model_buffer,
+    DataBuffer metadata_buffer, torch::Device device )
 {
     static std::istringstream model_data_stream;
     // when reading the model from a string stream there seems to be a problem
     // with the embedded metadata, so we provided as an extra parameter
-    model_data_stream.str( string( model_data, model_data_len ));
+    model_data_stream.str( string( model_buffer.data, model_buffer.len ));
 
     auto model = make_unique< torch::jit::script::Module >( torch::jit::load(
         model_data_stream, device ));
@@ -87,7 +87,7 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
 
     return make_pair(
         std::move( model ),
-        Hyperparameters( string( metadata_json, metadata_len ))
+        Hyperparameters( string( metadata_buffer.data, metadata_buffer.len ))
     );
 }
 

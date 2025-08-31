@@ -20,6 +20,11 @@
 
 namespace libtorch {
 
+struct DataBuffer {
+    const char* data;
+    int32_t len;
+};
+
 torch::Device get_device();
 
 struct InferenceRequest
@@ -65,8 +70,8 @@ std::pair< std::unique_ptr< torch::jit::script::Module >,
 // promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >,
            Hyperparameters > load_model(
-    char const* model_data, size_t model_data_len,
-    const char* metadata_json, size_t metadata_len, torch::Device );
+    DataBuffer model_buffer,
+    DataBuffer metadata_buffer, torch::Device );
 
 float sync_predict(
     torch::jit::script::Module& model, torch::Device,
@@ -135,13 +140,13 @@ template< typename BasePlayerT >
 class Player : public BasePlayerT
 {
 public:
-    Player( typename BasePlayerT::game_type const& game,
+    Player( typename BasePlayerT::game_type game,
             alphazero::params::Ucb const& ucb,
             alphazero::params::GamePlay const& game_play,
             unsigned seed,
             NodeAllocator< typename BasePlayerT::value_type >& allocator,
             InferenceManager& im )
-        : BasePlayerT( game, ucb, game_play, seed, allocator ),
+        : BasePlayerT( std::move(game), ucb, game_play, seed, allocator ),
           inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;

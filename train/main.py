@@ -35,6 +35,7 @@ if __name__ == '__main__':
     parser.add_argument('--game', type=str, default='ttt',
                         help='The game to train on (e.g., "ttt", "uttt").')
     args = parser.parse_args()
+    session_handle = None
 
     lib_path = os.path.join('obj', 'libalphazero.so')
     alphazero_lib = ctypes.CDLL(lib_path)
@@ -286,22 +287,31 @@ if __name__ == '__main__':
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
-        # --- Initial Model Setup ---
-        print("Setting initial model to start C++ self-play workers...")
+        # --- C++ Session and Initial Model Setup ---
+        print("Creating C++ session and setting initial model...")
 
-        # Prepare generic C++ function handles
+        # Prepare C++ function handles
+        alphazero_lib.create_session.restype = ctypes.c_void_p
+        alphazero_lib.destroy_session.argtypes = [ctypes.c_void_p]
+        session_handle = alphazero_lib.create_session()
+        if not session_handle:
+            raise RuntimeError("Failed to create C++ session.")
+
+        # --- Initial Model Setup ---
         c_set_model_func = getattr(
             alphazero_lib, game_module.set_model_func_name)
         c_set_model_func.restype = ctypes.c_int
         c_set_model_func.argtypes = [
-            ctypes.c_char_p, ctypes.c_int32,
+            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32,
             ctypes.c_char_p, ctypes.c_int32
         ]
 
         c_fetch_data_func = getattr(
             alphazero_lib, game_module.fetch_data_func_name)
         c_fetch_data_func.restype = ctypes.c_int
-        c_fetch_data_func.argtypes = [DataPointers, ctypes.c_uint32]
+        c_fetch_data_func.argtypes = [
+            ctypes.c_void_p, ctypes.POINTER(DataPointers), ctypes.c_uint32
+        ]
 
         model_bytes, metadata_json = create_inference_model_bundle(
             model,
@@ -312,7 +322,7 @@ if __name__ == '__main__':
             training_hyperparams=training_hyperparams
         )
         set_model(
-            c_set_model_func, model_bytes, len(model_bytes),
+            session_handle, c_set_model_func, model_bytes, len(model_bytes),
             metadata_json.encode('utf-8'))
 
         loss = None  # Initialize loss to a default value
@@ -341,7 +351,8 @@ if __name__ == '__main__':
             # This call blocks until the C++ workers have produced enough
             #  games.
             new_data, queue_size = fetch_selfplay_data_from_cpp(
-                c_fetch_data_func, num_positions_to_fetch, G_SIZE, P_SIZE)
+                session_handle, c_fetch_data_func, num_positions_to_fetch,
+                G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
 
             if new_data:
@@ -449,7 +460,7 @@ if __name__ == '__main__':
                     training_hyperparams=training_hyperparams
                 )
                 set_model(
-                    c_set_model_func, model_bytes, len(model_bytes),
+                    session_handle, c_set_model_func, model_bytes, len(model_bytes),
                     metadata_json.encode('utf-8'))
 
             # Periodically save a checkpoint
@@ -499,8 +510,9 @@ if __name__ == '__main__':
             # Define the C-function signature
             c_get_histo = alphazero_lib.get_inference_histogram
             c_get_histo.restype = ctypes.c_int
-            c_get_histo.argtypes = [ctypes.POINTER(ctypes.c_size_t),
-                                    ctypes.c_int]
+            c_get_histo.argtypes = [
+                ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_int
+            ]
 
             # First, call with no buffer to get the required size.
             required_size = c_get_histo(None, 0)
@@ -510,7 +522,7 @@ if __name__ == '__main__':
                 histo_data = np.zeros(required_size, dtype=np.uintp)
                 histo_ptr = histo_data.ctypes.data_as(
                     ctypes.POINTER(ctypes.c_size_t))
-                c_get_histo(histo_ptr, required_size)
+                c_get_histo(session_handle, histo_ptr, required_size)
 
                 # The data is a histogram of counts per batch size.
                 # We log this directly to get a distribution plot in
@@ -534,11 +546,7 @@ if __name__ == '__main__':
     finally:
         # This block runs whether the training loop succeeded or failed.
         # --- C++ Resource Cleanup ---
-        # This is crucial to prevent crashes on exit by telling the C++ library
-        # to shut down its background threads before the interpreter exits.
-        print("\nCleaning up C++ resources...")
-        cleanup_func = alphazero_lib.cleanup_resources
-        cleanup_func.restype = None
-        cleanup_func.argtypes = []
-        cleanup_func()
-        print("C++ cleanup complete.")
+        if session_handle:
+            print("\nCleaning up C++ session...")
+            alphazero_lib.destroy_session(session_handle)
+            print("C++ session cleanup complete.")

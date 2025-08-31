@@ -4,30 +4,6 @@
 
 using namespace std;
 
-// static global variables keeps them local to this compile unit
-
-// one global inference manager used by all worker threads,
-// gives access to the nn model asynchronously while batching requests
-static unique_ptr< libtorch::InferenceManager > inference_manager;
-
-// on cleanup the inference manager is deleted, this is important to avoid issues
-// in the order the multithreading components are teared down
-static atomic< bool > cleanup_requested( false );
-
-static vector< future< void > > thread_pool;
-
-// A struct to manage thread suspension in a portable and race-free way.
-struct SuspensionManager {
-    std::mutex mutex;
-    std::condition_variable cv;
-    bool suspended = false;
-};
-static SuspensionManager suspension_manager;
-
-static size_t position_queue_max_size = 10000;
-static libtorch::Hyperparameters hyperparameters;
-static shared_mutex hp_mutex;
-
 // Encapsulate a queue with its own synchronization primitives to avoid
 // cross-talk between different game types (e.g., a uttt worker waking up a
 // ttt consumer).
@@ -38,7 +14,30 @@ struct PositionQueue {
     std::condition_variable cv;
 };
 
-// A struct to define the layout of the data pointers. This must be mirrored in Python.
+struct SuspensionManager {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool suspended = false;
+};
+
+// The Session struct encapsulates all state for a single training run.
+// This avoids global variables and allows for multiple independent sessions.
+struct Session {
+    unique_ptr<libtorch::InferenceManager> inference_manager;
+    atomic<bool> cleanup_requested{false};
+    vector<future<void>> thread_pool;
+    SuspensionManager suspension_manager;
+    size_t position_queue_max_size = 10000;
+    libtorch::Hyperparameters hyperparameters;
+    shared_mutex hp_mutex;
+
+    // Game-specific position queues
+    PositionQueue<ttt::alphazero::training::Position> ttt_position_queue;
+    PositionQueue<uttt::alphazero::training::Position> uttt_position_queue;
+};
+
+// A struct to define the layout of the data pointers. This must be mirrored in
+//   Python.
 struct DataPointers {
     float* game_states = nullptr; // G floats
     float* policy_targets = nullptr; // P floats
@@ -55,63 +54,73 @@ using AlphazeroPlayer = ::alphazero::Player<
 
 template< typename PlayerT >
 using AlphazeroNodeAllocator = alphazero::NodeAllocator<
-    typename PlayerT::game_type::move_type, typename PlayerT::game_type::state_type >;
+    typename PlayerT::game_type::move_type,
+    typename PlayerT::game_type::state_type >;
 
 template< typename PlayerT >
 using AlphazeroPosition = alphazero::training::Position<
     PlayerT::game_size, PlayerT::policy_size >;
 
 void set_model(
-    const char* model_data, int32_t model_data_len,
-    const char* metadata_json, int32_t metadata_len,
-    size_t state_size, size_t policies_size, function< void () > worker )
+    libtorch::DataBuffer model_buffer,
+    libtorch::DataBuffer metadata_buffer, size_t state_size,
+    size_t policies_size, Session* session,
+    function< void( Session* ) > const& worker )
 {
-    if (cleanup_requested)
+    if (session->cleanup_requested)
         return;
 
     torch::Device device = libtorch::get_device();
-    auto [model, hp] = libtorch::load_model(
-        model_data, model_data_len, metadata_json, metadata_len, device );
-    if (!inference_manager) // First time call:
+    auto [model, hp] =
+        libtorch::load_model( model_buffer, metadata_buffer, device );
+    if (!session->inference_manager) // First time call:
     {
         // create the InferenceManager instance
-        inference_manager.reset( new libtorch::InferenceManager(
+        session->inference_manager.reset( new libtorch::InferenceManager(
             std::move( model ), device, hp.threads, state_size, policies_size,
             hp.threads / 2, 128 ));
-        hyperparameters = hp;
+        session->hyperparameters = hp;
 
         // Set the thread pool size based on the model's hyperparameters
-        thread_pool.resize(hyperparameters.threads);
+        session->thread_pool.resize(session->hyperparameters.threads);
 
         // and start worker threads
-        cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
-        for (auto& future : thread_pool) {
+        cout << "start " << session->thread_pool.size()
+            << " selfplay worker threads" << endl;
+        for (auto& future : session->thread_pool) {
             // Capture 'hp' by value [hp] to avoid a dangling reference.
-            future = async( [worker]() { worker(); });
+            future = async( [session, worker]() { worker(session); });
         }
     }
     else // Subsequent calls: update the model in-place for efficiency.
     {
-        inference_manager->update_model( std::move( model ));
-        lock_guard< shared_mutex > lock( hp_mutex );
-        hyperparameters = hp;
+        session->inference_manager->update_model( std::move( model ));
+        scoped_lock _( session->hp_mutex );
+        session->hyperparameters = hp;
     }
 }
 
 template< size_t G, size_t P >
-int fetch_selfplay_data(
-    DataPointers data_pointers_out, uint32_t number_of_positions,
+size_t fetch_selfplay_data(
+    Session* session, DataPointers& data_pointers_out,
+    uint32_t number_of_positions,
     PositionQueue< ::alphazero::training::Position< G, P >>& pq )
 {
-    if (!inference_manager)
-        throw runtime_error( "no model loaded" );
+    if (!session->inference_manager)
+        throw invalid_argument( "no model loaded" );
 
-    while (!cleanup_requested)
+    while (!session->cleanup_requested)
     {
         unique_lock< mutex > lock( pq.mutex );
 
         // Wait until this specific queue has enough positions.
-        pq.cv.wait( lock, [&]{ return pq.queue.size() >= number_of_positions || cleanup_requested; });
+        pq.cv.wait(
+            lock,
+            [&pq, session, number_of_positions]
+            {
+                return pq.queue.size() >=
+                    number_of_positions || session->cleanup_requested;
+            });
 
         // check again, may be spurious wake up!
         if (const size_t queue_size = pq.queue.size();
@@ -133,13 +142,16 @@ int fetch_selfplay_data(
                 pq.queue.pop();
             }
 
-            // too many queued position updates remaining, stop generating new ones
-            const bool should_suspend = pq.queue.size() > position_queue_max_size;
+            // too many queued position updates remaining,
+            //  stop generating new ones
+            const bool should_suspend =
+                pq.queue.size() > session->position_queue_max_size;
             bool notify = false;
             {
-                lock_guard<mutex> lock(suspension_manager.mutex);
-                if (suspension_manager.suspended != should_suspend) {
-                    suspension_manager.suspended = should_suspend;
+                scoped_lock _(session->suspension_manager.mutex);
+                if (session->suspension_manager.suspended != should_suspend)
+                {
+                    session->suspension_manager.suspended = should_suspend;
                     notify = true;
                     cout << (should_suspend ? "suspend" : "resume")
                          << " selfplay workers" << endl;
@@ -148,7 +160,7 @@ int fetch_selfplay_data(
 
             // Notify workers outside the lock to reduce contention.
             if (notify)
-                suspension_manager.cv.notify_all();
+                session->suspension_manager.cv.notify_all();
 
             return queue_size;
         }
@@ -158,20 +170,21 @@ int fetch_selfplay_data(
 }
 
 template< typename PlayerT >
-AlphazeroPlayer< PlayerT >* player_factory(
-    typename PlayerT::game_type const& game,
-    libtorch::Hyperparameters const& hp,
-    unsigned seed,
+unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
+    Session* session, typename PlayerT::game_type game, unsigned seed,
     AlphazeroNodeAllocator< PlayerT >& node_allocator )
 {
-    alphazero::params::Ucb ucb_params{ .c_base = hp.c_base, .c_init = hp.c_init };
+    const auto& hp = session->hyperparameters;
+    alphazero::params::Ucb ucb_params
+        { .c_base = hp.c_base, .c_init = hp.c_init };
     alphazero::params::GamePlay gameplay_params{
         .simulations = hp.simulations,
         .opening_moves = hp.opening_moves,
         .threads = hp.selfplay_threads };
 
-    return new PlayerT(
-        game, ucb_params, gameplay_params, seed, node_allocator, *inference_manager );
+    return make_unique< PlayerT >(
+        std::move(game), ucb_params, gameplay_params, seed,
+        node_allocator, *session->inference_manager );
 }
 
 template< typename PlayerT >
@@ -183,26 +196,28 @@ using AlphazeroSelfPlay = ::alphazero::training::SelfPlay<
 
 
 template< typename PlayerT >
-AlphazeroSelfPlay< PlayerT >* selfplay_factory(
-    AlphazeroPlayer< PlayerT >& player,
+unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay_factory(
+    Session* session, AlphazeroPlayer< PlayerT >& player,
     vector< AlphazeroPosition< PlayerT >>& positions,
-    mt19937& g )
+    mt19937& g ) //NOSONAR
 {
-    return new AlphazeroSelfPlay< PlayerT >(
-        player, hyperparameters.dirichlet_alpha,
-        hyperparameters.dirichlet_epsilon, g, positions );
+    return make_unique< AlphazeroSelfPlay< PlayerT >>(
+        player, session->hyperparameters.dirichlet_alpha,
+        session->hyperparameters.dirichlet_epsilon, g, positions );
 }
 
 // run self play in worker thread
 template< typename PlayerT >
-void selfplay_worker(
+void selfplay_worker( Session* session,
     typename PlayerT::game_type::state_type const& initial_state,
     PositionQueue< AlphazeroPosition< PlayerT >>& pq )
 {
-    // random number generator may not be threadsafe
+    // use some tls resources
+
     mt19937 g { random_device{}() };
 
-    // thread local memory allocator and position buffer avoid synchronization delays
+    // thread local memory allocator and position buffer avoid synchronization
+    //  delays
     AlphazeroNodeAllocator< PlayerT > node_allocator;
     vector< AlphazeroPosition< PlayerT >> positions;
 
@@ -211,29 +226,34 @@ void selfplay_worker(
          player_index = toggle( player_index ))
     {
         {
-            unique_lock<mutex> lock(suspension_manager.mutex);
+            unique_lock lock( session->suspension_manager.mutex);
             // The wait predicate handles spurious wake-ups and race conditions.
-            suspension_manager.cv.wait(lock, []{
-                return !suspension_manager.suspended || cleanup_requested;
-            });
+            session->suspension_manager.cv.wait(
+                lock,
+                [session]
+                {
+                    return !session->suspension_manager.suspended
+                        || session->cleanup_requested;
+                });
         }
 
-        if (cleanup_requested)
+        if (session->cleanup_requested)
             break;
 
         libtorch::Hyperparameters hp;
         {
-            shared_lock< shared_mutex > lock( hp_mutex );
-            hp = hyperparameters;
+            scoped_lock _( session->hp_mutex );
+            hp = session->hyperparameters;
         }
 
-        unique_ptr< AlphazeroPlayer< PlayerT >> player(
-            player_factory< PlayerT >(
-                typename PlayerT::game_type( player_index, initial_state ), hp, g(), node_allocator ) );
+        auto player =
+            player_factory< PlayerT >( session,
+                typename PlayerT::game_type( player_index, initial_state ),
+                g(), node_allocator );
 
         positions.clear();
-        unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay(
-            selfplay_factory< PlayerT >( *player, positions, g ));
+        auto selfplay =
+            selfplay_factory< PlayerT >( session, *player, positions, g );
         selfplay->run();
 
         {
@@ -246,36 +266,104 @@ void selfplay_worker(
     }
 }
 
-namespace ttt {
-
-// global position fifo queue, selfplay workers feed new positions into it and client fetches them
-// there is a mechanism to stop the position queue to grow infinitely by suspending the workers
-// if it gets too large
-static PositionQueue< alphazero::training::Position > position_queue;
-
-} // namespace ttt {
-
-namespace uttt {
-static PositionQueue< alphazero::training::Position > position_queue;
-} // namespace uttt {
-
-// Use C-style linkage to prevent C++ name mangling, making it callable from Python.
+// Use C-style linkage to prevent C++ name mangling, making it callable from
+// Python.
 extern "C" {
 
-int set_ttt_model(
-    const char* model_data, int32_t model_data_len, const char* metadata_json,
-    int32_t metadata_len )
+Session* create_session()
 {
     try
     {
+        return new Session(); //NOSONAR lifetime is managed on caller side
+    }
+    catch (const std::exception& e)
+    {
+        cerr << "Failed to create session: " << e.what() << endl;
+        return nullptr;
+    }
+}
+
+void destroy_session(Session* session)
+{
+    if (!session) return;
+
+    try
+    {
+        unique_ptr< Session > delete_on_scope_exit;
+        delete_on_scope_exit.reset( session );
+
+        cout << "Requesting C++ worker thread cleanup..." << endl;
+        session->cleanup_requested = true;
+
+        // Wake up any suspended threads so they can check the cleanup flag.
+        {
+            scoped_lock _(session->suspension_manager.mutex);
+            session->suspension_manager.suspended = false;
+        }
+        session->suspension_manager.cv.notify_all();
+
+        // Wait for all self-play worker threads to finish.
+        cout << "Waiting for self-play worker threads to join..." << endl;
+        for (auto const& future : session->thread_pool)
+        {
+            if (future.valid()) {
+                future.wait();
+            }
+        }
+        cout << "All self-play worker threads joined." << endl;
+    }
+    catch (const std::exception& e)
+    {
+        cerr << "Exception during C++ resource cleanup: " << e.what() << endl;
+    }
+
+    cout << "C++ session cleanup complete." << endl;
+}
+
+struct OptimizerParams
+{
+    uint32_t number_of_selfplay_workers;
+    uint32_t number_of_threads_per_selfplay_worker;
+    uint32_t min_batch_size;
+};
+
+struct FixParams
+{
+    uint32_t simulations_per_move;
+    uint32_t number_of_games;
+};
+
+// promise: return number of positions
+uint32_t measure_selfplay_throughput(
+    Session* session, FixParams const& fix_params, OptimizerParams& opt_params )
+{
+    try
+    {
+        if (!session)
+            throw invalid_argument( "session is null" );
+
+        return 0;
+    }
+    catch (exception const& e)
+    {
+        cerr << "C++ Exception caught: " << e.what() << endl;
+        return -1;
+    }
+}
+
+int set_ttt_model(
+    Session* session, const char* model_data, int32_t model_data_len,
+    const char* metadata_json, int32_t metadata_len )
+{
+    if (!session) return -1;
+    try
+    {
         set_model(
-            model_data, model_data_len,
-            metadata_json, metadata_len,
-            ttt::alphazero::G, ttt::alphazero::P, []()
-            {
-                selfplay_worker< ttt::alphazero::libtorch::async::Player >(
-                    ttt::empty_state, ttt::position_queue );
-            });
+            {model_data, model_data_len}, {metadata_json, metadata_len},
+            ttt::alphazero::G, ttt::alphazero::P, session, [](Session* s) {
+                selfplay_worker<ttt::alphazero::libtorch::async::Player>(
+                    s, ttt::empty_state, s->ttt_position_queue );
+            } );
 
         return 0;
     }
@@ -291,18 +379,19 @@ int set_ttt_model(
     }
 }
 
-int set_uttt_model( const char* model_data, int32_t model_data_len, const char* metadata_json, int32_t metadata_len )
+int set_uttt_model(
+    Session* session, const char* model_data, int32_t model_data_len,
+    const char* metadata_json, int32_t metadata_len )
 {
+    if (!session) return -1;
     try
     {
         set_model(
-            model_data, model_data_len,
-            metadata_json, metadata_len,
-            uttt::alphazero::G, uttt::alphazero::P, []()
-            {
-                selfplay_worker< uttt::alphazero::libtorch::async::Player >(
-                    uttt::empty_state, uttt::position_queue );
-            });
+            {model_data, model_data_len}, {metadata_json, metadata_len},
+            uttt::alphazero::G, uttt::alphazero::P, session, [](Session* s) {
+                selfplay_worker<uttt::alphazero::libtorch::async::Player>(
+                    s, uttt::empty_state, s->uttt_position_queue );
+            } );
 
         return 0;
     }
@@ -319,19 +408,19 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
 }
 
 /*
- copy number_of_positions training data position to the memory locations provided by
- the data_pointers_out struct.
-
- This function is designed to be called from a foreign language interface like Python's ctypes. The model
- is passed as an in-memory buffer.
-
- data_pointers_out A pointer to a struct that will be filled with the addresses of the allocated data buffers.
- returns number of queued position or a negative value on error. */
-int fetch_ttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of_positions )
+copy number_of_positions training data position to the memory locations
+    provided by the data_pointers_out struct.
+returns number of queued positions or a negative value on error. */
+int fetch_ttt_selfplay_data(
+    Session* session, DataPointers& data_pointers_out,
+    uint32_t number_of_positions )
 {
+    if (!session) return -1;
     try
     {
-        return fetch_selfplay_data( data_pointers_out, number_of_positions, ttt::position_queue );
+        return static_cast< int >( fetch_selfplay_data(
+            session, data_pointers_out, number_of_positions,
+            session->ttt_position_queue ));
     }
     catch (const exception& e)
     {
@@ -345,11 +434,16 @@ int fetch_ttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of_
     }
 }
 
-int fetch_uttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of_positions )
+int fetch_uttt_selfplay_data(
+    Session* session, DataPointers& data_pointers_out,
+    uint32_t number_of_positions )
 {
+    if (!session) return -1;
     try
     {
-        return fetch_selfplay_data( data_pointers_out, number_of_positions, uttt::position_queue );
+        return static_cast< int > (fetch_selfplay_data(
+            session, data_pointers_out, number_of_positions,
+            session->uttt_position_queue ));
     }
     catch (const exception& e)
     {
@@ -363,64 +457,30 @@ int fetch_uttt_selfplay_data( DataPointers data_pointers_out, uint32_t number_of
     }
 }
 
-int get_inference_histogram(size_t* data_out, int max_size)
+int get_inference_histogram(
+    Session const* session, size_t* data_out, int max_size)
 {
+    if (!session) return -1;
     try
     {
-        if (!inference_manager)
+        if (!session->inference_manager)
             return 0; // No manager, no data.
 
-        // Get a reference to the histogram data.
-        vector<size_t> const& histogram = inference_manager->get_inference_histogram();
+        vector<size_t> const& histogram =
+            session->inference_manager->get_inference_histogram();
 
         if (data_out != nullptr && max_size > 0)
         {
             size_t num_to_copy = std::min((size_t)max_size, histogram.size());
-            std::copy(histogram.begin(), histogram.begin() + num_to_copy, data_out);
+            copy(histogram.begin(), histogram.begin() + num_to_copy, data_out);
         }
 
         return static_cast<int>(histogram.size());
     }
-    catch (const std::exception& e)
+    catch (const exception& e)
     {
         std::cerr << "Exception in get_inference_histogram: " << e.what() << std::endl;
         return -1;
-    }
-}
-
-void cleanup_resources()
-{
-    try
-    {
-        cleanup_requested = true;
-        {
-            lock_guard<mutex> lock(suspension_manager.mutex);
-            suspension_manager.suspended = false;
-        }
-        suspension_manager.cv.notify_all();
-
-        cout << "Wait for all worker threads to finish..." << endl;
-        for (auto& future : thread_pool)
-            if (future.valid())
-                future.wait();
-
-        // Explicitly destroy the inference manager. This is the most critical step,
-        // as it ensures the background inference thread is properly joined before
-        // the library is unloaded, preventing race conditions during shutdown.
-        if (inference_manager)
-        {
-            cout << "Cleaning up C++ inference manager..." << endl;
-            inference_manager.reset();
-        }
-    }
-    catch (const exception& e)
-    {
-        // Log any errors during cleanup, but don't re-throw.
-        cerr << "Exception during C++ resource cleanup: " << e.what() << endl;
-    }
-    catch (...)
-    {
-        cerr << "Unknown exception during C++ resource cleanup." << endl;
     }
 }
 
