@@ -257,7 +257,7 @@ void selfplay_worker( Session* session,
         selfplay->run();
 
         {
-            lock_guard< mutex > lock( pq.mutex );
+            scoped_lock _( pq.mutex );
             for (auto const& pos : positions)
                 pq.queue.push( pos );
         }
@@ -265,6 +265,58 @@ void selfplay_worker( Session* session,
         pq.cv.notify_one();
     }
 }
+
+template< typename PlayerT >
+uint32_t measure_worker(
+    Session* session,
+    typename PlayerT::game_type::state_type const& initial_state,
+    uint32_t simulations_per_move, uint32_t number_of_games,
+    uint32_t number_of_threads_per_selfplay_worker )
+{
+    // tld
+    auto g = mt19937( random_device{}());
+    uttt::alphazero::NodeAllocator node_allocator;
+    PlayerIndex player_index = PlayerIndex::Player1;
+    const auto& hp = session->hyperparameters;
+    vector< uttt::alphazero::training::Position > positions;
+    uint32_t total_positions = 0;
+    const alphazero::params::Ucb ucb_params
+        { .c_base = hp.c_base, .c_init = hp.c_init };
+
+    for (; number_of_games > 0; --number_of_games)
+    {
+        alphazero::params::GamePlay gameplay_params{
+            .simulations = simulations_per_move,
+            .opening_moves = hp.opening_moves,
+            .threads = number_of_threads_per_selfplay_worker };
+
+        PlayerT player(
+            typename PlayerT::game_type( player_index, initial_state ),
+            ucb_params, gameplay_params, g(), node_allocator,
+            *session->inference_manager );
+        alphazero::training::SelfPlay self_play(
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
+        self_play.run();
+        total_positions += positions.size();
+        positions.clear();
+        player_index = toggle( player_index );
+    }
+    return total_positions;
+}
+
+struct OptimizerParams
+{
+    uint32_t number_of_selfplay_workers;
+    uint32_t number_of_threads_per_selfplay_worker;
+    uint32_t min_batch_size;
+};
+
+struct FixParams
+{
+    uint32_t simulations_per_move;
+    uint32_t number_of_games;
+};
+
 
 // Use C-style linkage to prevent C++ name mangling, making it callable from
 // Python.
@@ -320,29 +372,42 @@ void destroy_session(Session* session)
     cout << "C++ session cleanup complete." << endl;
 }
 
-struct OptimizerParams
-{
-    uint32_t number_of_selfplay_workers;
-    uint32_t number_of_threads_per_selfplay_worker;
-    uint32_t min_batch_size;
-};
-
-struct FixParams
-{
-    uint32_t simulations_per_move;
-    uint32_t number_of_games;
-};
-
-// promise: return number of positions
-uint32_t measure_selfplay_throughput(
-    Session* session, FixParams const& fix_params, OptimizerParams& opt_params )
+// return number of created positions
+uint32_t measure_uttt_selfplay_throughput(
+    Session* session, FixParams const& fix_params,
+    OptimizerParams const& opt_params )
 {
     try
     {
         if (!session)
             throw invalid_argument( "session is null" );
+        if (!opt_params.number_of_selfplay_workers)
+            throw invalid_argument( "number_of_selfplay_workers is zero" );
 
-        return 0;
+        session->inference_manager->set_min_batch_size(
+            opt_params.min_batch_size );
+        vector< future< uint32_t > > thread_pool(
+            opt_params.number_of_selfplay_workers );
+
+        uint32_t number_of_games_per_worker =
+            fix_params.number_of_games
+            + opt_params.number_of_selfplay_workers - 1;
+        number_of_games_per_worker /= opt_params.number_of_selfplay_workers;
+
+        // start parallel workers
+        for (auto& future : thread_pool)
+            future = async(
+                measure_worker< uttt::alphazero::libtorch::async::Player >,
+                session, uttt::empty_state, fix_params.simulations_per_move,
+                number_of_games_per_worker,
+                opt_params.number_of_threads_per_selfplay_worker );
+
+        // collect all results
+        uint32_t total_positions = 0;
+        for (auto& future : thread_pool)
+            total_positions += future.get();
+
+        return total_positions;
     }
     catch (exception const& e)
     {

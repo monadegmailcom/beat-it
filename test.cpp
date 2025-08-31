@@ -783,7 +783,7 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     libtorch::Hyperparameters const& hp, size_t selfplay_threads,
     size_t runs_per_thread )
 {
-    auto g = mt19937( random_device{}());
+    auto g = mt19937( seed );
     uttt::alphazero::NodeAllocator node_allocator;
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
@@ -798,7 +798,7 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
             .threads = selfplay_threads };
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
-            gameplay_params, seed, node_allocator, inference_manager );
+            gameplay_params, g(), node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
 

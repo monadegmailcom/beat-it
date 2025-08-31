@@ -77,6 +77,7 @@ class Player : public ::Player< MoveT >
 public:
     using game_type = Game< MoveT, StateT >;
     using value_type = detail::Value< MoveT, StateT >;
+    using node_iterator = typename List<value_type>::iterator;
     using node_type = Node< value_type >;
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
@@ -129,14 +130,22 @@ public:
     MoveT choose_move() override
     {
         auto itr = choose_move_iterator();
+        advance_root(itr);
+        return root->get_value().move;
+    }
+
+    // Advances the root of the MCTS tree to the specified child node.
+    void advance_root(node_iterator itr)
+    {
         if (itr == root->get_children().end())
             throw std::source_location::current();
-
-        auto new_root = &*itr;
-        root->get_children().erase( itr );
-        root.reset( new_root );
-
-        return root->get_value().move;
+        // Get the pointer to the new root node BEFORE erasing it from the list.
+        node_type* new_root = &*itr;
+        // Erasing the node from the list invalidates the iterator `itr`.
+        root->get_children().erase(itr);
+        // Reset the unique_ptr to manage the new root. The old root and its
+        // other children are destroyed automatically.
+        root.reset(new_root);
     }
 
     NodePtr< value_type >& get_root() { return root; }
@@ -388,11 +397,9 @@ public:
              game_result == GameResult::Undecided;
              game_result = player.get_root()->get_value().game_result)
         {
-            auto& root = *player.get_root();
-
             // expand root node on first visit, for dirichlet noise addition
             //  the root node needs to be expanded and evaluated
-            if (!root.get_value().visits)
+            if (auto& root = *player.get_root(); !root.get_value().visits)
             {
                 player.expand( root );
                 player.nn_eval( root );
@@ -403,11 +410,7 @@ public:
 
             append_training_data();
 
-            if (itr == root.get_children().end())
-                throw std::source_location::current();
-            auto new_root = &*itr;
-            root.get_children().erase( itr );
-            player.get_root().reset( new_root );
+            player.advance_root(itr);
         }
 
         // set target value to game result for all new positions
@@ -444,21 +447,21 @@ protected:
         position.game_state_players = player.serialize_state( value.game );
 
         size_t sum_visits = 0;
-        for (auto const& child : root.get_children())
-            sum_visits += child.get_value().visits;
+        for (auto const& child : root.get_children()) {
+            sum_visits += child.get_value().visits.load(std::memory_order_relaxed);
+        }
 
-        // append new target policies
-        for (size_t policy_index = 0; policy_index < P; ++policy_index)
-        {
-            auto child_itr = std::ranges::find_if(
-                root.get_children(),
-                [this, policy_index](auto const& child)
-                { return policy_index == player.move_to_policy_index( child.get_value().move ); } );
-            if (child_itr == root.get_children().end())
-                position.target_policy[policy_index] = 0.0f;
-            else
-                position.target_policy[policy_index] = static_cast< float >(
-                    child_itr->get_value().visits ) / sum_visits;
+        // Initialize all policies to zero.
+        position.target_policy.fill(0.0f);
+
+        // Then, iterate through the children once to populate the policies.
+        // This is more efficient than iterating through all possible moves.
+        if (sum_visits > 0) {
+            for (auto const& child : root.get_children()) {
+                const size_t policy_index = player.move_to_policy_index(child.get_value().move);
+                position.target_policy[policy_index] =
+                    static_cast<float>(child.get_value().visits.load(std::memory_order_relaxed)) / sum_visits;
+            }
         }
     }
 private:

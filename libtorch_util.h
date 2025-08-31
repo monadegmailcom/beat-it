@@ -111,11 +111,13 @@ public:
         { return queue_size_stats_; }
     Statistics const& inference_time_stats() const noexcept
         { return inference_time_stats_; }
+    void set_min_batch_size( size_t size ) noexcept
+    { min_batch_size = size; }
 private:
     void inference_loop();
 
-    const size_t min_batch_size;
-    const size_t max_batch_size;
+    size_t min_batch_size;
+    size_t max_batch_size;
     const std::chrono::milliseconds batch_timeout;
 
     size_t state_size;
