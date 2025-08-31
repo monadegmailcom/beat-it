@@ -102,57 +102,58 @@ public:
         return snd_player_duration;
     }
 private:
+    // A helper struct to bundle a player's factory with their thread-local stats.
+    // This simplifies swapping player roles and accumulating results.
+    struct PlayerRecord {
+        // Use std::reference_wrapper to get reference semantics (non-nullable)
+        // while still being swappable.
+        std::reference_wrapper<PlayerFactory<MoveT>> factory;
+        std::reference_wrapper<size_t> wins;
+        std::reference_wrapper<std::chrono::microseconds> duration;
+    };
+
     void worker()
     {
         size_t tls_draws = 0;
         size_t tls_fst_player_wins = 0;
         size_t tls_snd_player_wins = 0;
-
         std::chrono::microseconds tls_fst_player_duration {0};
         std::chrono::microseconds tls_snd_player_duration {0};
 
-        /* Pointers to the factories and their corresponding TLS win/duration
-            counters. These will be swapped each round to alternate which
-            factory goes first. */
-        auto* p_fst_factory = &fst_player_factory;
-        auto* p_snd_factory = &snd_player_factory;
-        auto* p_fst_wins = &tls_fst_player_wins;
-        auto* p_snd_wins = &tls_snd_player_wins;
-        auto* p_fst_duration = &tls_fst_player_duration;
-        auto* p_snd_duration = &tls_snd_player_duration;
+        PlayerRecord player1_record = { fst_player_factory, tls_fst_player_wins,
+                                        tls_fst_player_duration };
+        PlayerRecord player2_record = { snd_player_factory, tls_snd_player_wins,
+                                        tls_snd_player_duration };
 
         // The starting player index also alternates each round.
         PlayerIndex current_starter_index = game.current_player_index();
 
         while (rounds.fetch_sub(1, std::memory_order_relaxed) > 0)
         {
-            // For each game, create a new Game instance with the correct
-            // starting player, but with the original game's initial state.
             Game<MoveT, StateT> round_game(
                 current_starter_index, game.get_state());
 
             const unsigned round_seed = g();
+            std::unique_ptr<Player<MoveT>> player1(
+                player1_record.factory(round_seed));
+            std::unique_ptr<Player<MoveT>> player2(
+                player2_record.factory(round_seed));
+
             const GameResult game_result = this->play(
-                round_game,
-                *(std::unique_ptr< Player< MoveT > >((*p_fst_factory)(
-                    round_seed ))), *p_fst_duration,
-                *(std::unique_ptr< Player< MoveT > >((*p_snd_factory)(
-                    round_seed ))), *p_snd_duration );
+                round_game, *player1, player1_record.duration,
+                *player2, player2_record.duration);
 
             if (game_result == GameResult::Draw)
                 ++tls_draws;
-            // Check if the winner matches the starting player of the round.
             else if (game_result == (current_starter_index == Player1
                         ? GameResult::Player1Win
                         : GameResult::Player2Win))
-                (*p_fst_wins)++; // The first player for this round won.
+                ++player1_record.wins; // The first player for this round won.
             else
-                (*p_snd_wins)++; // The second player for this round won.
+                ++player2_record.wins; // The second player for this round won.
 
             // Swap the roles for the next round.
-            std::swap(p_fst_factory, p_snd_factory);
-            std::swap(p_fst_wins, p_snd_wins);
-            std::swap(p_fst_duration, p_snd_duration);
+            std::swap( player1_record, player2_record );
             current_starter_index = toggle(current_starter_index);
         }
 

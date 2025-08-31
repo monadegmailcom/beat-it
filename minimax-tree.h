@@ -43,10 +43,8 @@ public:
       root( new (allocator.allocate(1))
             Node< detail::Value< MoveT, StateT >>(
                 detail::Value< MoveT, StateT >( game, MoveT()), allocator ),
-            [&allocator = allocator](auto* ptr) {
-                if (ptr) { ptr->~Node(); allocator.deallocate(ptr, 1); }
-            }
-          ) {}
+            NodeDeleter<detail::Value< MoveT, StateT >>{allocator} )
+    {}
 
     virtual double score( Game< MoveT, StateT > const&) const
     { return 0; };

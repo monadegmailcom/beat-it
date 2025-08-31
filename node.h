@@ -59,10 +59,19 @@ private:
     mutable std::mutex node_mutex;
 };
 
+template<typename ValueT>
+struct NodeDeleter {
+    NodeAllocator<ValueT>& allocator;
+    void operator()(Node<ValueT>* ptr) const {
+        if (ptr) {
+            ptr->~Node();
+            allocator.deallocate(ptr, 1);
+        }
+    }
+};
+
 template< typename ValueT >
-using NodePtr = std::unique_ptr<
-    Node< ValueT >,
-    std::function< void (Node< ValueT >*) > >; // Custom deleter
+using NodePtr = std::unique_ptr<Node<ValueT>, NodeDeleter<ValueT>>;
 
 template< typename ValueT >
 using List = boost::intrusive::list< Node< ValueT >>;

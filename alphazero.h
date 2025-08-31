@@ -36,8 +36,8 @@ namespace detail
         Value& operator=( Value&& ) = delete;
         ~Value() = default;
 
-        Game< MoveT, StateT > game;
-        MoveT move; // the previous move resulting in this game
+        const Game< MoveT, StateT > game;
+        const MoveT move; // the previous move resulting in this game
         const GameResult game_result; // the cached game result
 
         std::atomic<size_t> visits;
@@ -53,6 +53,24 @@ namespace detail
 template< typename MoveT, typename StateT >
 using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
 
+namespace params {
+
+struct Ucb
+{
+    float c_base = 0.0f;
+    float c_init = 0.0f;
+};
+
+struct GamePlay
+{
+    // simulations and opening moves may be different from model training
+    size_t simulations = 0;
+    size_t opening_moves = 0;
+    size_t threads = 0;
+};
+
+} // namespace params
+
 template< typename MoveT, typename StateT, size_t G, size_t P >
 class Player : public ::Player< MoveT >
 {
@@ -65,40 +83,33 @@ public:
 
     Player(
         Game< MoveT, StateT > const& game,
-        float c_base,
-        float c_init,
-        size_t simulations, // may be different from model training
-        size_t opening_moves,
-        unsigned seed,
-        NodeAllocator< MoveT, StateT >& allocator,
-        size_t threads )
+        params::Ucb const& ucb,
+        params::GamePlay const& game_play,
+        unsigned seed, // make the play deterministic with seed
+        NodeAllocator< MoveT, StateT >& allocator)
     : root( new (allocator.allocate(1))
-            node_type( value_type( game, MoveT()), allocator ),
-            // The custom deleter now only needs to destruct and deallocate the single
-            // node pointer it is given. The Node's destructor is responsible for
-            // recursively cleaning up its children.
-            [&allocator](node_type* ptr) {
-                if (ptr) { ptr->~node_type(); allocator.deallocate(ptr, 1); } } ),
-      c_base( c_base ), c_init( c_init ), simulations( simulations ),
-      opening_moves( opening_moves ), g( seed ), allocator( allocator ),
-      threads( threads )
+                node_type( value_type( game, MoveT()), allocator ),
+            NodeDeleter<value_type>{allocator} ),
+      ucb_params( ucb ), game_play( game_play ), g( seed ),
+      allocator( allocator )
     {
-        if (!simulations)
-            throw std::invalid_argument( "simulations must be > 0" );
-        if (!threads)
-            throw std::invalid_argument( "threads must be > 0" );
+        if (!game_play.simulations)
+            throw std::source_location::current();
+        if (!game_play.threads)
+            throw std::source_location::current();
     }
 
     auto choose_move_iterator()
     {
         std::vector< std::jthread > thread_pool;
-        thread_pool.reserve( threads );
+        thread_pool.reserve( game_play.threads );
 
         // The number of simulations to run in each thread.
         // Use ceiling division to ensure all simulations are run.
-        const size_t sims_per_thread = (simulations + threads - 1) / threads;
+        const size_t sims_per_thread =
+            (game_play.simulations + game_play.threads - 1) / game_play.threads;
 
-        for (size_t i = 0; i < threads; ++i)
+        for (size_t i = 0; i < game_play.threads; ++i)
             thread_pool.emplace_back(
                 [this, sims_per_thread]
                 {
@@ -106,10 +117,10 @@ public:
                         simulation(*root);
                 });
 
-        for (auto& t : thread_pool)
-            t.join();
+        // destroy and join all jthreads
+        thread_pool.clear();
 
-        if (++move_count <= opening_moves)
+        if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
             return choose_best_move();
@@ -129,7 +140,7 @@ public:
     }
 
     NodePtr< value_type >& get_root() { return root; }
-    size_t get_simulations() const { return simulations; }
+    size_t get_simulations() const { return game_play.simulations; }
 
     void apply_opponent_move( MoveT const& move ) override
     {
@@ -158,15 +169,13 @@ public:
 
     float simulation( node_type& node )
     {
-        auto lock = node.lock();
         auto& value = node.get_value();
 
-        // Atomically update stats and apply virtual loss.
-        // memory_order_relaxed is sufficient here because the mutexes already
-        // provide the necessary memory ordering guarantees.
+        // Atomically update visit count and apply virtual loss.
+        // 1.0 means assuming having lost this position.
         const float virtual_loss = 1.0;
-        value.visits.fetch_add(1, std::memory_order_relaxed);
-        value.nn_value_sum.fetch_sub(virtual_loss, std::memory_order_relaxed);
+        value.visits.fetch_add( 1, std::memory_order_relaxed);
+        value.nn_value_sum.fetch_sub( virtual_loss, std::memory_order_relaxed);
 
         // set target value
         float nn_value;
@@ -174,24 +183,35 @@ public:
         if (value.game_result != GameResult::Undecided)
             nn_value = detail::game_result_2_score(
                 value.game_result, value.game.current_player_index());
-        else if (value.visits.load(std::memory_order_relaxed) == 1) // on first visit
-        {
-            expand( node );
-            nn_value = nn_eval( node );
-        }
         else
-        // or simulate recursively otherwise
-        // negate sign of return value because it's from the opponent's
-        //  perspective
         {
-            auto& child = select( node );
-            lock.unlock();
-            nn_value = -simulation( child );
+            // The lock is crucial to ensure that only one thread can perform
+            // the check-and-expand operation on a leaf node.
+            std::unique_lock lock(node.lock());
+
+            // A node is a leaf if it has no children. The first thread to
+            // arrive will expand it. This check is now race-free.
+            if (node.get_children().empty())
+            {
+                expand( node );
+                // Pass the lock to nn_eval, which will temporarily unlock it
+                // during the slow network prediction.
+                nn_value = nn_eval( node, &lock );
+            }
+            else // otherwise simulate recursively otherwise
+            {
+                auto& child = select( node );
+                // unlock the node before simulate recursively
+                lock.unlock();
+                // negate sign of return value because it's from the opponent's
+                //  perspective
+                nn_value = -simulation( child );
+            }
         }
 
-        lock.lock();
-        // Atomically update value sum, removing virtual loss and adding the real result.
-        value.nn_value_sum.fetch_add(virtual_loss + nn_value, std::memory_order_relaxed);
+        // Atomically remove virtual loss and add the real result.
+        value.nn_value_sum.fetch_add(
+            virtual_loss + nn_value, std::memory_order_relaxed);
 
         return nn_value;
     }
@@ -211,10 +231,18 @@ public:
     }
 
     // require: node is expanded
-    float nn_eval( node_type& node )
+    float nn_eval(
+        node_type& node, std::unique_lock< std::mutex >* lock = nullptr )
     {
         auto& value = node.get_value();
+
+        // Temporarily unlock the node during the potentially slow neural
+        // network evaluation to allow other threads to continue their search.
+        if (lock)
+            lock->unlock();
         auto [nn_value, policies] = predict( serialize_state( value.game ));
+        if (lock) // Re-acquire the lock to safely update children.
+            lock->lock();
 
         // convert logits of legal moves to probabilities with softmax
         // and save in children
@@ -240,13 +268,15 @@ protected:
     float ucb( value_type const& value, size_t parent_visits )
     {
         const float c =
-            std::logf( (parent_visits + c_base + 1) / c_base) + c_init;
+            std::logf((parent_visits + ucb_params.c_base + 1)
+                / ucb_params.c_base) + ucb_params.c_init;
 
         // Atomically load visits and value_sum to get a consistent snapshot
         // for the UCB calculation. This prevents the data race where one thread
         // reads a new value_sum but an old visits count.
         size_t child_visits = value.visits.load(std::memory_order_relaxed);
-        float child_value_sum = value.nn_value_sum.load(std::memory_order_relaxed);
+        float child_value_sum = value.nn_value_sum.load(
+            std::memory_order_relaxed);
 
         float q = 0.0;
         if (child_visits != 0)
@@ -279,7 +309,8 @@ private:
         // so we are more versatile in the opening
         size_t total_visits = 0;
         for (auto const& child : children)
-            total_visits += child.get_value().visits.load(std::memory_order_relaxed);
+            total_visits += child.get_value().visits.load(
+                std::memory_order_relaxed);
 
         if (!total_visits)
             throw std::source_location::current();
@@ -289,7 +320,8 @@ private:
         size_t child_visits = 0;
         for (auto itr = children.begin(); itr != children.end(); ++itr)
         {
-            child_visits = itr->get_value().visits.load(std::memory_order_relaxed);
+            child_visits = itr->get_value().visits.load(
+                std::memory_order_relaxed);
             if (r < child_visits)
                 return itr;
             r -= child_visits;
@@ -305,22 +337,23 @@ private:
             node.get_children(),
             [this, parent_visits = node.get_value().visits.load()]
             (auto const& a, auto const& b)
-            { return ucb( a.get_value(), parent_visits ) < ucb( b.get_value(), parent_visits ); });
+            {
+                return   ucb( a.get_value(), parent_visits )
+                       < ucb( b.get_value(), parent_visits );
+            });
     }
 
     // predict game state value and policy vector from nn
     // promise: returned policies contain probability distribution of moves
-    virtual std::pair< float, std::array< float, P > > predict( std::array< float, G > const& ) = 0;
+    virtual std::pair< float, std::array< float, P > >
+        predict( std::array< float, G > const& ) = 0;
 
     NodePtr< value_type > root;
-    float c_base;
-    float c_init;
-    const size_t simulations;
-    const size_t opening_moves;
+    const params::Ucb ucb_params;
+    const params::GamePlay game_play;
     size_t move_count = 0;
     std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
-    size_t threads;
 };
 
 namespace training {
@@ -357,14 +390,15 @@ public:
         {
             auto& root = *player.get_root();
 
-            // expand root node if first visited
+            // expand root node on first visit, for dirichlet noise addition
+            //  the root node needs to be expanded and evaluated
             if (!root.get_value().visits)
             {
                 player.expand( root );
                 player.nn_eval( root );
             }
-
             add_dirichlet_noise();
+
             auto itr = player.choose_move_iterator();
 
             append_training_data();
@@ -392,7 +426,7 @@ protected:
         for (auto& child : root.get_children())
         {
             float& policy = child.get_value().nn_policy;
-            policy *= 1.0 - dirichlet_epsilon;
+            policy *= 1.0f - dirichlet_epsilon;
             policy += gamma_dist( g ) * dirichlet_epsilon;
         }
     }
@@ -427,7 +461,7 @@ protected:
                     child_itr->get_value().visits ) / sum_visits;
         }
     }
-
+private:
     Player< MoveT, StateT, G, P >& player;
     float dirichlet_epsilon;
     std::mt19937& g;

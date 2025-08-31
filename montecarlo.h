@@ -33,7 +33,7 @@ struct Value
     size_t visits = 0;
 };
 
-} // namespace detail {
+} // namespace detail
 
 template< typename MoveT, typename StateT >
 using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
@@ -49,9 +49,7 @@ public:
       root( new (allocator.allocate(1))
             Node< detail::Value< MoveT, StateT >>(
                 detail::Value< MoveT, StateT >( game, MoveT()), allocator ),
-            [&allocator = allocator](auto* ptr) {
-                if (ptr) { ptr->~Node(); allocator.deallocate(ptr, 1); }
-            }
+            NodeDeleter<detail::Value< MoveT, StateT >>{allocator}
           ),
       exploration( exploration ), simulations( simulations )
     {}

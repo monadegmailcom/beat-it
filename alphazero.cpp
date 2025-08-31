@@ -1,7 +1,6 @@
 #include "alphazero.h"
 
-namespace alphazero {
-namespace detail {
+namespace alphazero::detail {
 
 float game_result_2_score( GameResult game_result, PlayerIndex player_index )
 {
@@ -11,11 +10,10 @@ float game_result_2_score( GameResult game_result, PlayerIndex player_index )
         return 1.0;
     else if (game_result == GameResult::Player2Win && player_index == Player2)
         return 1.0;
-    else 
+    else
         return -1.0;
 }
 
-} // namespace detail {
-} // namespace alphazero
+} // namespace alphazero::detail
 
 

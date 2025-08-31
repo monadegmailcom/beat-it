@@ -96,13 +96,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
   ```bash
   python -m train.main --game ttt --resume_from experiment_name/checkpoint.pt
   ```
-### Inspect metadata**
-  - extract metadata.json :
-  ```bash
-  mkdir -p checkpoint/extra
-  unzip -p runs/models/ttt_alphazero_experiment_2/checkpoint.pt checkpoint/extra/metadata.json > checkpoint/extra/metadata.json
-  ```
-  
+
 ### Extend training steps**
   - overwrite configurations in train/main.py and train/uttt.py
   - resume training in point 1.
@@ -113,9 +107,11 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 
 ## Hyperparameter tuning
 
-- use optuna for hyperparameter optimization
+- install optuna: `pip install optuna`
+
 
 ## Further potential optimizations
+- make virtual_loss a hyperparameter
 - try Int8 arithmetic for gpu
 - use subnormal number optimization
 ```cpp

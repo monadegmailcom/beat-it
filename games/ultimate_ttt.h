@@ -100,12 +100,12 @@ using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 {
 public:
-    BasePlayer( Game const& game, float c_base, float c_init,
-                size_t simulations, size_t opening_moves, unsigned seed,
-                NodeAllocator& allocator, size_t threads )
+    BasePlayer( Game const& game,
+                ::alphazero::params::Ucb const& ucb,
+                ::alphazero::params::GamePlay const& game_play,
+                unsigned seed, NodeAllocator& allocator )
         : ::alphazero::Player< Move, State, G, P >(
-              game, c_base, c_init, simulations, opening_moves, seed,
-              allocator, threads ) {}
+              game, ucb, game_play, seed, allocator ) {}
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;

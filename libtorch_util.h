@@ -2,6 +2,7 @@
 
 #include "node.h"
 #include "statistics.h"
+#include "alphazero.h"
 
 #include <torch/script.h> // Main LibTorch header for loading models
 #include <torch/torch.h>
@@ -134,15 +135,14 @@ template< typename BasePlayerT >
 class Player : public BasePlayerT
 {
 public:
-    Player(
-        typename BasePlayerT::game_type const& game, float c_base,
-        float c_init, size_t simulations, size_t opening_moves,
-        unsigned seed,
-        NodeAllocator< typename BasePlayerT::value_type >& allocator,
-        InferenceManager& im, size_t threads )
-: BasePlayerT(
-    game, c_base, c_init, simulations, opening_moves, seed, allocator, threads),
-  inference_manager( im ) {}
+    Player( typename BasePlayerT::game_type const& game,
+            alphazero::params::Ucb const& ucb,
+            alphazero::params::GamePlay const& game_play,
+            unsigned seed,
+            NodeAllocator< typename BasePlayerT::value_type >& allocator,
+            InferenceManager& im )
+        : BasePlayerT( game, ucb, game_play, seed, allocator ),
+          inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;
 
@@ -158,8 +158,8 @@ protected:
     }
 };
 
-} // namespace async {
+} // namespace async
 
 float async_predict( InferenceManager&, float const* game_state_players, float* policies );
 
-} // namespace libtorch {
+} // namespace libtorch

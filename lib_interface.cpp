@@ -16,8 +16,13 @@ static atomic< bool > cleanup_requested( false );
 
 static vector< future< void > > thread_pool;
 
-// if position queue gets too large threads will be suspended
-static atomic< bool > threads_suspended( false );
+// A struct to manage thread suspension in a portable and race-free way.
+struct SuspensionManager {
+    std::mutex mutex;
+    std::condition_variable cv;
+    bool suspended = false;
+};
+static SuspensionManager suspension_manager;
 
 static size_t position_queue_max_size = 10000;
 static libtorch::Hyperparameters hyperparameters;
@@ -59,8 +64,7 @@ using AlphazeroPosition = alphazero::training::Position<
 void set_model(
     const char* model_data, int32_t model_data_len,
     const char* metadata_json, int32_t metadata_len,
-    size_t state_size, size_t policies_size,
-    function< void (size_t threads) > worker )
+    size_t state_size, size_t policies_size, function< void () > worker )
 {
     if (cleanup_requested)
         return;
@@ -81,8 +85,10 @@ void set_model(
 
         // and start worker threads
         cout << "start " << thread_pool.size() << " selfplay worker threads" << endl;
-        for (auto& future : thread_pool)
-            future = async( [&hp, worker]() { worker( hp.selfplay_threads ); });
+        for (auto& future : thread_pool) {
+            // Capture 'hp' by value [hp] to avoid a dangling reference.
+            future = async( [worker]() { worker(); });
+        }
     }
     else // Subsequent calls: update the model in-place for efficiency.
     {
@@ -128,18 +134,21 @@ int fetch_selfplay_data(
             }
 
             // too many queued position updates remaining, stop generating new ones
-            if (pq.queue.size() > position_queue_max_size)
+            const bool should_suspend = pq.queue.size() > position_queue_max_size;
+            bool notify = false;
             {
-                cout << "suspend selfplay workers" << endl;
-                threads_suspended = true;
-                threads_suspended.notify_all();
+                lock_guard<mutex> lock(suspension_manager.mutex);
+                if (suspension_manager.suspended != should_suspend) {
+                    suspension_manager.suspended = should_suspend;
+                    notify = true;
+                    cout << (should_suspend ? "suspend" : "resume")
+                         << " selfplay workers" << endl;
+                }
             }
-            else if (threads_suspended)
-            {
-                cout << "resume selfplay workers" << endl;
-                threads_suspended = false;
-                threads_suspended.notify_all();
-            }
+
+            // Notify workers outside the lock to reduce contention.
+            if (notify)
+                suspension_manager.cv.notify_all();
 
             return queue_size;
         }
@@ -151,12 +160,18 @@ int fetch_selfplay_data(
 template< typename PlayerT >
 AlphazeroPlayer< PlayerT >* player_factory(
     typename PlayerT::game_type const& game,
-    libtorch::Hyperparameters const& hp, unsigned seed,
-    AlphazeroNodeAllocator< PlayerT >& node_allocator, size_t threads )
+    libtorch::Hyperparameters const& hp,
+    unsigned seed,
+    AlphazeroNodeAllocator< PlayerT >& node_allocator )
 {
+    alphazero::params::Ucb ucb_params{ .c_base = hp.c_base, .c_init = hp.c_init };
+    alphazero::params::GamePlay gameplay_params{
+        .simulations = hp.simulations,
+        .opening_moves = hp.opening_moves,
+        .threads = hp.selfplay_threads };
+
     return new PlayerT(
-        game, hp.c_base, hp.c_init, hp.simulations, hp.opening_moves,
-        seed, node_allocator, *inference_manager, threads );
+        game, ucb_params, gameplay_params, seed, node_allocator, *inference_manager );
 }
 
 template< typename PlayerT >
@@ -182,7 +197,7 @@ AlphazeroSelfPlay< PlayerT >* selfplay_factory(
 template< typename PlayerT >
 void selfplay_worker(
     typename PlayerT::game_type::state_type const& initial_state,
-    PositionQueue< AlphazeroPosition< PlayerT >>& pq, size_t threads )
+    PositionQueue< AlphazeroPosition< PlayerT >>& pq )
 {
     // random number generator may not be threadsafe
     mt19937 g { random_device{}() };
@@ -195,12 +210,14 @@ void selfplay_worker(
     for (PlayerIndex player_index = PlayerIndex::Player1; true;
          player_index = toggle( player_index ))
     {
-        if (threads_suspended)
         {
-            cout << "selfplay threads are suspended, waiting..." << endl;
-            // block and wait for notification if threads_suspended is true
-            threads_suspended.wait( true );
+            unique_lock<mutex> lock(suspension_manager.mutex);
+            // The wait predicate handles spurious wake-ups and race conditions.
+            suspension_manager.cv.wait(lock, []{
+                return !suspension_manager.suspended || cleanup_requested;
+            });
         }
+
         if (cleanup_requested)
             break;
 
@@ -212,8 +229,7 @@ void selfplay_worker(
 
         unique_ptr< AlphazeroPlayer< PlayerT >> player(
             player_factory< PlayerT >(
-                typename PlayerT::game_type( player_index, initial_state ), hp,
-                g(), node_allocator, threads ) );
+                typename PlayerT::game_type( player_index, initial_state ), hp, g(), node_allocator ) );
 
         positions.clear();
         unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay(
@@ -255,11 +271,10 @@ int set_ttt_model(
         set_model(
             model_data, model_data_len,
             metadata_json, metadata_len,
-            ttt::alphazero::G, ttt::alphazero::P,
-            []( size_t threads )
+            ttt::alphazero::G, ttt::alphazero::P, []()
             {
                 selfplay_worker< ttt::alphazero::libtorch::async::Player >(
-                    ttt::empty_state, ttt::position_queue, threads);
+                    ttt::empty_state, ttt::position_queue );
             });
 
         return 0;
@@ -283,11 +298,10 @@ int set_uttt_model( const char* model_data, int32_t model_data_len, const char* 
         set_model(
             model_data, model_data_len,
             metadata_json, metadata_len,
-            uttt::alphazero::G, uttt::alphazero::P,
-            [](size_t threads )
+            uttt::alphazero::G, uttt::alphazero::P, []()
             {
                 selfplay_worker< uttt::alphazero::libtorch::async::Player >(
-                    uttt::empty_state, uttt::position_queue, threads );
+                    uttt::empty_state, uttt::position_queue );
             });
 
         return 0;
@@ -379,8 +393,11 @@ void cleanup_resources()
     try
     {
         cleanup_requested = true;
-        threads_suspended = false;
-        threads_suspended.notify_all();
+        {
+            lock_guard<mutex> lock(suspension_manager.mutex);
+            suspension_manager.suspended = false;
+        }
+        suspension_manager.cv.notify_all();
 
         cout << "Wait for all worker threads to finish..." << endl;
         for (auto& future : thread_pool)
