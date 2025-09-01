@@ -21,7 +21,7 @@ else ifeq ($(UNAME_S), Linux)
     # Linux specific paths
     $(info Compiling on Linux)
     BOOST_INCLUDE_PATH=
-    LIBTORCH_PATH=/usr/local/lib/python3.11/dist-packages/torch
+    LIBTORCH_PATH=/opt/python/3.10/lib/python3.10/site-packages/torch
     # Pre-built PyTorch binaries for Linux are often compiled with the old C++ ABI.
     # This flag ensures our code is compatible, preventing linker errors.
     CXX_ABI_FLAGS=

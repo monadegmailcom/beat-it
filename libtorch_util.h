@@ -61,6 +61,7 @@ struct Hyperparameters
     size_t opening_moves = 0;
     size_t threads = 0;
     size_t selfplay_threads = 0;
+    size_t min_batch_size = 0;
 };
 
 // promise: model is set to eval mode

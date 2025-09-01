@@ -80,8 +80,9 @@ if __name__ == '__main__':
         # Configuration for the self-play run
         self_play_config = {  # This is now only for metadata logging
             # Oversubscribe threads to hide I/O latency
-            'threads': int((os.cpu_count() or 1) * 1.5),
-            'selfplay_threads': int(os.cpu_count() or 1),
+            'threads': 3,
+            'selfplay_threads': 20,
+            'min_batch_size': 1,
             'c_base': 19652.0,
             'c_init': 1.25,
             'dirichlet_alpha': 0.3,

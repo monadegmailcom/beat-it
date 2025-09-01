@@ -33,6 +33,16 @@ T get_required_value(const boost::json::object& obj, string const& key)
     return boost::json::value_to<T>(obj.at(key));
 }
 
+template< typename T >
+T get_value_with_default(
+    const boost::json::object& obj, string const& key,
+    T const& default_value)
+{
+    if (!obj.contains(key))
+        return default_value;
+    return boost::json::value_to<T>(obj.at(key));
+}
+
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     const char* model_path, torch::Device device )
 {
@@ -105,7 +115,10 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     simulations = get_required_value<int32_t>(sp_config, "simulations");
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
     threads = get_required_value<size_t>(sp_config, "threads");
-    selfplay_threads = get_required_value<size_t>(sp_config, "selfplay_threads");
+    selfplay_threads = get_value_with_default<size_t>(
+        sp_config, "selfplay_threads", 20);
+    min_batch_size = get_value_with_default<size_t>(
+        sp_config, "min_batch_size", 2);
 }
 
 float sync_predict(
