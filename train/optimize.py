@@ -179,7 +179,7 @@ if __name__ == '__main__':
         cpu_count = os.cpu_count() or 1
         initial_params = {
             number_of_selfplay_workers: max(1, int(cpu_count / 2)),
-            number_of_threads_per_selfplay_worker: int(cpu_count * 3/2),
+            number_of_threads_per_selfplay_worker: int(cpu_count * 4),
             min_batch_size: max(1, int(cpu_count / 2))
         }
         print(f"Enqueuing initial trial with parameters: {initial_params}")
