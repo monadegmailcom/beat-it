@@ -11,11 +11,16 @@ from typing import Callable
 # These must match the structs in lib_interface.cpp
 
 
+number_of_selfplay_workers = "number_of_selfplay_workers"
+number_of_threads_per_selfplay_worker = "number_of_threads_per_selfplay_worker"
+min_batch_size = "min_batch_size"
+
+
 class OptimizerParams(ctypes.Structure):
     _fields_ = [
-        ("number_of_selfplay_workers", ctypes.c_uint32),
-        ("number_of_threads_per_selfplay_worker", ctypes.c_uint32),
-        ("min_batch_size", ctypes.c_uint32),
+        (number_of_selfplay_workers, ctypes.c_uint32),
+        (number_of_threads_per_selfplay_worker, ctypes.c_uint32),
+        (min_batch_size, ctypes.c_uint32),
     ]
 
 
@@ -36,9 +41,17 @@ MeasureFuncType = Callable[
 ]
 
 
+def min_bound(param: int):
+    return max(1, param / 2)
+
+
+def max_bound(param: int):
+    return int(param * 3 / 2 + 1.0)
+
+
 def objective(
         trial: optuna.Trial, session_handle: ctypes.c_void_p,  # type: ignore
-        c_measure_func: MeasureFuncType) -> float:
+        initial_params: dict, c_measure_func: MeasureFuncType) -> float:
     """
     The objective function for Optuna to optimize.
 
@@ -49,10 +62,18 @@ def objective(
     # N: Number of parallel self-play workers (threads)
     # P: Number of internal threads per worker (for MCTS)
     # T: Minimum batch size for the neural network inference
-    n_workers = trial.suggest_int("number_of_selfplay_workers", 1, 16)
+    n_workers = trial.suggest_int(
+        number_of_selfplay_workers,
+        min_bound(initial_params[number_of_selfplay_workers]),
+        max_bound(initial_params[number_of_selfplay_workers]))
     p_threads_per_worker = trial.suggest_int(
-        "threads_per_selfplay_worker", 1, 16)
-    t_min_batch_size = trial.suggest_int("min_batch_size", 1, 128)
+        number_of_threads_per_selfplay_worker,
+        min_bound(initial_params[number_of_threads_per_selfplay_worker]),
+        max_bound(initial_params[number_of_threads_per_selfplay_worker]))
+    t_min_batch_size = trial.suggest_int(
+        min_batch_size,
+        min_bound(initial_params[min_batch_size]),
+        max_bound(initial_params[min_batch_size]))
 
     # --- Prepare Parameters for C++ Call ---
     # These are the parameters we are optimizing
@@ -119,7 +140,7 @@ if __name__ == '__main__':
             args.model_path, map_location='cpu', _extra_files=extra_files)
         metadata = json.loads(extra_files['metadata.json'])
 
-        print("Modifying metadata to prevent background workers...")
+        # do not start workers
         metadata['self_play_config']['threads'] = 0
         modified_metadata_json = json.dumps(metadata).encode('utf-8')
 
@@ -148,20 +169,25 @@ if __name__ == '__main__':
         ]
 
         # --- Run Optuna Study ---
-        study = optuna.create_study(direction="maximize")
+        study = optuna.create_study(
+            storage="sqlite:///db.sqlite3",  # Specify the storage URL here.
+            study_name="selfplay opt",
+            direction="maximize")
 
         # Enqueue a trial with a known good starting point. Optuna will run
         # this trial first before starting its own search.
+        cpu_count = os.cpu_count() or 1
         initial_params = {
-            "number_of_selfplay_workers": os.cpu_count() or 4,
-            "threads_per_selfplay_worker": os.cpu_count() or 4,
-            "min_batch_size": 32
+            number_of_selfplay_workers: max(1, int(cpu_count / 2)),
+            number_of_threads_per_selfplay_worker: int(cpu_count * 3/2),
+            min_batch_size: max(1, int(cpu_count / 2))
         }
         print(f"Enqueuing initial trial with parameters: {initial_params}")
         study.enqueue_trial(initial_params)
 
         study.optimize(
-            lambda trial: objective(trial, session_handle, c_measure_func),
+            lambda trial: objective(
+                trial, session_handle, initial_params, c_measure_func),
             n_trials=args.n_trials)
 
         # --- Print Results ---

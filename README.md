@@ -107,8 +107,10 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 
 ## Hyperparameter tuning
 
-- install optuna: `pip install optuna`
-
+- install optuna: `pip install optuna optuna-dashboard`
+- `make shared && python -m train.optimize --model_path models/uttt_alphazero_experiment_2/final_model.pt --n_trials 100`
+- `optuna-dashboard sqlite:///db.sqlite3`
+- open browser at the location printed to console
 
 ## Further potential optimizations
 - make virtual_loss a hyperparameter

@@ -832,10 +832,10 @@ void uttt_alphazero_training()
     auto [model, hp] = libtorch::load_model( model_path, device );
     hp.simulations = 100;
     const size_t worker_threads = 10;
-    const size_t selfplay_threads = 10;
+    const size_t selfplay_threads = 15;
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, worker_threads, uttt::alphazero::G,
-        uttt::alphazero::P, 5, 128 );
+        uttt::alphazero::P, 8, 128 );
     vector< future< vector< uttt::alphazero::training::Position >>>
         thread_pool( worker_threads );
     const size_t number_of_games = 20;

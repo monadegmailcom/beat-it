@@ -214,7 +214,7 @@ void selfplay_worker( Session* session,
 {
     // use some tls resources
 
-    mt19937 g { random_device{}() };
+    mt19937 g { random_device{}() }; //NOSONAR
 
     // thread local memory allocator and position buffer avoid synchronization
     //  delays

@@ -77,7 +77,6 @@ class Player : public ::Player< MoveT >
 public:
     using game_type = Game< MoveT, StateT >;
     using value_type = detail::Value< MoveT, StateT >;
-    using node_iterator = typename List<value_type>::iterator;
     using node_type = Node< value_type >;
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
@@ -135,7 +134,7 @@ public:
     }
 
     // Advances the root of the MCTS tree to the specified child node.
-    void advance_root(node_iterator itr)
+    void advance_root(auto itr)
     {
         if (itr == root->get_children().end())
             throw std::source_location::current();
