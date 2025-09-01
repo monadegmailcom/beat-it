@@ -44,11 +44,11 @@ class TrainingHyperparameters(TypedDict):
 
 
 def set_model(
-        set_model_func, model_data: bytes,
+        session_handle, set_model_func, model_data: bytes,
         model_data_len: int, metadata_json_bytes: bytes):
     """Generic function to set a model in the C++ library."""
     result: int = set_model_func(
-        model_data, model_data_len, metadata_json_bytes,
+        session_handle, model_data, model_data_len, metadata_json_bytes,
         len(metadata_json_bytes))
     if result < 0:
         raise RuntimeError(
@@ -56,7 +56,8 @@ def set_model(
 
 
 def fetch_selfplay_data_from_cpp(
-        fetch_data_func, number_of_positions: int, g_size: int, p_size: int):
+        session_handle, fetch_data_func, number_of_positions: int,
+        g_size: int, p_size: int):
     """
     Generic function to fetch self-play data from the C++ library. Handles
     memory allocation and data transfer.
@@ -79,7 +80,8 @@ def fetch_selfplay_data_from_cpp(
     data_pointers.player_indices = player_indices.ctypes.data_as(
         ctypes.POINTER(ctypes.c_int32))
 
-    queue_size = fetch_data_func(data_pointers, number_of_positions)
+    queue_size = fetch_data_func(
+        session_handle, data_pointers, number_of_positions)
 
     if queue_size < 0:
         raise RuntimeError(f"C++ fetch function returned an error code: \

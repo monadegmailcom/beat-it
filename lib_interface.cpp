@@ -78,7 +78,7 @@ void set_model(
         // create the InferenceManager instance
         session->inference_manager.reset( new libtorch::InferenceManager(
             std::move( model ), device, hp.threads, state_size, policies_size,
-            hp.threads / 2, 128 ));
+            hp.min_batch_size, 128 ));
         session->hyperparameters = hp;
 
         // Set the thread pool size based on the model's hyperparameters

@@ -461,7 +461,8 @@ if __name__ == '__main__':
                     training_hyperparams=training_hyperparams
                 )
                 set_model(
-                    session_handle, c_set_model_func, model_bytes, len(model_bytes),
+                    session_handle, c_set_model_func, model_bytes,
+                    len(model_bytes),
                     metadata_json.encode('utf-8'))
 
             # Periodically save a checkpoint
