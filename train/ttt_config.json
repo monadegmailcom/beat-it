@@ -1,0 +1,36 @@
+{
+    "game_config": {
+        "board_size": 3,
+        "num_actions": 9,
+        "input_channels": 3,
+        "conv_channels": 32,
+        "fc_hidden_size": 128
+    },
+    "training_hyperparams": {
+        "learning_rate": 0.001,
+        "weight_decay": 1e-4,
+        "batch_size": 64,
+        "log_freq_steps": 100,
+        "total_training_steps": 100000,
+        "model_update_freq_steps": 500,
+        "checkpoint_freq_steps": 1000,
+        "replay_buffer_size": 50000,
+        "min_replay_buffer_size": 1000,
+        "target_replay_ratio": 4.0,
+        "validation_split_percentage": 0.05,
+        "validation_freq_steps": 500,
+        "lr_schedule_milestones": [50000, 75000],
+        "lr_schedule_gamma": 0.1
+    },
+    "self_play_config": {
+        "threads": 3,
+        "selfplay_threads": 10,
+        "min_batch_size": 1,
+        "c_base": 19652.0,
+        "c_init": 1.25,
+        "dirichlet_alpha": 0.3,
+        "dirichlet_epsilon": 0.25,
+        "simulations": 200,
+        "opening_moves": 5
+    }
+}

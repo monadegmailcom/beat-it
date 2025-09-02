@@ -28,11 +28,11 @@ validation_buffer_data_file = 'validation_buffer_data.npz'
 # 2. Training Setup
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
-        description="AlphaZero Training for Tic-Tac-Toe")
+        description="AlphaZero Training")
     parser.add_argument('--resume_from', type=str, default=None,
                         help='Path to a model checkpoint (.pt file) to resume \
                              training from.')
-    parser.add_argument('--game', type=str, default='ttt',
+    parser.add_argument('--game', type=str,
                         help='The game to train on (e.g., "ttt", "uttt").')
     args = parser.parse_args()
     session_handle = None
@@ -48,48 +48,24 @@ if __name__ == '__main__':
         architecture_changed = False
         extra_files_to_load = {}
 
-        # --- Dynamically Load Game Configuration ---
+        # --- Load Game Configuration from JSON ---
         print(f"Loading configuration for game: {args.game}")
         try:
             game_module = importlib.import_module(
                 f".{args.game}", package=__package__)
-        except ImportError:
-            print(f"Error: Could not find configuration module for game"
-                  f" '{args.game}'.")
+            config_path = os.path.join(
+                os.path.dirname(__file__), f"{args.game}_config.json")
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            game_config = config['game_config']
+            training_hyperparams = cast(
+                TrainingHyperparameters, config['training_hyperparams'])
+            self_play_config = config['self_play_config']
+
+        except (ImportError, FileNotFoundError, KeyError) as e:
+            print(f"Error: Could not load configuration for game "
+                  f"'{args.game}': {e}")
             exit(1)
-
-        # Group all training hyperparameters into a single dictionary for easy
-        # logging.
-        training_hyperparams: TrainingHyperparameters = {
-            'learning_rate': 0.0005,
-            'weight_decay': 1e-4,  # L2 regularization strength
-            'batch_size': 64,
-            'log_freq_steps': 100,
-            'total_training_steps': 200000,
-            'model_update_freq_steps': 500,
-            'checkpoint_freq_steps': 1000,
-            'replay_buffer_size': 200000,
-            'min_replay_buffer_size': 1000,
-            'target_replay_ratio': 4.0,
-            'validation_split_percentage': 0.05,  # 5% of data for validation
-            'validation_freq_steps': 500,  # Run validation every 500 steps
-            'lr_schedule_milestones': [100000, 150000],  # Steps to decay LR
-            'lr_schedule_gamma': 0.1,  # LR decay factor
-        }
-
-        # Configuration for the self-play run
-        self_play_config = {  # This is now only for metadata logging
-            # Oversubscribe threads to hide I/O latency
-            'threads': 3,
-            'selfplay_threads': 20,
-            'min_batch_size': 1,
-            'c_base': 19652.0,
-            'c_init': 1.25,
-            'dirichlet_alpha': 0.3,
-            'dirichlet_epsilon': 0.25,
-            'simulations': 400,
-            'opening_moves': 5
-        }
 
         # Device
         # Device selection: Prefer MPS on Apple Silicon, then CUDA, then CPU
@@ -104,10 +80,9 @@ if __name__ == '__main__':
             print("No GPU backend found. Using CPU for training.")
 
         # Model
-        model = game_module.model.to(device)
+        model = game_module.create_model(game_config).to(device)
 
         # --- Game and Network Configuration ---
-        game_config = game_module.game_config
         G_SIZE = game_config['input_channels'] * game_config['board_size'] \
             * game_config['board_size']
         P_SIZE = game_config['num_actions']
@@ -166,11 +141,11 @@ if __name__ == '__main__':
 
                 # Load metadata and configs
                 metadata = json.loads(extra_files_to_load['metadata.json'])
-                old_game_config = metadata['game_config']
-                new_game_config = game_module.game_config
+                old_game_config = metadata.get('game_config', {})
+                new_game_config = game_config
 
                 # Create a new model instance with the current configuration.
-                model = game_module.model.to(device)
+                model = game_module.create_model(new_game_config).to(device)
                 old_state_dict = old_model_scripted.state_dict()
                 new_state_dict = model.state_dict()
 
@@ -213,6 +188,7 @@ if __name__ == '__main__':
                 loaded_hyperparams = metadata.get('hyperparameters', {})
                 loaded_self_play_config = metadata.get('self_play_config', {})
 
+                # The new configs from the JSON file take precedence
                 loaded_hyperparams.update(training_hyperparams)
                 loaded_self_play_config.update(self_play_config)
 
@@ -325,6 +301,19 @@ if __name__ == '__main__':
         set_model(
             session_handle, c_set_model_func, model_bytes, len(model_bytes),
             metadata_json.encode('utf-8'))
+
+        # --- Print Final Configuration ---
+        # Combine all configs into one dictionary for printing to ensure all
+        # settings (from file and checkpoint) are clear.
+        final_config = {
+            "game_config": game_config,
+            "training_hyperparams": training_hyperparams,
+            "self_play_config": self_play_config
+        }
+        print("\n" + "="*80)
+        print("Starting training with the following merged configuration:")
+        print(json.dumps(final_config, indent=4))
+        print("="*80 + "\n")
 
         loss = None  # Initialize loss to a default value
         step = start_step

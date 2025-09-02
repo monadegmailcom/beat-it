@@ -64,7 +64,7 @@ ki engine for two player games
     ```bash
     source .venv/bin/activate
     ```
-- **Configure training in train/main.py**
+- **Configure training parameter in uttt_config.json**
     - get number of cpu cores: `nproc`
 
 -  **Build and run the training:**
@@ -94,7 +94,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ## Resume training
 ### Resume training from checkpoint**
   ```bash
-  python -m train.main --game ttt --resume_from experiment_name/checkpoint.pt
+  python -m train.main --game uttt --resume_from experiment_name/checkpoint.pt
   ```
 
 ### Extend training steps**
@@ -107,7 +107,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 
 ## Hyperparameter tuning
 
-- install optuna: `pip install optuna optuna-dashboard`
+- install optuna dependencies: `pip install optuna-dashboard`
 - `make shared && python -m train.optimize --model_path models/uttt_alphazero_experiment_2/final_model.pt --n_trials 100`
 - `optuna-dashboard sqlite:///db.sqlite3`
 - open browser at the location printed to console
