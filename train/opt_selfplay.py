@@ -43,7 +43,8 @@ MeasureFuncType = Callable[
 
 def objective(
         trial: optuna.Trial, session_handle: ctypes.c_void_p,  # type: ignore
-        initial_params: dict, c_measure_func: MeasureFuncType) -> float:
+        initial_params: dict, fix_params: FixParams,
+        c_measure_func: MeasureFuncType) -> float:
     """
     The objective function for Optuna to optimize.
 
@@ -71,9 +72,6 @@ def objective(
     # These are the parameters we are optimizing
     opt_params = OptimizerParams(
         n_workers, p_threads_per_worker, t_min_batch_size)
-
-    # These are fixed for the duration of the optimization run
-    fix_params = FixParams(simulations_per_move=100, number_of_games=20)
 
     # --- Run Measurement ---
     print(
@@ -104,6 +102,12 @@ if __name__ == '__main__':
     parser.add_argument(
         '--n_trials', type=int, default=100,
         help='Number of optimization trials to run.')
+    parser.add_argument(
+        '--simulations_per_move', type=int, default=100,
+        help='Number of MCTS simulations per move for each game in a trial.')
+    parser.add_argument(
+        '--number_of_games', type=int, default=20,
+        help='Number of games to play per trial to measure throughput.')
     args = parser.parse_args()
 
     session_handle: ctypes.c_void_p
@@ -177,9 +181,14 @@ if __name__ == '__main__':
         print(f"Enqueuing initial trial with parameters: {initial_params}")
         study.enqueue_trial(initial_params)
 
+        # Create the fixed parameters object from the command-line arguments
+        fix_params = FixParams(
+            simulations_per_move=args.simulations_per_move,
+            number_of_games=args.number_of_games)
+
         study.optimize(
             lambda trial: objective(
-                trial, session_handle, initial_params, c_measure_func),
+                trial, session_handle, initial_params, fix_params, c_measure_func),
             n_trials=args.n_trials)
 
         # --- Print Results ---

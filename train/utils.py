@@ -9,8 +9,6 @@ import collections
 import subprocess
 from typing import TypedDict
 import threading
-import matplotlib.pyplot as plt
-from PIL import Image
 
 train_buffer_metadata_file = 'train_buffer_metadata.json'
 validation_buffer_metadata_file = 'validation_buffer_metadata.json'
@@ -178,27 +176,6 @@ def save_checkpoint(
             val_buffer_bytes['metadata']
 
     torch.jit.save(loaded_model, path, _extra_files=extra_files_dict)
-
-
-def log_histogram_as_image(writer, tag, data, step):
-    """Creates a bar chart from histogram data and logs it as an image."""
-    try:
-        fig, ax = plt.subplots()
-        indices = np.nonzero(data > 0)[0]
-        counts = data[indices]
-        if len(indices) > 0:
-            ax.bar(indices, counts, tick_label=indices)
-            ax.set_xlabel("Inference Batch Size")
-            ax.set_ylabel("Frequency (Count)")
-            ax.set_title("Inference Batch Size Distribution")
-            buf = io.BytesIO()
-            fig.savefig(buf, format='png')
-            buf.seek(0)
-            image = Image.open(buf)
-            writer.add_image(tag, np.array(image), step, dataformats='HWC')
-        plt.close(fig)
-    except Exception as e:
-        print(f"Warning: Failed to generate histogram image: {e}")
 
 
 def split_and_add_data(

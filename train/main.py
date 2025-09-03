@@ -2,7 +2,6 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
-import numpy as np
 import os
 import ctypes
 import io
@@ -15,7 +14,7 @@ import argparse
 from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
-    log_histogram_as_image, DataPointers, split_and_add_data,
+    DataPointers, split_and_add_data,
     train_buffer_metadata_file
 )
 

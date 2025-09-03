@@ -108,7 +108,11 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ## Hyperparameter tuning
 
 - before starting a training you should optimize hyperparameters for the number of parallel self plays, virtual loss selfplay threads and minimal nn evaluation batch size.
-- `make shared && python -m train.opt_selfplay --model_path models/uttt_alphazero_experiment_2/final_model.pt --n_trials 100`
+- `make shared && python -m train.opt_selfplay \
+    --model_path models/uttt_alphazero_experiment_2/final_model.pt \
+    --n_trials 100 \
+    --simulations_per_move 800 \
+    --number_of_games 20`
 - `optuna-dashboard sqlite:///db.sqlite3`
 - open browser at the output url
 
