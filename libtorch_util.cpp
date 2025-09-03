@@ -214,6 +214,12 @@ void InferenceManager::update_model(
     model = std::move( new_model );
 }
 
+void InferenceManager::reset_stats() noexcept
+{
+    queue_size_stats_.reset();
+    inference_time_stats_.reset();
+}
+
 void InferenceManager::inference_loop()
 {
     vector< InferenceRequest > request_batch;

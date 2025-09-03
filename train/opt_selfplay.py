@@ -41,14 +41,6 @@ MeasureFuncType = Callable[
 ]
 
 
-def min_bound(param: int):
-    return max(1, param / 2)
-
-
-def max_bound(param: int):
-    return int(param * 3 / 2 + 1.0)
-
-
 def objective(
         trial: optuna.Trial, session_handle: ctypes.c_void_p,  # type: ignore
         initial_params: dict, c_measure_func: MeasureFuncType) -> float:
@@ -64,16 +56,16 @@ def objective(
     # T: Minimum batch size for the neural network inference
     n_workers = trial.suggest_int(
         number_of_selfplay_workers,
-        min_bound(initial_params[number_of_selfplay_workers]),
-        max_bound(initial_params[number_of_selfplay_workers]))
+        initial_params[number_of_selfplay_workers],
+        10 * initial_params[number_of_selfplay_workers])
     p_threads_per_worker = trial.suggest_int(
         number_of_threads_per_selfplay_worker,
-        min_bound(initial_params[number_of_threads_per_selfplay_worker]),
-        max_bound(initial_params[number_of_threads_per_selfplay_worker]))
+        1,
+        initial_params[number_of_threads_per_selfplay_worker])
     t_min_batch_size = trial.suggest_int(
         min_batch_size,
-        min_bound(initial_params[min_batch_size]),
-        max_bound(initial_params[min_batch_size]))
+        1,
+        10)
 
     # --- Prepare Parameters for C++ Call ---
     # These are the parameters we are optimizing

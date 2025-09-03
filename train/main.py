@@ -290,6 +290,10 @@ if __name__ == '__main__':
             ctypes.c_void_p, ctypes.POINTER(DataPointers), ctypes.c_uint32
         ]
 
+        c_reset_stats_func = alphazero_lib.reset_inference_stats
+        c_reset_stats_func.restype = None
+        c_reset_stats_func.argtypes = [ctypes.c_void_p]
+
         model_bytes, metadata_json = create_inference_model_bundle(
             model,
             step=0,
@@ -318,14 +322,16 @@ if __name__ == '__main__':
         loss = None  # Initialize loss to a default value
         step = start_step
 
-        print(f"Starting training loop from step {start_step} up to "
-              f"{training_hyperparams['total_training_steps']} steps...")
         # 1. Fetch a small batch of new data to keep the buffer fresh.
         num_positions_to_fetch = max(
             1,
 
             int(training_hyperparams['batch_size']
                 / training_hyperparams['target_replay_ratio']))
+
+        print(f"Starting training loop from step {start_step} up to "
+              f"{training_hyperparams['total_training_steps']} steps."
+              f" Fetch {num_positions_to_fetch} positions at a time.")
 
         # Initialize accumulators for averaging metrics over a logging window
         total_duration_in_window = 0.0
@@ -402,7 +408,9 @@ if __name__ == '__main__':
                 logger.log_and_reset(
                     step, training_hyperparams['total_training_steps'],
                     len(replay_buffer), queue_size,
-                    optimizer.param_groups[0]['lr'])
+                    optimizer.param_groups[0]['lr'],
+                    session_handle,
+                    alphazero_lib)
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
@@ -495,39 +503,6 @@ if __name__ == '__main__':
                 train_buffer=replay_buffer,
                 validation_buffer=validation_buffer
             )
-
-        print("\nFetching final inference batch size histogram from C++...")
-        try:
-            # Define the C-function signature
-            c_get_histo = alphazero_lib.get_inference_histogram
-            c_get_histo.restype = ctypes.c_int
-            c_get_histo.argtypes = [
-                ctypes.c_void_p, ctypes.POINTER(ctypes.c_size_t), ctypes.c_int
-            ]
-
-            # First, call with no buffer to get the required size.
-            required_size = c_get_histo(None, 0)
-
-            if required_size > 0:
-                # Allocate a buffer of the correct size and get the data.
-                histo_data = np.zeros(required_size, dtype=np.uintp)
-                histo_ptr = histo_data.ctypes.data_as(
-                    ctypes.POINTER(ctypes.c_size_t))
-                c_get_histo(session_handle, histo_ptr, required_size)
-
-                # The data is a histogram of counts per batch size.
-                # We log this directly to get a distribution plot in
-                # TensorBoard.
-                if writer:
-                    final_step = step if 'step' in locals() and step is \
-                        not None else 0
-                    log_histogram_as_image(
-                        writer, 'Performance/Inference_Batch_Size_Histogram',
-                        histo_data, final_step)
-                print(f"Logged final inference batch size histogram "
-                      f"({required_size} data points).")
-        except Exception as e:
-            print(f"Failed to get and log final histogram: {e}")
 
         if writer:
             writer.close()

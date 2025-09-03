@@ -25,6 +25,16 @@ class DataPointers(ctypes.Structure):
     ]
 
 
+class CppStats(ctypes.Structure):
+    """Mirrors the Statistics class in C++ for data transfer."""
+    _fields_ = [
+        ("min", ctypes.c_float),
+        ("max", ctypes.c_float),
+        ("mean", ctypes.c_float),
+        ("stddev", ctypes.c_float),
+    ]
+
+
 class TrainingHyperparameters(TypedDict):
     """A TypedDict to enforce the structure of training hyperparameters."""
     learning_rate: float
@@ -220,9 +230,9 @@ class MetricLogger:
             self.counts[key] += 1
 
     def log_and_reset(
-        self, step: int, total_steps: int, replay_buffer_len: int,
-        queue_size: int, lr: float
-    ):
+            self, step: int, total_steps: int, replay_buffer_len: int,
+            queue_size: int, lr: float, session_handle: ctypes.c_void_p,
+            alphazero_lib: ctypes.CDLL):
         """Averages metrics, logs to console and TensorBoard, then resets."""
         if self.counts['step_time_ms'] == 0:
             return  # Avoid division by zero if no steps were logged
@@ -248,6 +258,31 @@ class MetricLogger:
             'Buffer/ReplayBuffer_Size', replay_buffer_len, step)
         self.writer.add_scalar('Buffer/SelfPlay_Queue_Size', queue_size, step)
         self.writer.add_scalar('Hyperparameters/Learning_Rate', lr, step)
+
+        # Log C++ inference stats
+        try:
+            c_get_stats = alphazero_lib.get_inference_queue_stats
+            c_get_stats.restype = CppStats
+            c_get_stats.argtypes = [ctypes.c_void_p]
+            queue_stats = c_get_stats(session_handle)
+
+            # Use add_scalars to plot min, max, and mean on one graph
+            self.writer.add_scalars(
+                'Performance/Inference_Batch_Size',
+                {
+                    'min': queue_stats.min,
+                    'max': queue_stats.max,
+                    'mean': queue_stats.mean,
+                    'minus_one_stddev': queue_stats.mean -
+                    queue_stats.stddev,
+                    'plus_one_stddev': queue_stats.mean +
+                    queue_stats.stddev
+                },
+                step)
+        except Exception as e:
+            print(
+                f"Warning: Failed to get and log C++ inference stats "
+                f"at step {step}: {e}")
 
         # Log to console
         print(

@@ -107,10 +107,23 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 
 ## Hyperparameter tuning
 
-- install optuna dependencies: `pip install optuna-dashboard`
-- `make shared && python -m train.optimize --model_path models/uttt_alphazero_experiment_2/final_model.pt --n_trials 100`
+- before starting a training you should optimize hyperparameters for the number of parallel self plays, virtual loss selfplay threads and minimal nn evaluation batch size.
+- `make shared && python -m train.opt_selfplay --model_path models/uttt_alphazero_experiment_2/final_model.pt --n_trials 100`
 - `optuna-dashboard sqlite:///db.sqlite3`
-- open browser at the location printed to console
+- open browser at the output url
+
+## Todos
+- regularly evaluate game play in a match
+  - add match function to shared lib
+  - every time a new checkpoint model is saved start a match (100 games) against the previous model and output stats to console.
+- set up docker for ease of deployment
+  - optimizing selfplay
+  - training
+  - interactive shell into docker
+  - questions
+    - is the gpu accessible from docker?
+    - how to transfer files to/from docker
+    - how to access tensorboard and optuna-dashboard
 
 ## Further potential optimizations
 - make virtual_loss a hyperparameter

@@ -26,6 +26,15 @@ float Statistics::stddev() const
     return std::sqrtf( sum_square / count_ - mean_ * mean_);
 }
 
+void Statistics::reset() noexcept
+{
+    sum = 0.0f;
+    sum_square = 0.0f;
+    min_ = INFINITY;
+    max_ = -INFINITY;
+    count_ = 0;
+}
+
 ostream& operator<<( ostream& os, Statistics const& stats )
 {
     os

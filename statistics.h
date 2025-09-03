@@ -12,6 +12,7 @@ public:
     float min() const noexcept { return min_; }
     float max() const noexcept { return max_; }
     size_t count() const noexcept { return count_; }
+    void reset() noexcept;
 private:
     float sum = 0.0f;
     float sum_square = 0.0f;

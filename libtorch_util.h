@@ -114,6 +114,7 @@ public:
         { return inference_time_stats_; }
     void set_min_batch_size( size_t size ) noexcept
     { min_batch_size = size; }
+    void reset_stats() noexcept;
 private:
     void inference_loop();
 

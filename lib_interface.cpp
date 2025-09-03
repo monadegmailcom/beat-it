@@ -317,6 +317,13 @@ struct FixParams
     uint32_t number_of_games;
 };
 
+struct CppStats {
+    float min;
+    float max;
+    float mean;
+    float stddev;
+};
+
 
 // Use C-style linkage to prevent C++ name mangling, making it callable from
 // Python.
@@ -522,30 +529,26 @@ int fetch_uttt_selfplay_data(
     }
 }
 
-int get_inference_histogram(
-    Session const* session, size_t* data_out, int max_size)
+CppStats get_inference_queue_stats(Session* session)
 {
-    if (!session) return -1;
+    if (!session || !session->inference_manager)
+        return {0.0f, 0.0f, 0.0f, 0.0f};
+
     try
     {
-        if (!session->inference_manager)
-            return 0; // No manager, no data.
+        auto const& stats = session->inference_manager->queue_size_stats();
+        CppStats result = {
+            stats.min(), stats.max(), stats.mean(), stats.stddev()};
 
-        vector<size_t> const& histogram =
-            session->inference_manager->get_inference_histogram();
+        session->inference_manager->reset_stats();
 
-        if (data_out != nullptr && max_size > 0)
-        {
-            size_t num_to_copy = std::min((size_t)max_size, histogram.size());
-            copy(histogram.begin(), histogram.begin() + num_to_copy, data_out);
-        }
-
-        return static_cast<int>(histogram.size());
+        return result;
     }
-    catch (const exception& e)
+    catch (const std::exception& e)
     {
-        std::cerr << "Exception in get_inference_histogram: " << e.what() << std::endl;
-        return -1;
+        std::cerr << "Exception in get_inference_queue_stats: " << e.what()
+            << std::endl;
+        return {0.0f, 0.0f, 0.0f, 0.0f};
     }
 }
 
