@@ -117,8 +117,9 @@ public:
                         simulation(*root);
                 });
 
-        // destroy and join all jthreads
-        thread_pool.clear();
+        // join all jthreads
+        for (auto& thread : thread_pool)
+            thread.join();
 
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
@@ -224,7 +225,7 @@ public:
         return nn_value;
     }
 
-    // require: node is not expanded
+    // require: node is not expanded and locked
     void expand( node_type& node)
     {
         auto& value = node.get_value();
@@ -238,7 +239,7 @@ public:
         }
     }
 
-    // require: node is expanded
+    // require: node is expanded and locked
     float nn_eval(
         node_type& node, std::unique_lock< std::mutex >* lock = nullptr )
     {
@@ -276,8 +277,9 @@ protected:
     float ucb( value_type const& value, size_t parent_visits )
     {
         const float c =
-            std::logf((parent_visits + ucb_params.c_base + 1)
-                / ucb_params.c_base) + ucb_params.c_init;
+            std::logf((static_cast< float >( parent_visits )
+                        + ucb_params.c_base + 1) / ucb_params.c_base)
+            + ucb_params.c_init;
 
         // Atomically load visits and value_sum to get a consistent snapshot
         // for the UCB calculation. This prevents the data race where one thread
@@ -338,7 +340,7 @@ private:
         return children.begin(); // Fallback, should ideally not be reached
     }
 
-    // require: node has children
+    // require: node has children and is locked
     node_type& select( node_type& node )
     {
         return *std::ranges::max_element(
@@ -406,7 +408,6 @@ public:
             add_dirichlet_noise();
 
             auto itr = player.choose_move_iterator();
-
             append_training_data();
 
             player.advance_root(itr);
@@ -447,7 +448,8 @@ protected:
 
         size_t sum_visits = 0;
         for (auto const& child : root.get_children()) {
-            sum_visits += child.get_value().visits.load(std::memory_order_relaxed);
+            sum_visits += child.get_value().visits.load(
+                std::memory_order_relaxed);
         }
 
         // Initialize all policies to zero.
@@ -457,9 +459,11 @@ protected:
         // This is more efficient than iterating through all possible moves.
         if (sum_visits > 0) {
             for (auto const& child : root.get_children()) {
-                const size_t policy_index = player.move_to_policy_index(child.get_value().move);
+                const size_t policy_index = player.move_to_policy_index(
+                    child.get_value().move);
                 position.target_policy[policy_index] =
-                    static_cast<float>(child.get_value().visits.load(std::memory_order_relaxed)) / sum_visits;
+                    static_cast<float>(child.get_value().visits.load(
+                        std::memory_order_relaxed)) / sum_visits;
             }
         }
     }

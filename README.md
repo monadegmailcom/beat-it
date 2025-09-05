@@ -94,7 +94,7 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 ## Resume training
 ### Resume training from checkpoint**
   ```bash
-  python -m train.main --game uttt --resume_from experiment_name/checkpoint.pt
+  python -m train.main --game uttt --resume_from experiment_name/checkpoint.pt 2>&1 | tee -a output.log
   ```
 
 ### Extend training steps**
@@ -112,7 +112,8 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
     --model_path models/uttt_alphazero_experiment_2/final_model.pt \
     --n_trials 100 \
     --simulations_per_move 800 \
-    --number_of_games 20`
+    --number_of_games 20\
+    --study_name my_name`
 - `optuna-dashboard sqlite:///db.sqlite3`
 - open browser at the output url
 

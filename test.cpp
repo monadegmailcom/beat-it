@@ -830,15 +830,16 @@ void uttt_alphazero_training()
     const char* const model_path =
         "models/uttt_alphazero_experiment_2/final_model.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
-    hp.simulations = 100;
-    const size_t worker_threads = 10;
+    hp.simulations = 800;
+    // please save
+    const size_t worker_threads = 10; // 10;
     const size_t selfplay_threads = 15;
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, worker_threads, uttt::alphazero::G,
-        uttt::alphazero::P, 8, 128 );
+        uttt::alphazero::P, 2, 128 );
     vector< future< vector< uttt::alphazero::training::Position >>>
         thread_pool( worker_threads );
-    const size_t number_of_games = 20;
+    const size_t number_of_games = 20; //20;
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
     cout << "start " << thread_pool.size() << " worker threads"
         << " with " << selfplay_threads << " selfplay threads each and "
@@ -856,6 +857,7 @@ void uttt_alphazero_training()
         auto positions = future.get();
         total_positions += positions.size();
     }
+    
     cout << "total positions: " << total_positions << endl
         << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
         << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'

@@ -84,6 +84,9 @@ shared: $(SHARED_OBJS)
 $(ODIR)/%.o: %.cpp | $(ODIR)
 	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
 
+$(ODIR)/games/%.o: games/%.cpp | $(ODIR)
+	$(CC) $(FLAGS) -MMD -MP -c $< -o $@
+
 $(ODIR):
 	mkdir -p $(ODIR)/games
 

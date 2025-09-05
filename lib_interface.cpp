@@ -362,6 +362,7 @@ void destroy_session(Session* session)
         session->suspension_manager.cv.notify_all();
 
         // Wait for all self-play worker threads to finish.
+        session->inference_manager.reset();
         cout << "Waiting for self-play worker threads to join..." << endl;
         for (auto const& future : session->thread_pool)
         {

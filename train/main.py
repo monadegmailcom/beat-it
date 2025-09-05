@@ -289,10 +289,6 @@ if __name__ == '__main__':
             ctypes.c_void_p, ctypes.POINTER(DataPointers), ctypes.c_uint32
         ]
 
-        c_reset_stats_func = alphazero_lib.reset_inference_stats
-        c_reset_stats_func.restype = None
-        c_reset_stats_func.argtypes = [ctypes.c_void_p]
-
         model_bytes, metadata_json = create_inference_model_bundle(
             model,
             step=0,

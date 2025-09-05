@@ -58,11 +58,11 @@ def objective(
     n_workers = trial.suggest_int(
         number_of_selfplay_workers,
         initial_params[number_of_selfplay_workers],
-        10 * initial_params[number_of_selfplay_workers])
+        initial_params[number_of_selfplay_workers])
     p_threads_per_worker = trial.suggest_int(
         number_of_threads_per_selfplay_worker,
         1,
-        initial_params[number_of_threads_per_selfplay_worker])
+        10 * initial_params[number_of_threads_per_selfplay_worker])
     t_min_batch_size = trial.suggest_int(
         min_batch_size,
         1,
@@ -108,6 +108,9 @@ if __name__ == '__main__':
     parser.add_argument(
         '--number_of_games', type=int, default=20,
         help='Number of games to play per trial to measure throughput.')
+    parser.add_argument(
+        '--study_name', type=str, default="selfplay_throughput_opt",
+        help='Name for the Optuna study, used for organizing runs.')
     args = parser.parse_args()
 
     session_handle: ctypes.c_void_p
@@ -167,7 +170,7 @@ if __name__ == '__main__':
         # --- Run Optuna Study ---
         study = optuna.create_study(
             storage="sqlite:///db.sqlite3",  # Specify the storage URL here.
-            study_name="selfplay opt",
+            study_name=args.study_name,
             direction="maximize")
 
         # Enqueue a trial with a known good starting point. Optuna will run
@@ -188,7 +191,8 @@ if __name__ == '__main__':
 
         study.optimize(
             lambda trial: objective(
-                trial, session_handle, initial_params, fix_params, c_measure_func),
+                trial, session_handle, initial_params, fix_params,
+                c_measure_func),
             n_trials=args.n_trials)
 
         # --- Print Results ---
