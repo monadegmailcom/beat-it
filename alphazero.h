@@ -3,11 +3,14 @@
 #include "player.h"
 #include "game.h"
 #include "node.h"
+#include "scheduler.h"
 
 #include <random>
 #include <thread>
+#include <semaphore>
 #include <atomic>
 #include <source_location>
+#include <tuple>
 
 namespace alphazero
 {
@@ -66,13 +69,14 @@ struct GamePlay
     // simulations and opening moves may be different from model training
     size_t simulations = 0;
     size_t opening_moves = 0;
-    size_t threads = 0;
+    size_t max_number_of_busy_threads = 0;
+    size_t max_number_of_threads_totally = 0;
 };
 
 } // namespace params
 
 template< typename MoveT, typename StateT, size_t G, size_t P >
-class Player : public ::Player< MoveT >
+class Player : public ::Player< MoveT >, public Scheduler
 {
 public:
     using game_type = Game< MoveT, StateT >;
@@ -87,39 +91,21 @@ public:
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
         NodeAllocator< MoveT, StateT >& allocator)
-    : root( new (allocator.allocate(1)) node_type(
+    : Scheduler( game_play.max_number_of_busy_threads,
+                 game_play.max_number_of_threads_totally ),
+      root( new (allocator.allocate(1)) node_type(
                 value_type( std::move(game), MoveT()), allocator ),
             NodeDeleter<value_type>{allocator} ),
       ucb_params( ucb ), game_play( game_play ), g( seed ),
-      allocator( allocator )
+      allocator( allocator ), remaining_simulations( game_play.simulations )
     {
         if (!game_play.simulations)
-            throw std::source_location::current();
-        if (!game_play.threads)
             throw std::source_location::current();
     }
 
     auto choose_move_iterator()
-    {
-        std::vector< std::jthread > thread_pool;
-        thread_pool.reserve( game_play.threads );
-
-        // The number of simulations to run in each thread.
-        // Use ceiling division to ensure all simulations are run.
-        const size_t sims_per_thread =
-            (game_play.simulations + game_play.threads - 1) / game_play.threads;
-
-        for (size_t i = 0; i < game_play.threads; ++i)
-            thread_pool.emplace_back(
-                [this, sims_per_thread]
-                {
-                    for (size_t j = 0; j < sims_per_thread; ++j)
-                        simulation(*root);
-                });
-
-        // join all jthreads
-        for (auto& thread : thread_pool)
-            thread.join();
+    {        
+        Scheduler::run();
 
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
@@ -176,13 +162,25 @@ public:
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
 
+    void task() override // Scheduler::
+    {
+        if (!remaining_simulations)
+            throw std::source_location::current();
+        simulation( *root );
+    }
+
+    bool completed() override // Scheduler::
+    {
+        return remaining_simulations == 0;
+    }
+
     float simulation( node_type& node )
     {
         auto& value = node.get_value();
 
-        // Atomically update visit count and apply virtual loss.
-        // 1.0 means assuming having lost this position.
-        const float virtual_loss = 1.0;
+        // Atomically update visit count and apply virtual loss to avoid 
+        // entering this path from the parent's node perspective.
+        const float virtual_loss = -1.0;
         value.visits.fetch_add( 1, std::memory_order_relaxed);
         value.nn_value_sum.fetch_sub( virtual_loss, std::memory_order_relaxed);
 
@@ -249,7 +247,15 @@ public:
         // network evaluation to allow other threads to continue their search.
         if (lock)
             lock->unlock();
-        auto [nn_value, policies] = predict( serialize_state( value.game ));
+        
+        float nn_value;
+        std::array< float, P > policies;
+        {
+            auto _( async_section());
+            std::tie(nn_value, policies) = predict( 
+                serialize_state( value.game ));
+        }
+        
         if (lock) // Re-acquire the lock to safely update children.
             lock->lock();
 
@@ -284,8 +290,9 @@ protected:
         // Atomically load visits and value_sum to get a consistent snapshot
         // for the UCB calculation. This prevents the data race where one thread
         // reads a new value_sum but an old visits count.
-        size_t child_visits = value.visits.load(std::memory_order_relaxed);
-        float child_value_sum = value.nn_value_sum.load(
+        const size_t child_visits = value.visits.load(
+            std::memory_order_relaxed);
+        const float child_value_sum = value.nn_value_sum.load(
             std::memory_order_relaxed);
 
         float q = 0.0;
@@ -364,6 +371,7 @@ private:
     size_t move_count = 0;
     std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
+    size_t remaining_simulations;
 };
 
 namespace training {

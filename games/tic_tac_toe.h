@@ -37,6 +37,8 @@ const State empty_state = {
     Symbol::Empty, Symbol::Empty, Symbol::Empty,
     Symbol::Empty, Symbol::Empty, Symbol::Empty };
 
+using PlayerFactory = ::PlayerFactory< Move >;
+
 namespace minimax {
 
 double score( State const& state );
@@ -54,7 +56,6 @@ public:
 
 namespace tree {
 
-using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 
 class Player : public ::minimax::tree::Player< Move, State >

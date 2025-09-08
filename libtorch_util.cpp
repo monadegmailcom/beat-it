@@ -117,6 +117,8 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     threads = get_required_value<size_t>(sp_config, "threads");
     selfplay_threads = get_value_with_default<size_t>(
         sp_config, "selfplay_threads", 20);
+    max_selfplay_threads = get_value_with_default<size_t>(
+        sp_config, "max_selfplay_threads", 100);
     min_batch_size = get_value_with_default<size_t>(
         sp_config, "min_batch_size", 2);
 }

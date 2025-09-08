@@ -25,6 +25,7 @@ using Game = ::Game< Move, State >;
 using Player = ::Player< Move >;
 using PlayerIndexDispatch = ::TaggedDispatch< State, PlayerIndex >;
 using MoveDispatch = ::TaggedDispatch< State, Move >;
+using PlayerFactory = ::PlayerFactory< uttt::Move >;
 
 extern const State empty_state;
 const Move no_move = { ttt::no_move, ttt::no_move };
@@ -55,11 +56,8 @@ private:
     const double weight;
 };
 
-using PlayerFactory = ::PlayerFactory< uttt::Move >;
-
 namespace tree {
 
-using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 
 class Player : public ::minimax::tree::Player< Move, State >
@@ -80,7 +78,6 @@ namespace montecarlo
 
 using Player = ::montecarlo::Player< Move, State >;
 using Buffer = char[sizeof( Player )];
-using PlayerFactory = ::PlayerFactory< Move >;
 using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 } // namespace montecarlo

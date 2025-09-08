@@ -13,6 +13,8 @@ from typing import Callable
 
 number_of_selfplay_workers = "number_of_selfplay_workers"
 number_of_threads_per_selfplay_worker = "number_of_threads_per_selfplay_worker"
+max_number_of_threads_per_selfplay_worker = \
+    "max_number_of_threads_per_selfplay_worker"
 min_batch_size = "min_batch_size"
 
 
@@ -20,6 +22,7 @@ class OptimizerParams(ctypes.Structure):
     _fields_ = [
         (number_of_selfplay_workers, ctypes.c_uint32),
         (number_of_threads_per_selfplay_worker, ctypes.c_uint32),
+        (max_number_of_threads_per_selfplay_worker, ctypes.c_uint32),
         (min_batch_size, ctypes.c_uint32),
     ]
 
@@ -57,12 +60,12 @@ def objective(
     # T: Minimum batch size for the neural network inference
     n_workers = trial.suggest_int(
         number_of_selfplay_workers,
-        initial_params[number_of_selfplay_workers],
-        initial_params[number_of_selfplay_workers])
+        1,
+        5)
     p_threads_per_worker = trial.suggest_int(
         number_of_threads_per_selfplay_worker,
-        1,
-        10 * initial_params[number_of_threads_per_selfplay_worker])
+        10,
+        20)
     t_min_batch_size = trial.suggest_int(
         min_batch_size,
         1,
@@ -178,7 +181,8 @@ if __name__ == '__main__':
         cpu_count = os.cpu_count() or 1
         initial_params = {
             number_of_selfplay_workers: max(1, int(cpu_count / 2)),
-            number_of_threads_per_selfplay_worker: int(cpu_count * 4),
+            number_of_threads_per_selfplay_worker: int(cpu_count),
+            max_number_of_threads_per_selfplay_worker: int(cpu_count * 8),
             min_batch_size: max(1, int(cpu_count / 2))
         }
         print(f"Enqueuing initial trial with parameters: {initial_params}")

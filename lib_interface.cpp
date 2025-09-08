@@ -180,7 +180,8 @@ unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
     alphazero::params::GamePlay gameplay_params{
         .simulations = hp.simulations,
         .opening_moves = hp.opening_moves,
-        .threads = hp.selfplay_threads };
+        .max_number_of_busy_threads = hp.selfplay_threads,
+        .max_number_of_threads_totally = hp.max_selfplay_threads };
 
     return make_unique< PlayerT >(
         std::move(game), ucb_params, gameplay_params, seed,
@@ -271,7 +272,8 @@ uint32_t measure_worker(
     Session* session,
     typename PlayerT::game_type::state_type const& initial_state,
     uint32_t simulations_per_move, uint32_t number_of_games,
-    uint32_t number_of_threads_per_selfplay_worker )
+    uint32_t number_of_threads_per_selfplay_worker,
+    uint32_t max_number_of_threads_per_selfplay_worker )
 {
     // tld
     auto g = mt19937( random_device{}());
@@ -288,7 +290,8 @@ uint32_t measure_worker(
         alphazero::params::GamePlay gameplay_params{
             .simulations = simulations_per_move,
             .opening_moves = hp.opening_moves,
-            .threads = number_of_threads_per_selfplay_worker };
+            .max_number_of_busy_threads =       number_of_threads_per_selfplay_worker,
+            .max_number_of_threads_totally = max_number_of_threads_per_selfplay_worker };
 
         PlayerT player(
             typename PlayerT::game_type( player_index, initial_state ),
@@ -308,6 +311,7 @@ struct OptimizerParams
 {
     uint32_t number_of_selfplay_workers;
     uint32_t number_of_threads_per_selfplay_worker;
+    uint32_t max_number_of_threads_per_selfplay_worker;
     uint32_t min_batch_size;
 };
 
@@ -408,7 +412,8 @@ uint32_t measure_uttt_selfplay_throughput(
                 measure_worker< uttt::alphazero::libtorch::async::Player >,
                 session, uttt::empty_state, fix_params.simulations_per_move,
                 number_of_games_per_worker,
-                opt_params.number_of_threads_per_selfplay_worker );
+                opt_params.number_of_threads_per_selfplay_worker,
+                opt_params.max_number_of_threads_per_selfplay_worker );
 
         // collect all results
         uint32_t total_positions = 0;

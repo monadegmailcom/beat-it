@@ -41,9 +41,9 @@ INCLUDE=$(BOOST_INCLUDE_PATH) \
 LINK=-L$(LIBTORCH_PATH)/lib -Wl,-rpath,$(LIBTORCH_PATH)/lib -ltorch -ltorch_cpu -lc10 $(LLVM_LINK_FLAGS)
 
 
-#DEBUG=-g
+DEBUG=-g
 # use optimized code for matches in test mode
-DEBUG=-g -O3
+#DEBUG=-g -O3
 RELEASE=-O3 -DNDEBUG
 
 # don't forget to clean if you change OPT

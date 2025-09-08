@@ -36,14 +36,14 @@ struct GameState< char, GameResult >
             move.reset();
     }
 
-    // get_valid_moves will be inherited from GameStateDefaultGetValidMovesProvider
-
-    static GameResult apply( char const& move, PlayerIndex, GameResult const& state )
+    static GameResult apply( 
+        char const& move, PlayerIndex, GameResult const& state )
     {
         return state;
     }
 
-    static GameResult result( PlayerIndex player_index, GameResult const& state )
+    static GameResult result( 
+        PlayerIndex player_index, GameResult const& state )
     {
         return state;
     }
@@ -87,8 +87,8 @@ void eval_won_game()
     cout << __func__ << endl;
     mt19937 g;
     vector< char > move_stack;
-    minimax::ScoreFunction< char, GameResult > score = []( Game< char, GameResult > const& )
-        { return 0.0; };
+    minimax::ScoreFunction< char, GameResult > score = 
+        []( Game< char, GameResult > const& ) { return 0.0; };
     size_t calls = 0;
     if (minimax::eval< char >( TestGame(
             Player2, GameResult::Player2Win ),
@@ -154,7 +154,8 @@ void nim_game()
     nim::Game< 2 > game( Player1, array< size_t, 2 >{ 1, 2 } );
 
     {
-        auto moves = vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, nim::Move{ 1, 2 } };
+        auto moves = vector
+            { nim::Move{ 0, 1 }, nim::Move{ 1, 1 }, nim::Move{ 1, 2 } };
         auto valid_move = game.begin();
         assert (std::find(moves.begin(), moves.end(), *valid_move)
             != moves.end());
@@ -205,11 +206,21 @@ void nim_match()
 
     nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
 
-    MultiMatch< nim::Move, nim::State< HEAPS > > match(
-        game,
-        [&game](unsigned seed) { return new nim::minimax::Player< HEAPS >( game, 2, seed ); },
-        [&game](unsigned seed) { return new nim::minimax::Player< HEAPS >( game, 3, seed ); },
-        100, 1, seed );
+    PlayerFactory< nim::Move > factory1 = 
+        [&game](unsigned seed) 
+        { 
+            return std::make_unique< nim::minimax::Player< HEAPS >>( 
+                game, 2, seed ); 
+        };
+    PlayerFactory< nim::Move > factory2 = 
+        [&game](unsigned seed) 
+        { 
+            return std::make_unique< nim::minimax::Player< HEAPS >>( 
+                game, 3, seed ); 
+        };
+
+    MultiMatch match( game, factory1, factory2, 100, 1, seed );
+
     match.run();
 
     if (verbose)
@@ -304,9 +315,11 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
             << "resulting board:\n" << game << '\n';
         if (auto p = dynamic_cast< const ttt::minimax::Player* >( &player ))
             cout << "score: " << p->score( game ) << endl;
-        else if (auto p = dynamic_cast< const ttt::montecarlo::Player* >( &player ))
+        else if (auto mp = dynamic_cast< const ttt::montecarlo::Player* >( 
+                    &player ))
             cout << "point ratio: "
-                 << p->root_node().get_value().points / p->root_node().get_value().visits
+                 << mp->root_node().get_value().points / static_cast< double >(
+                        mp->root_node().get_value().visits )
                  << endl;
     }
 };
@@ -351,11 +364,14 @@ void tic_tac_toe_match()
 
     ttt::Game game( Player1, ttt::empty_state );
 
-    MultiMatch< ttt::Move, ttt::State > match(
-        game,
-        [&game](unsigned seed) { return new ttt::minimax::Player( game, 0, seed ); },
-        [&game](unsigned seed) { return new ttt::minimax::Player( game, 5, seed ); },
-        100, 1, seed );
+    PlayerFactory< ttt::Move > factory1 = 
+        [&game](unsigned seed) 
+        { return make_unique< ttt::minimax::Player >( game, 0, seed ); };
+    PlayerFactory< ttt::Move > factory2 = 
+        [&game](unsigned seed) 
+        { return make_unique< ttt::minimax::Player >( game, 5, seed ); };
+    MultiMatch match(
+        game, factory1, factory2, 100, 1, seed );
     match.run();
 
     if (verbose)
@@ -400,13 +416,16 @@ void uttt_game()
     assert( game.current_player_index() == Player2 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
-        vector< uttt::Move >{ {4, 0}, {4, 1}, {4, 2}, {4, 3}, {4, 5}, {4, 6}, {4, 7}, {4, 8} }));
+        vector< uttt::Move >{ 
+            {4, 0}, {4, 1}, {4, 2}, {4, 3}, {4, 5}, {4, 6}, {4, 7}, {4, 8} }));
 
     game = game.apply( uttt::Move( 4, 1 ) );
     assert( game.current_player_index() == Player1 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
-        vector< uttt::Move >{ {1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, {1, 8} }));
+        vector< uttt::Move >{ 
+            {1, 0}, {1, 1}, {1, 2}, {1, 3}, {1, 4}, {1, 5}, {1, 6}, {1, 7}, 
+            {1, 8} }));
 }
 
 void uttt_human()
@@ -452,11 +471,16 @@ void uttt_match()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    MultiMatch< uttt::Move, uttt::State > match(
-        game,
-        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 1, seed ); },
-        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 4, seed ); },
-        100, 1, seed );
+    PlayerFactory< uttt::Move > factory1 = 
+        [&game](unsigned seed) { return make_unique< uttt::minimax::Player >( 
+            game, 9.0, 1, seed ); };
+    PlayerFactory< uttt::Move > factory2 =
+            [&game](unsigned seed) 
+            { 
+                return make_unique< uttt::minimax::Player >( 
+                    game, 9.0, 4, seed ); 
+            };
+    MultiMatch match( game, factory1, factory2, 100, 1, seed );
     match.run();
 
     if (verbose)
@@ -561,15 +585,20 @@ void montecarlo_ttt_match()
 
     const double exploration = 0.4;
     const size_t rounds = 100;
-    MultiMatch< ttt::Move, ttt::State > match(
-        game,
+    ttt::PlayerFactory factory1 =
         [&game, &allocator, exploration](unsigned seed)
-            { return new ttt::montecarlo::Player( game, exploration, 100, seed,
-                                                    allocator ); },
+        { 
+            return make_unique< ttt::montecarlo::Player >( 
+                game, exploration, 100, seed, allocator ); 
+        };
+    ttt::PlayerFactory factory2 =
         [&game, &allocator, exploration](unsigned seed)
-            { return new ttt::montecarlo::Player( game, exploration, 500, seed,
-                                                    allocator ); },
-        rounds, 1, seed );
+        { 
+            return make_unique< ttt::montecarlo::Player >( 
+            game, exploration, 500, seed, allocator ); 
+        };
+    MultiMatch match(
+        game, factory1, factory2, rounds, 1, seed );
     match.run();
 
     if (verbose)
@@ -597,13 +626,16 @@ void montecarlo_minimax_ttt_match()
 
     const double exploration = 0.4;
     const size_t rounds = 100;
-    MultiMatch< ttt::Move, ttt::State > match(
-        game,
+    ttt::PlayerFactory factory1 =
         [&game, &allocator, exploration](unsigned seed)
-            { return new ttt::montecarlo::Player( game, exploration, 400, seed,
-                                                    allocator ); },
-        [&game](unsigned seed) { return new ttt::minimax::Player( game, 2, seed ); },
-        rounds, 1, seed );
+        { 
+            return make_unique< ttt::montecarlo::Player >( 
+                game, exploration, 400, seed, allocator ); 
+        };
+    ttt::PlayerFactory factory2 =
+        [&game](unsigned seed) 
+        { return make_unique< ttt::minimax::Player >( game, 2, seed ); };
+    MultiMatch match( game, factory1, factory2, rounds, 1, seed );
     match.run();
 
     if (verbose)
@@ -629,22 +661,25 @@ void montecarlo_minimax_uttt_match()
 
     uttt::montecarlo::NodeAllocator allocator;
     const double exploration = 0.4;
-    const size_t simulations = 3200;
-    //const size_t simulations = 100;
+    size_t simulations = 3200;
 
-    const size_t depth = 6;
+    size_t depth = 6;
     const double factor = 9.0;
 
     const size_t rounds = 10;
-
-    MultiMatch< uttt::Move, uttt::State > match(
-        game,
-        [&game, exploration, &allocator](unsigned seed)
-            { return new uttt::montecarlo::Player( game, exploration, simulations, seed,
-                                                    allocator ); },
-        [&game, factor](unsigned seed)
-            { return new uttt::minimax::Player( game, factor, depth, seed ); },
-        rounds, 1, seed );
+    uttt::PlayerFactory factory1 =
+        [&game, exploration, &allocator, simulations](unsigned seed)
+        { 
+            return make_unique< uttt::montecarlo::Player >( 
+                game, exploration, simulations, seed, allocator ); 
+        };
+    uttt::PlayerFactory factory2 =
+        [&game, factor, depth](unsigned seed)
+        { 
+            return make_unique< uttt::minimax::Player >( 
+                game, factor, depth, seed ); 
+        };
+    MultiMatch match( game, factory1, factory2, rounds, 1, seed );
     match.run();
 
     if (verbose)
@@ -658,10 +693,10 @@ void montecarlo_minimax_uttt_match()
             << "snd player depth: " << depth << '\n'
             << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "fst/snd player duration ratio: "
-            << double( chrono::duration_cast< std::chrono::microseconds >(
+            << static_cast< double >( chrono::duration_cast< std::chrono::microseconds >(
                     match.get_fst_player_duration() ).count()) /
-               chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_snd_player_duration() ).count() << '\n';
+               static_cast< double >( chrono::duration_cast<            std::chrono::microseconds >(
+                    match.get_snd_player_duration() ).count()) << '\n';
 
     assert (match.get_draws() > 0);
 }
@@ -676,20 +711,26 @@ void uttt_match_mm_vs_tree_mm()
         return;
     }
 
-    mt19937 g( seed );
     uttt::minimax::tree::NodeAllocator allocator;
 
-    const size_t fst_depth = 2; // 2
-    const size_t snd_depth = 2; // 2
+    size_t fst_depth = 2; 
+    size_t snd_depth = 2; 
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    MultiMatch< uttt::Move, uttt::State > match(
-        game,
-        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, fst_depth, seed ); },
-        [&game, &allocator](unsigned seed) { return new uttt::minimax::tree::Player(
-                        game, 9.0, snd_depth, seed, allocator ); },
-        100, 1, seed );
+    uttt::PlayerFactory factory1 = 
+        [&game, &fst_depth](unsigned seed) 
+        { 
+            return make_unique< uttt::minimax::Player >( 
+                game, 9.0, fst_depth, seed ); 
+        };
+    uttt::PlayerFactory factory2 =
+        [snd_depth, &game, &allocator](unsigned seed) 
+        { 
+            return make_unique< uttt::minimax::tree::Player >(
+                game, 9.0, snd_depth, seed, allocator ); 
+        };
+    MultiMatch match( game, factory1, factory2, 100, 1, seed );
     match.run();
 
     if (verbose)
@@ -702,10 +743,11 @@ void uttt_match_mm_vs_tree_mm()
             << "snd player depth: " << snd_depth << '\n'
             << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "fst/snd player duration ratio: "
-            << double( chrono::duration_cast< std::chrono::microseconds >(
+            << static_cast< double >( chrono::duration_cast<    std::chrono::microseconds >(
                     match.get_fst_player_duration() ).count()) /
-               chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_snd_player_duration() ).count() << '\n' << endl;
+            static_cast< double >( chrono::duration_cast< std::chrono::microseconds >(
+                    match.get_snd_player_duration() ).count())
+             << '\n' << endl;
 
     assert (match.get_fst_player_wins() != 0);
     assert (match.get_snd_player_wins() != 0);
@@ -726,7 +768,8 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
         alphazero::params::GamePlay gameplay_params{
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
-            .threads = selfplay_threads };
+            .max_number_of_busy_threads = selfplay_threads,
+            .max_number_of_threads_totally = 10 * selfplay_threads };
         ttt::alphazero::libtorch::async::Player player(
             ttt::Game( player_index, ttt::empty_state ), ucb_params,
             gameplay_params, seed, node_allocator, inference_manager );
@@ -795,7 +838,8 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
         alphazero::params::GamePlay gameplay_params{
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
-            .threads = selfplay_threads };
+            .max_number_of_busy_threads = selfplay_threads,
+            .max_number_of_threads_totally = 10 * selfplay_threads };
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
             gameplay_params, g(), node_allocator, inference_manager );
@@ -832,14 +876,14 @@ void uttt_alphazero_training()
     auto [model, hp] = libtorch::load_model( model_path, device );
     hp.simulations = 800;
     // please save
-    const size_t worker_threads = 10; // 10;
+    const size_t worker_threads = 10; 
     const size_t selfplay_threads = 15;
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, worker_threads, uttt::alphazero::G,
         uttt::alphazero::P, 2, 128 );
     vector< future< vector< uttt::alphazero::training::Position >>>
         thread_pool( worker_threads );
-    const size_t number_of_games = 20; //20;
+    const size_t number_of_games = 20; 
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
     cout << "start " << thread_pool.size() << " worker threads"
         << " with " << selfplay_threads << " selfplay threads each and "
@@ -918,7 +962,7 @@ private:
         vector< pair< PlayerIndex, MoveT >>* moves = nullptr;
         {
             // only get/insert of new thread id has to be synchronized
-            lock_guard< mutex > lock( games_mutex );
+            scoped_lock lock( games_mutex );
             moves = &games[this_thread::get_id()];
         }
 
@@ -927,16 +971,16 @@ private:
         {
             {
                 // print game moves and result to console
-                lock_guard< mutex > lock( cout_mutex );
-                for (auto const& [player_index, move] : *moves)
+                scoped_lock lock( cout_mutex );
+                for (auto const& [player_index, m] : *moves)
                     // toggle the player index because it's the opponent's move
                     cout << uttt::PlayerIndexDispatch( toggle( player_index ))
-                        << ":" << uttt::MoveDispatch( move ) << ", " << flush;
+                        << ":" << uttt::MoveDispatch( m ) << ", " << flush;
                 cout << "[" << moves->size() << "] -> " << game.result()
                     << "\n" << endl;
             }
             // clear moves container for next game
-            lock_guard< mutex > lock( games_mutex );
+            scoped_lock lock( games_mutex );
             games[this_thread::get_id()].clear();
         }
     }
@@ -952,9 +996,8 @@ void uttt_alphazero_nn_vs_minimax()
         return;
     }
 
-    torch::Device device = libtorch::get_device(); // torch::kCPU; //
-    const char* const model_path = "models/model_20000.pt"; // Adjust if needed
-//    const char* const model_path = "models/model_15000.pt"; // Adjust if needed
+    torch::Device device = libtorch::get_device();
+    const char* const model_path = "models/model_20000.pt"; 
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
@@ -966,22 +1009,26 @@ void uttt_alphazero_nn_vs_minimax()
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 20;
-    const size_t simulations = 400;
-    const size_t selfplay_threads = 10;
-    LogMultiMatch< uttt::Move, uttt::State > match(
-        game,
-        [&](unsigned seed)
+    uttt::PlayerFactory factory1 =
+        [&game,&hp, &allocator, &inference_manager](unsigned seed)
         {
-            alphazero::params::Ucb ucb_params{ .c_base = hp.c_base, .c_init = hp.c_init };
+            const size_t simulations = 400;
+            const size_t selfplay_threads = 10;
+            alphazero::params::Ucb ucb_params{ 
+                .c_base = hp.c_base, .c_init = hp.c_init };
             alphazero::params::GamePlay gameplay_params{
                 .simulations = simulations,
                 .opening_moves = hp.opening_moves,
-                .threads = selfplay_threads };
-            return new uttt::alphazero::libtorch::async::Player(
+                .max_number_of_busy_threads = selfplay_threads,
+                .max_number_of_threads_totally = 10 * selfplay_threads };
+            return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, inference_manager );
-        },
-        [&game](unsigned seed) { return new uttt::minimax::Player( game, 9.0, 3, seed ); },
-        rounds, threads, seed );
+        };
+    uttt::PlayerFactory factory2 = 
+        [&game](unsigned seed) 
+        { return make_unique< uttt::minimax::Player >( game, 9.0, 3, seed ); };
+    LogMultiMatch match(
+        game, factory1, factory2, rounds, threads, seed );
     match.run();
 
     if (verbose)
@@ -995,25 +1042,27 @@ void uttt_alphazero_nn_vs_minimax()
             << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "draws: " << match.get_draws() << '\n'
             << "fst/snd player duration ratio: "
-            << double( chrono::duration_cast< std::chrono::microseconds >(
+            << static_cast< double >( chrono::duration_cast< std::chrono::microseconds >(
                     match.get_fst_player_duration() ).count()) /
-               chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_snd_player_duration() ).count() << '\n' << endl;
+            static_cast< double >( chrono::duration_cast< std::chrono::microseconds >(
+                    match.get_snd_player_duration() ).count()) 
+            << '\n' << endl;
 }
 
 void uttt_alphazero_nn_vs_alphazero()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << std::source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << std::source_location::current().function_name()
+            << " (extensive mode off)" << endl;
         return;
     }
 
-    torch::Device device = libtorch::get_device(); // torch::kCPU; //
-    const char* const model_path = "models/model_31000.pt"; // Adjust if needed
-    const char* const model_path2 = "models/model_20000.pt"; // Adjust if needed
+    torch::Device device = libtorch::get_device(); 
+    const char* const model_path = "models/model_31000.pt"; 
+    const char* const model_path2 = "models/model_20000.pt";
     cout << "load models for player1 " << model_path << " and player2"
         << model_path2 << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
@@ -1031,29 +1080,34 @@ void uttt_alphazero_nn_vs_alphazero()
 
     const size_t rounds = 10;
     const size_t selfplay_threads = 10;
-    LogMultiMatch< uttt::Move, uttt::State > match(
-        game,
-        [&](unsigned seed)
+    uttt::PlayerFactory factory1 =
+        [&game, &hp, &allocator, &inference_manager](unsigned seed)
         {
             alphazero::params::Ucb ucb_params{ .c_base = hp.c_base, .c_init = hp.c_init };
             alphazero::params::GamePlay gameplay_params{
                 .simulations = 400,
                 .opening_moves = hp.opening_moves,
-                .threads = selfplay_threads };
-            return new uttt::alphazero::libtorch::async::Player(
+                .max_number_of_busy_threads = selfplay_threads,
+                .max_number_of_threads_totally = 10 * selfplay_threads };
+            return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, inference_manager );
-        },
-        [&](unsigned seed)
+        };
+    uttt::PlayerFactory factory2 =
+        [&hp2, &game, &allocator, &inference_manager2](unsigned seed)
         {
-            alphazero::params::Ucb ucb_params{ .c_base = hp2.c_base, .c_init = hp2.c_init };
+            alphazero::params::Ucb ucb_params{ 
+                .c_base = hp2.c_base, .c_init = hp2.c_init };
             alphazero::params::GamePlay gameplay_params{
                 .simulations = 400,
                 .opening_moves = hp2.opening_moves,
-                .threads = selfplay_threads };
-            return new uttt::alphazero::libtorch::async::Player(
+                .max_number_of_busy_threads = selfplay_threads,
+                .max_number_of_threads_totally = 10 * selfplay_threads };
+            return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, inference_manager2 );
-        },
-        rounds, threads, seed );
+        };
+
+    LogMultiMatch match(
+        game, factory1, factory2, rounds, threads, seed );
     match.run();
 
     if (verbose)
@@ -1067,10 +1121,11 @@ void uttt_alphazero_nn_vs_alphazero()
             << "snd player duration: " << match.get_snd_player_duration() << '\n'
             << "draws: " << match.get_draws() << '\n'
             << "fst/snd player duration ratio: "
-            << double( chrono::duration_cast< std::chrono::microseconds >(
+            << static_cast< double >( chrono::duration_cast< std::chrono::microseconds >(
                     match.get_fst_player_duration() ).count()) /
-               chrono::duration_cast< std::chrono::microseconds >(
-                    match.get_snd_player_duration() ).count() << '\n' << endl;
+            static_cast< double >(chrono::duration_cast< std::chrono::microseconds >(
+                match.get_snd_player_duration() ).count())
+            << '\n' << endl;
 }
 
 } // namespace test {

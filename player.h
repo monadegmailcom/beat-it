@@ -20,4 +20,5 @@ public:
 
 // for match
 template< typename MoveT >
-using PlayerFactory = std::function< Player< MoveT >* (unsigned seed) >;
+using PlayerFactory = 
+    std::function< std::unique_ptr< Player< MoveT >> (unsigned seed) >;
