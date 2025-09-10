@@ -11,9 +11,9 @@ ifeq ($(UNAME_S), Darwin)
     LLVM_PATH=/opt/homebrew/opt/llvm
     CC=$(LLVM_PATH)/bin/clang++
     HOMEBREW=/opt/homebrew/Cellar
-    BOOST_PATH=$(HOMEBREW)/boost/1.87.0_1
+    BOOST_PATH=$(HOMEBREW)/boost/1.89.0
 	BOOST_INCLUDE_PATH=-isystem$(BOOST_PATH)/include/
-    LIBTORCH_PATH=/Users/wrqpjzc/source/libtorch
+    LIBTORCH_PATH=/Users/monade/source/libtorch
 	CXX_ABI_FLAGS=
     LLVM_INCLUDE_FLAGS=-isystem$(LLVM_PATH)/include
     LLVM_LINK_FLAGS=-L$(LLVM_PATH)/lib/c++ -L$(LLVM_PATH)/lib/unwind -lunwind

@@ -16,10 +16,11 @@
 
 using namespace std;
 
-unsigned seed = 0;
-bool verbose = true;
-bool interactive = false;
-bool extensive = true;
+random_device rd; // NOSONAR
+const unsigned seed = rd();
+const bool verbose = true;
+const bool interactive = false;
+const bool extensive = true;
 
 template<>
 struct GameState< char, GameResult >
@@ -28,7 +29,7 @@ struct GameState< char, GameResult >
     static void next_valid_move(
         optional< char >& move, PlayerIndex, GameResult const& )
     {
-        if (!move)
+        if (move.has_value())
             move = 'a';
         else if (move == 'a')
             move = 'b';
@@ -37,13 +38,13 @@ struct GameState< char, GameResult >
     }
 
     static GameResult apply( 
-        char const& move, PlayerIndex, GameResult const& state )
+        char const&, PlayerIndex, GameResult const& state )
     {
         return state;
     }
 
     static GameResult result( 
-        PlayerIndex player_index, GameResult const& state )
+        PlayerIndex, GameResult const& state )
     {
         return state;
     }
@@ -53,7 +54,7 @@ namespace test {
 
 void toggle_player()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     if( toggle( Player1 ) != Player2 ||
         toggle( Player2 ) != Player1 )
@@ -72,10 +73,10 @@ struct TestPlayer : public Player< char >
 
 void build_game()
 {
-    cout << __func__ << endl;
+    cout << std::source_location::current().function_name() << endl;
 
     TestGame game( Player2, GameResult::Undecided );
-    minimax::Player< char, GameResult > player( game, 0, seed );
+    minimax::Player player( game, 0, seed );
 
     assert( game.current_player_index() == Player2);
     if (game.current_player_index() != Player2)
@@ -84,7 +85,7 @@ void build_game()
 
 void eval_won_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
     mt19937 g;
     vector< char > move_stack;
     minimax::ScoreFunction< char, GameResult > score = 
@@ -102,7 +103,7 @@ void eval_won_game()
 
 void eval_drawn_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
     mt19937 g;
     vector< char > move_stack;
 
@@ -117,7 +118,7 @@ void eval_drawn_game()
 
 void eval_undecided_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     TestGame undecided_game( Player2, GameResult::Undecided );
 
@@ -149,7 +150,7 @@ struct TestNimPlayer : public Player< nim::Move >
 
 void nim_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     nim::Game< 2 > game( Player1, array< size_t, 2 >{ 1, 2 } );
 
@@ -159,16 +160,16 @@ void nim_game()
         auto valid_move = game.begin();
         assert (std::find(moves.begin(), moves.end(), *valid_move)
             != moves.end());
-        moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
+        erase( moves, *valid_move );
         ++valid_move;
 
         assert (std::find(moves.begin(), moves.end(), *valid_move)
             != moves.end());
-        moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
+        erase( moves, *valid_move );
         ++valid_move;
 
         assert (ranges::contains(moves.begin(), moves.end(), *valid_move));
-        moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
+        erase( moves, *valid_move );
         valid_move++; // try post-increment
 
         assert( valid_move == game.end());
@@ -195,10 +196,11 @@ void nim_game()
 void nim_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -237,7 +239,7 @@ void nim_match()
 
 void ttt_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -256,12 +258,12 @@ void ttt_game()
     auto valid_move = game.begin();
     assert (*valid_move == ttt::Move( 0 ));
     assert (ranges::contains(moves.begin(), moves.end(), *valid_move ));
-    moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
+    erase( moves, *valid_move );
     ++valid_move;
 
     assert (*valid_move == ttt::Move( 1 ));
     assert (ranges::contains(moves.begin(), moves.end(), *valid_move ));
-    moves.erase( remove( moves.begin(), moves.end(), *valid_move ));
+    erase( moves, *valid_move );
 
     auto itr = valid_move++; // try post-increment
     assert (*itr == ttt::Move( 1 ));
@@ -302,7 +304,7 @@ void ttt_game()
 
 struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
 {
-    TicTacToeMatch( Player< ttt::Move > const& player)
+    explicit TicTacToeMatch( Player< ttt::Move > const& player)
         : player( player ) {}
 
     Player< ttt::Move > const& player;
@@ -327,10 +329,11 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
 void ttt_human()
 {
     if (interactive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (interactive mode off)" << endl;
+        cout << source_location::current().function_name() 
+        << " (interactive mode off)" << endl;
         return;
     }
 
@@ -355,10 +358,11 @@ void ttt_human()
 void tic_tac_toe_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+        << " (extensive mode off)" << endl;
         return;
     }
 
@@ -386,7 +390,7 @@ void tic_tac_toe_match()
 
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 {
-    UltimateTicTacToeMatch(
+    explicit UltimateTicTacToeMatch(
         uttt::minimax::Player const& minimax_player )
         : minimax_player( minimax_player ) {}
 
@@ -404,7 +408,7 @@ struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 
 void uttt_game()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     uttt::Game game( Player1, uttt::empty_state );
 
@@ -412,14 +416,14 @@ void uttt_game()
 
     assert (vector( game.begin(), game.end()).size() == 81);
 
-    game = game.apply( uttt::Move( 4, 4 ) );
+    game = game.apply( uttt::Move{ 4, 4 });
     assert( game.current_player_index() == Player2 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
         vector< uttt::Move >{ 
             {4, 0}, {4, 1}, {4, 2}, {4, 3}, {4, 5}, {4, 6}, {4, 7}, {4, 8} }));
 
-    game = game.apply( uttt::Move( 4, 1 ) );
+    game = game.apply( uttt::Move{ 4, 1 });
     assert( game.current_player_index() == Player1 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
@@ -431,10 +435,11 @@ void uttt_game()
 void uttt_human()
 {
     if (interactive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (interactive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (interactive mode off)" << endl;
         return;
     }
 
@@ -460,10 +465,11 @@ void uttt_human()
 void uttt_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -496,7 +502,7 @@ void uttt_match()
 
 void montecarlo_node()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     vector< ttt::Move > move_stack;
     ttt::montecarlo::NodeAllocator allocator;
@@ -504,25 +510,25 @@ void montecarlo_node()
 
     using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
 
-    Node< Value >* node = new (allocator.allocate(1)) Node< Value >(
-                     Value( game, ttt::no_move ), allocator );
+    auto* node = new (allocator.allocate(1)) // NOSONAR
+        Node< Value >( Value( game, ttt::no_move ), allocator );
     assert (node->get_children().size() == 0);
     assert (node_count( *node) == 1);
 
     for (auto const& move : game)
         node->get_children().push_front(
-            *(new (allocator.allocate(1)) Node< Value >(
+            *(new (allocator.allocate(1)) Node< Value >( // NOSONAR
                 Value( game.apply( move ), move), allocator )));
 
     assert (node->get_children().size() == 9);
     assert (node_count( *node) == 10);
-    node->~Node();
-    allocator.deallocate( node, 1);
+    node->~Node(); // NOSONAR
+    allocator.deallocate( node, 1); // NOSONAR
 }
 
 void montecarlo_player()
 {
-    cout << __func__ << endl;
+    cout << source_location::current().function_name() << endl;
 
     ttt::montecarlo::NodeAllocator allocator;
     ttt::Game game( Player1, ttt::empty_state );
@@ -544,10 +550,11 @@ void montecarlo_player()
 void montecarlo_ttt_human()
 {
     if (interactive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (interactive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (interactive mode off)" << endl;
         return;
     }
 
@@ -572,10 +579,11 @@ void montecarlo_ttt_human()
 void montecarlo_ttt_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -613,10 +621,11 @@ void montecarlo_ttt_match()
 void montecarlo_minimax_ttt_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -650,10 +659,11 @@ void montecarlo_minimax_ttt_match()
 void montecarlo_minimax_uttt_match()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -704,10 +714,11 @@ void montecarlo_minimax_uttt_match()
 void uttt_match_mm_vs_tree_mm()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -755,7 +766,8 @@ void uttt_match_mm_vs_tree_mm()
 }
 
 vector< ttt::alphazero::training::Position > selfplay_worker(
-    libtorch::InferenceManager& inference_manager, libtorch::Hyperparameters const& hp,
+    libtorch::InferenceManager& inference_manager, 
+    libtorch::Hyperparameters const& hp,
     size_t runs_per_thread, size_t selfplay_threads )
 {
     auto g = mt19937( random_device{}());
@@ -764,12 +776,15 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     PlayerIndex player_index = PlayerIndex::Player1;
     for (; runs_per_thread; --runs_per_thread)
     {
-        alphazero::params::Ucb ucb_params{ .c_base = hp.c_base, .c_init = hp.c_init };
-        alphazero::params::GamePlay gameplay_params{
+        alphazero::params::Ucb ucb_params
+        { .c_base = hp.c_base, .c_init = hp.c_init };
+        alphazero::params::GamePlay gameplay_params
+        {
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
             .max_number_of_busy_threads = selfplay_threads,
-            .max_number_of_threads_totally = 10 * selfplay_threads };
+            .max_number_of_threads_totally = 10 * selfplay_threads 
+        };
         ttt::alphazero::libtorch::async::Player player(
             ttt::Game( player_index, ttt::empty_state ), ucb_params,
             gameplay_params, seed, node_allocator, inference_manager );
@@ -785,10 +800,11 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
 void alphazero_training()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -989,10 +1005,11 @@ private:
 void uttt_alphazero_nn_vs_minimax()
 {
     if (extensive)
-        cout << __func__ << endl;
+        cout << source_location::current().function_name() << endl;
     else
     {
-        cout << __func__ << " (extensive mode off)" << endl;
+        cout << source_location::current().function_name() 
+            << " (extensive mode off)" << endl;
         return;
     }
 
@@ -1128,14 +1145,12 @@ void uttt_alphazero_nn_vs_alphazero()
             << '\n' << endl;
 }
 
-} // namespace test {
+} // namespace test
 
 int main()
 {
     try
     {
-        random_device rd;
-        seed = rd();
         cout << "run tests with seed " << seed << endl << endl;
 /*
         test::toggle_player();
