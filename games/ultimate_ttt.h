@@ -8,9 +8,9 @@ namespace uttt
 struct Move {
     ttt::Move big_move;
     ttt::Move small_move;
-};
 
-bool operator==( uttt::Move const& lhs, uttt::Move const& rhs );
+    friend bool operator==( uttt::Move const&, uttt::Move const& ) = default;
+};
 
 // require: small_states, big_state and last_small_move are consistent
 struct State
@@ -36,7 +36,7 @@ namespace console
 class HumanPlayer : public Player
 {
 public:
-    HumanPlayer( Game const& game ) : game( game ) {}
+    explicit HumanPlayer( Game const& game ) : game( game ) {}
     Move choose_move() override;
     void apply_opponent_move( Move const& ) override;
 private:
@@ -70,14 +70,13 @@ private:
     const double weight;
 };
 
-} // namespace tree {
-} // namespace minimax {
+} // namespace tree 
+} // namespace minimax 
 
 namespace montecarlo
 {
 
 using Player = ::montecarlo::Player< Move, State >;
-using Buffer = char[sizeof( Player )];
 using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 } // namespace montecarlo
@@ -92,7 +91,7 @@ const size_t P = 81;
 namespace training {
 using Position = ::alphazero::training::Position< G, P >;
 using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
-} // namespace training {
+} // namespace training
 
 class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 {
@@ -108,12 +107,10 @@ protected:
     size_t move_to_policy_index( Move const& ) const override;
 };
 
-namespace libtorch {
-namespace async {
+namespace libtorch::async {
 using Player = ::libtorch::async::Player< BasePlayer >;
-} // namespace async {
-} // namespace libtorch {
-} // namespace alphazero {
+} // namespace libtorch::async
+} // namespace alphazero
 } // namespace uttt
 
 std::ostream& operator<<( std::ostream&, uttt::Game const& );

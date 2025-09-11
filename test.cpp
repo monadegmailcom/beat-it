@@ -55,7 +55,7 @@ namespace test {
 void toggle_player()
 {
     cout << source_location::current().function_name() << endl;
-
+    using enum PlayerIndex;
     if( toggle( Player1 ) != Player2 ||
         toggle( Player2 ) != Player1 )
         assert( false );
@@ -75,11 +75,11 @@ void build_game()
 {
     cout << std::source_location::current().function_name() << endl;
 
-    TestGame game( Player2, GameResult::Undecided );
+    TestGame game( PlayerIndex::Player2, GameResult::Undecided );
     minimax::Player player( game, 0, seed );
 
-    assert( game.current_player_index() == Player2);
-    if (game.current_player_index() != Player2)
+    assert( game.current_player_index() == PlayerIndex::Player2);
+    if (game.current_player_index() != PlayerIndex::Player2)
         assert( !"invalid current player index" );
 }
 
@@ -92,11 +92,11 @@ void eval_won_game()
         []( Game< char, GameResult > const& ) { return 0.0; };
     size_t calls = 0;
     if (minimax::eval< char >( TestGame(
-            Player2, GameResult::Player2Win ),
+            PlayerIndex::Player2, GameResult::Player2Win ),
             score, 0, 0.0, 1.0, g, calls ) != INFINITY)
         assert( !"wrong score for won game" );
     if (minimax::eval< char >( TestGame(
-            Player2, GameResult::Player1Win ),
+            PlayerIndex::Player2, GameResult::Player1Win ),
             score, 0, 0.0, 1.0, g, calls ) != -INFINITY)
         assert( !"wrong score for won game" );
 }
@@ -111,7 +111,7 @@ void eval_drawn_game()
         { return 0.0; };
     size_t calls = 0;
     if (minimax::eval< char >( TestGame(
-        Player2, GameResult::Draw ), score,
+        PlayerIndex::Player2, GameResult::Draw ), score,
         0, 0.0, 1.0, g, calls ) != 0.0)
         assert( !"wrong score for drawn game" );
 }
@@ -120,7 +120,7 @@ void eval_undecided_game()
 {
     cout << source_location::current().function_name() << endl;
 
-    TestGame undecided_game( Player2, GameResult::Undecided );
+    TestGame undecided_game( PlayerIndex::Player2, GameResult::Undecided );
 
     minimax::ScoreFunction< char, GameResult > score = []( TestGame const& )
         { return 42.0; };
@@ -152,7 +152,7 @@ void nim_game()
 {
     cout << source_location::current().function_name() << endl;
 
-    nim::Game< 2 > game( Player1, array< size_t, 2 >{ 1, 2 } );
+    nim::Game< 2 > game( PlayerIndex::Player1, array< size_t, 2 >{ 1, 2 } );
 
     {
         auto moves = vector
@@ -177,19 +177,19 @@ void nim_game()
     }
 
     game = game.apply( nim::Move{ 1, 1 } );
-    assert( game.current_player_index() == Player2 );
+    assert( game.current_player_index() == PlayerIndex::Player2 );
     assert (ranges::is_permutation(
         vector{ nim::Move{ 0, 1 }, nim::Move{ 1, 1 }},
         vector< nim::Move >( game.begin(), game.end())));
 
     game = game.apply( nim::Move{ 1, 1 } );
-    assert( game.current_player_index() == Player1 );
+    assert( game.current_player_index() == PlayerIndex::Player1 );
     assert( ranges::is_permutation(
         vector{ nim::Move{ 0, 1 }},
         vector< nim::Move >( game.begin(), game.end())));
 
     game = game.apply( nim::Move{ 0, 1 } );
-    assert( game.current_player_index() == Player2 );
+    assert( game.current_player_index() == PlayerIndex::Player2 );
     assert (game.result() == GameResult::Player2Win);
 }
 
@@ -206,7 +206,7 @@ void nim_match()
 
     const size_t HEAPS = 5;
 
-    nim::Game< HEAPS > game( Player1, { 1, 2, 3, 4, 5 } );
+    nim::Game< HEAPS > game( PlayerIndex::Player1, { 1, 2, 3, 4, 5 } );
 
     PlayerFactory< nim::Move > factory1 = 
         [&game](unsigned seed) 
@@ -241,7 +241,7 @@ void ttt_game()
 {
     cout << source_location::current().function_name() << endl;
 
-    ttt::Game game( Player1, ttt::empty_state );
+    ttt::Game game( PlayerIndex::Player1, ttt::empty_state );
 
     assert (game.result() == GameResult::Undecided);
 
@@ -249,7 +249,7 @@ void ttt_game()
                 vector< ttt::Move >( game.begin(), game.end() ),
                 vector{ 0, 1, 2, 3, 4, 5, 6, 7, 8 }));
     game = game.apply( ttt::Move( 4 ) );
-    assert( game.current_player_index() == Player2 );
+    assert( game.current_player_index() == PlayerIndex::Player2 );
 
     vector< ttt::Move > moves { 0, 1, 2, 3, 5, 6, 7, 8 };
     assert (ranges::is_permutation(
@@ -272,32 +272,32 @@ void ttt_game()
     assert (*game.begin() == ttt::Move( 0));
 
     game = game.apply( ttt::Move( 0 ));
-    assert( game.current_player_index() == Player1 );
+    assert( game.current_player_index() == PlayerIndex::Player1 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
         vector{ 1, 2, 3, 5, 6, 7, 8 }));
 
     game = game.apply( ttt::Move( 7 ));
-    assert( game.current_player_index() == Player2 );
+    assert( game.current_player_index() == PlayerIndex::Player2 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
         vector{ 1, 2, 3, 5, 6, 8 }));
 
     game = game.apply( ttt::Move( 2 ));
-    assert( game.current_player_index() == Player1 );
+    assert( game.current_player_index() == PlayerIndex::Player1 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
         vector{ 1, 3, 5, 6, 8 }));
 
     game = game.apply( ttt::Move( 8 ));
-    assert( game.current_player_index() == Player2 );
+    assert( game.current_player_index() == PlayerIndex::Player2 );
     assert (ranges::is_permutation(
         vector( game.begin(), game.end()),
         vector{ 1, 3, 5, 6 }));
 
     assert (game.result() == GameResult::Undecided);
     game = game.apply( ttt::Move( 1 ));
-    assert( game.current_player_index() == Player1 );
+    assert( game.current_player_index() == PlayerIndex::Player1 );
 
     assert (game.result() == GameResult::Player2Win);
 }
@@ -1152,37 +1152,6 @@ int main()
     try
     {
         cout << "run tests with seed " << seed << endl << endl;
-/*
-        test::toggle_player();
-        test::build_game();
-        test::eval_won_game();
-        test::eval_drawn_game();
-        test::eval_undecided_game();
-        test::nim_game();
-        test::nim_match();
-        test::ttt_game();
-        test::ttt_human();
-        test::tic_tac_toe_match();
-        test::uttt_game();
-        test::uttt_human();
-        test::uttt_match();
-        test::montecarlo_node();
-        test::montecarlo_player();
-        test::montecarlo_ttt_human();
-        test::montecarlo_ttt_match();
-        test::montecarlo_minimax_ttt_match();
-        test::montecarlo_minimax_uttt_match();
-        test::uttt_match_mm_vs_tree_mm();
-        test::alphazero_ttt_match();
-        test::ttt_multimatch_alphazero_vs_minimax();
-        test::montecarlo_minimax_uttt_match();
-        test::uttt_multimatch_alphazero_vs_minimax();
-        test::alphazero_training();
-        test::ttt_alphazero_nn_vs_minimax();
-        test::uttt_alphazero_training();
-        */
-//        test::uttt_alphazero_nn_vs_alphazero();
-        //test::uttt_alphazero_nn_vs_minimax();
         test::uttt_alphazero_training();
         cout << "\neverything ok" << endl;
         return 0;

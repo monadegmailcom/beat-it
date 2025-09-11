@@ -59,9 +59,8 @@ Move HumanPlayer::choose_move()
             continue;
         }
 
-        const Move move = Move {ttt::Move( big_move ), ttt::Move( small_move )};
-        if (std::find( valid_moves.begin(), valid_moves.end(), move)
-            == valid_moves.end())
+        auto move = Move {ttt::Move( big_move ), ttt::Move( small_move )};
+        if (ranges::find( valid_moves, move) == valid_moves.end())
         {
             cout << "not a valid move" << endl;
             continue;
@@ -77,12 +76,7 @@ void HumanPlayer::apply_opponent_move( Move const& move )
     game = game.apply( move );
 }
 
-} // namespace console {
-
-bool operator==( uttt::Move const& lhs, uttt::Move const& rhs )
-{
-    return lhs.big_move == rhs.big_move && lhs.small_move == rhs.small_move;
-}
+} // namespace console
 
 double score_function( uttt::State const& state, double weight )
 {
@@ -145,8 +139,8 @@ double Player::score( Game const& game ) const
     return score_function( game.get_state(), weight );
 }
 
-} // namespace tree {
-} // namespace minimax {
+} // namespace tree
+} // namespace minimax
 
 namespace alphazero {
 
@@ -200,7 +194,7 @@ array< float, G > BasePlayer::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
-} // namespace alphazero {
+} // namespace alphazero
 } // namespace uttt
 
 bool next_move( ttt::Move& small_move, ttt::State const& state )
@@ -212,11 +206,12 @@ bool next_move( ttt::Move& small_move, ttt::State const& state )
 }
 
 void GameState<uttt::Move, uttt::State>::next_valid_move(
-    optional<uttt::Move>& move, PlayerIndex player_index, uttt::State const& state)
+    optional<uttt::Move>& move, PlayerIndex, uttt::State const& state)
 {
     if (!move) // reset first move
         move = uttt::Move {
-            state.next_big_move != ttt::no_move ? state.next_big_move : ttt::Move {0},
+            state.next_big_move != ttt::no_move 
+                ? state.next_big_move : ttt::Move {0},
             0 };
     else
         ++move->small_move; // possible next move
@@ -225,10 +220,13 @@ void GameState<uttt::Move, uttt::State>::next_valid_move(
     {
         for (;move->big_move < 9; ++move->big_move, move->small_move = 0)
             if (   state.big_state[move->big_move] == GameResult::Undecided
-                && next_move( move->small_move, state.small_states[move->big_move] ))
+                && next_move( 
+                    move->small_move, state.small_states[move->big_move] ))
                 return;
     }
-    else if (next_move( move->small_move, state.small_states[state.next_big_move] )) // fixed big move
+    else if (next_move( 
+        // fixed big move
+        move->small_move, state.small_states[state.next_big_move] )) 
         return;
 
     // no valid move found
@@ -241,7 +239,7 @@ void append_valid_moves(
 {
     for (ttt::Move small_move = 0; small_move != 9; ++small_move)
         if (state.small_states[big_move][small_move] == ttt::Symbol::Empty)
-            *move_itr++ = uttt::Move( big_move, small_move );
+            *move_itr++ = uttt::Move{ big_move, small_move};
 }
 
 void GameState< uttt::Move, uttt::State >::get_valid_moves(
@@ -307,7 +305,7 @@ GameResult GameState< uttt::Move, uttt::State >::result(
     }
 
     // check for undecided
-    if (std::any_of(state.big_state.begin(), state.big_state.end(),
+    if (ranges::any_of(state.big_state,
         [](GameResult symbol) { return symbol == GameResult::Undecided; }))
     {
         state.game_result_cache = GameResult::Undecided;
@@ -321,21 +319,21 @@ GameResult GameState< uttt::Move, uttt::State >::result(
 
 char game_result_to_char( GameResult game_result )
 {
-    const char symbols[4] = { ' ', 'X', 'O', 'D' };
+    const char symbols[4] = { ' ', 'X', 'O', 'D' }; // NOSONAR
     return symbols[game_result];
 }
 
-ostream& operator<<( ostream& stream, uttt::Game const& game )
+ostream& operator<<( ostream& stream, uttt::Game const& game ) // NOSONAR
 {
     uttt::State const& state = game.get_state();
-    for (size_t i = 0; i != 3; ++i)
+    for (size_t i = 0; i != 3; ++i) // NOSONAR
     {
         for (size_t i2 = 0; i2 != 3; ++i2)
         {
             for (size_t j = 0; j != 3; ++j)
             {
-                const size_t idx = i * 3 + j;
-                if (state.big_state[idx] != GameResult::Undecided)
+                if (size_t idx = i * 3 + j; // NOSONAR
+                    state.big_state[idx] != GameResult::Undecided)
                 {
                     for (size_t j2 = 0; j2 != 3; ++j2)
                     {
@@ -348,7 +346,7 @@ ostream& operator<<( ostream& stream, uttt::Game const& game )
                 else
                     for (size_t j2 = 0; j2 != 3; ++j2)
                         stream << state.small_states[idx][i2 * 3 + j2] << ' ';
-                if (j != 2)
+                if (j != 2) // NOSONAR
                     stream << ' ';
             }
             stream << '\n';
@@ -385,7 +383,7 @@ ostream& operator<<( ostream& stream, uttt::Game const& game )
     return stream;
 }
 
-ostream& operator<<(
+ostream& operator<<( // NOSONAR
     ostream& os,
     TaggedDispatch< uttt::State, PlayerIndex > const& player_index )
 {
@@ -393,7 +391,7 @@ ostream& operator<<(
     return os;
 }
 
-ostream& operator<<(
+ostream& operator<<( // NOSONAR
     ostream& os, TaggedDispatch< uttt::State, uttt::Move > const& move )
 {
     os << "(" << (int) move.value.big_move << ','

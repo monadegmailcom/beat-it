@@ -6,7 +6,7 @@
 #include <vector>
 #include <iostream>
 
-enum PlayerIndex : uint8_t
+enum PlayerIndex : uint8_t // NOSONAR
 {
     Player1 = 0,
     Player2
@@ -14,7 +14,7 @@ enum PlayerIndex : uint8_t
 
 PlayerIndex toggle( PlayerIndex );
 
-enum GameResult : char
+enum GameResult : char // NOSONAR
 {
     Draw = 0,
     Player1Win,
@@ -126,14 +126,14 @@ private:
 template< typename TagT, typename T >
 struct TaggedDispatch
 {
-    TaggedDispatch( T const& v ) : value( v ) {}
+    explicit TaggedDispatch( T const& v ) : value( v ) {}
     T value;
 };
 
 // generic player serializations
 // overload for specific games
 template< typename StateT >
-std::ostream& operator<<(
+std::ostream& operator<<( // NOSONAR
     std::ostream& os,
     TaggedDispatch< StateT, PlayerIndex > const& player_index )
 {
@@ -144,7 +144,7 @@ std::ostream& operator<<(
 // generic move serializations
 // overload for specific games
 template< typename StateT, typename MoveT >
-std::ostream& operator<<(
+std::ostream& operator<<( // NOSONAR
     std::ostream& os, TaggedDispatch< StateT, MoveT > const& move )
 {
     os << move.value;

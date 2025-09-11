@@ -145,7 +145,8 @@ private:
 
             if (game_result == GameResult::Draw)
                 ++tls_draws;
-            else if (game_result == (current_starter_index == Player1
+            else if (game_result == 
+                        (current_starter_index == PlayerIndex::Player1
                         ? GameResult::Player1Win
                         : GameResult::Player2Win))
                 ++player1_record.wins; // The first player for this round won.

@@ -6,8 +6,7 @@
 #include <random>
 #include <algorithm>
 
-namespace minimax {
-namespace tree {
+namespace minimax::tree {
 namespace detail {
 
 template< typename MoveT, typename StateT >
@@ -28,7 +27,7 @@ struct Value
     double evaluation = 0.0;
 };
 
-} // namespace detail {
+} // namespace detail
 
 template< typename MoveT, typename StateT >
 using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
@@ -37,9 +36,9 @@ template< typename MoveT, typename StateT >
 class Player : public ::Player< MoveT >
 {
 public:
-    Player( Game< MoveT, StateT > const& game, unsigned depth, unsigned seed,
+    Player( Game< MoveT, StateT > const& game, unsigned max_depth, unsigned seed,
         NodeAllocator< MoveT, StateT >& allocator )
-    : depth( depth ), g( seed ), allocator( allocator ),
+    : max_depth( max_depth ), g( seed ), allocator( allocator ),
       root( new (allocator.allocate(1))
             Node< detail::Value< MoveT, StateT >>(
                 detail::Value< MoveT, StateT >( game, MoveT()), allocator ),
@@ -48,13 +47,12 @@ public:
 
     virtual double score( Game< MoveT, StateT > const&) const
     { return 0; };
-protected:
-    unsigned depth;
+private:
+    unsigned max_depth;
     std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
     std::vector< MoveT > move_stack;
     size_t eval_calls = 0;
-    double best_score = 0.0;
 
     NodePtr< detail::Value< MoveT, StateT > > root;
 
@@ -89,21 +87,21 @@ protected:
         ++eval_calls;
         auto& value = node.get_value();
 
-        const GameResult result = value.game_result;
-        if (result == GameResult::Draw)
+    if (GameResult result = value.game_result; result == GameResult::Draw)
             return 0.0;
         else if (result == GameResult::Player1Win)
-            return max_value( Player1 );
+            return max_value( PlayerIndex::Player1 );
         else if (result == GameResult::Player2Win)
-            return max_value( Player2 );
+            return max_value( PlayerIndex::Player2 );
         else if (!depth)
             return score( value.game );
 
         double best_score;
         std::function< bool (double, double) > compare;
         double* palpha;
-        double* pbeta;
-        if (value.game.current_player_index() == Player1) // minimizing player
+        double const* pbeta;
+        // minimizing playerv
+        if (value.game.current_player_index() == PlayerIndex::Player1) 
         {
             best_score = INFINITY;
             compare = std::less< double >();
@@ -124,7 +122,7 @@ protected:
             move_stack.clear();
             GameState< MoveT, StateT >::get_valid_moves(
                 move_stack, value.game.current_player_index(), value.game.get_state());
-            std::shuffle( move_stack.begin(), move_stack.end(), g );
+            std::ranges::shuffle( move_stack, g );
 
             for (MoveT const& move : move_stack)
                 node.get_children().push_front( *(new
@@ -133,9 +131,9 @@ protected:
                         detail::Value< MoveT, StateT >( value.game.apply( move ), move ),
                         allocator )));
         }
-        // evaluate child nodes recursivly until pruning
+        // evaluate child nodes recursively until pruning
         auto child_itr = node.get_children().begin();
-        for (;child_itr != node.get_children().end(); ++child_itr)
+        for (;child_itr != node.get_children().end(); ++child_itr) // NOSONAR
         {
             child_itr->get_value().evaluation =
                  eval( *child_itr, depth - 1, alpha, beta );
@@ -172,17 +170,17 @@ protected:
     MoveT choose_move() override
     {
         if (root->get_value().game.result() != GameResult::Undecided)
-            throw std::runtime_error( "game already finished" );
+            throw std::source_location::current();
 
         // eval with increasing depth
         // evaluation will benefit from better pruning from ordering of previous step
         // always start from level 0 because pruning my be different from last
         // time due to initialized alpha/beta start values
-        for (size_t d = 0; d <= depth + 1; ++d)
+        for (size_t d = 0; d <= max_depth + 1; ++d)
             root->get_value().evaluation = eval( *root, d, -INFINITY, INFINITY );
 
         if (root->get_children().empty())
-            throw std::runtime_error( "no move choosen");
+            throw std::source_location::current();
         auto chosen = root->get_children().begin();
 
         auto new_root = &*chosen;
@@ -193,5 +191,4 @@ protected:
     }
 };
 
-} // namespace tree {
-} // namespace minimax {
+} // namespace minimax::tree

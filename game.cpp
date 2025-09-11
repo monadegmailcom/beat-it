@@ -4,23 +4,25 @@ using namespace std;
 
 PlayerIndex toggle( PlayerIndex index )
 {
-    return index == Player1 ? Player2 : Player1;
+    return index == PlayerIndex::Player1 ? PlayerIndex::Player2 
+                                         : PlayerIndex::Player1;
 }
 
 ostream& operator<<( ostream& os, GameResult game_result )
 {
+    using enum GameResult;
     switch (game_result)
     {
-        case GameResult::Draw:
+        case Draw:
             os << "draw";
             break;
-        case GameResult::Player1Win:
+        case Player1Win:
             os << "player 1 wins";
             break;
-        case GameResult::Player2Win:
+        case Player2Win:
             os << "player 2 wins";
             break;
-        case GameResult::Undecided:
+        case Undecided:
             os << "undecided";
             break;
     }

@@ -6,6 +6,7 @@
 #include <functional>
 #include <algorithm>
 #include <random>
+#include <source_location>
 
 namespace minimax
 {
@@ -18,26 +19,26 @@ std::function< bool (double, double) > cmp( PlayerIndex );
 
 template< typename MoveT, typename StateT >
 double eval(
-    Game< MoveT, StateT > game, ScoreFunction< MoveT, StateT > score, unsigned depth,
-    double alpha, double beta, std::mt19937& g, size_t& calls )
+    Game< MoveT, StateT > game, ScoreFunction< MoveT, StateT > score, 
+    unsigned depth, double alpha, double beta, std::mt19937& g, size_t& calls )
 {
     ++calls;
 
-    const GameResult result = game.result();
-    if (result == GameResult::Draw)
+if (GameResult result = game.result(); result == GameResult::Draw)
         return 0.0;
     else if (result == GameResult::Player1Win)
-        return max_value( Player1 );
+        return max_value( PlayerIndex::Player1 );
     else if (result == GameResult::Player2Win)
-        return max_value( Player2 );
+        return max_value( PlayerIndex::Player2 );
     else if (depth == 0)
         return score( game );
 
     double best_score;
     std::function< bool (double, double) > compare;
     double* palpha;
-    double* pbeta;
-    if (game.current_player_index() == Player1) // minimizing player
+    double const* pbeta;
+    // minimizing player
+    if (game.current_player_index() == PlayerIndex::Player1) 
     {
         best_score = INFINITY;
         compare = std::less< double >();
@@ -54,9 +55,9 @@ double eval(
 
     for (MoveT const& move : game)
     {
-        auto next_score = eval(
-            game.apply( move ), score, depth - 1, alpha, beta, g, calls );
-        if (compare( next_score, best_score ))
+    if (auto next_score = eval( game.apply( move ), score, depth - 1, alpha,
+                     beta, g, calls );
+                compare( next_score, best_score ))
             best_score = next_score;
         if (compare( best_score, *palpha ))
             *palpha = best_score;
@@ -74,7 +75,7 @@ public:
     Player( Game< MoveT, StateT > const& game, unsigned depth, unsigned seed )
     : game( game ), depth( depth ), g( seed ) {}
     virtual double score( Game< MoveT, StateT > const&) const { return 0.0; };
-protected:
+private:
     Game< MoveT, StateT > game;
     unsigned depth;
     std::mt19937 g;
@@ -91,10 +92,11 @@ protected:
     {
         const auto compare = cmp( game.current_player_index());
         const ScoreFunction< MoveT, StateT > score_function =
-            [this](Game< MoveT, StateT > const& game) { return this->score( game ); };
+            [this](Game< MoveT, StateT > const& ga) 
+            { return this->score( ga ); };
 
         if (game.result() != GameResult::Undecided)
-            throw std::runtime_error( "game already finished" );
+            throw std::source_location::current();
 
         GameState< MoveT, StateT >::get_valid_moves(
             move_stack, game.current_player_index(), game.get_state());

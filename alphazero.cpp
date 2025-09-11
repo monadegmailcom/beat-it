@@ -4,11 +4,14 @@ namespace alphazero::detail {
 
 float game_result_2_score( GameResult game_result, PlayerIndex player_index )
 {
-    if (game_result == GameResult::Draw)
+    using enum GameResult;
+    if (game_result == Draw)
         return 0.0;
-    else if (game_result == GameResult::Player1Win && player_index == Player1)
+    else if (game_result == Player1Win 
+             && player_index == PlayerIndex::Player1)
         return 1.0;
-    else if (game_result == GameResult::Player2Win && player_index == Player2)
+    else if (game_result == Player2Win 
+             && player_index == PlayerIndex::Player2)
         return 1.0;
     else
         return -1.0;
