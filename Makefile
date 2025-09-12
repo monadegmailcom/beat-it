@@ -1,5 +1,6 @@
 # or use gcc with CC=g++-11
 CC=g++
+CXX=g++-12
 
 # --- OS-Specific Configuration ---
 # Detect the operating system and set paths accordingly.

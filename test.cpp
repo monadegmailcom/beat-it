@@ -901,7 +901,7 @@ void uttt_alphazero_training()
 
     torch::Device device = libtorch::get_device();
     const char* const model_path =
-        "models/test/final_model.pt";
+        "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
     hp.simulations = 400;
     // please save
