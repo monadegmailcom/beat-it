@@ -855,7 +855,7 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
             .max_number_of_busy_threads = selfplay_threads,
-            .max_number_of_threads_totally = 10 * selfplay_threads };
+            .max_number_of_threads_totally = 2 * selfplay_threads };
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
             gameplay_params, g(), node_allocator, inference_manager );
@@ -864,10 +864,23 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
 
         self_play.run();
 
-        auto duration = std::chrono::duration_cast< std::chrono::microseconds >(
-            std::chrono::steady_clock::now() - start );
+        const std::chrono::duration<float> duration =
+            std::chrono::steady_clock::now() - start;
         cout << "selfplay run duration for " << this_thread::get_id() << ": "
-             << duration << endl;
+             << duration << "\n"
+             << player.get_number_of_blocked_threads() << " blocked threads\n"
+             << player.get_number_of_busy_threads() << " busy threads\n"
+             << player.get_number_of_idle_threads() << " idle threads\n"
+             << player.get_number_of_pending_threads() << " pending threads\n"
+             << "blocked threads stats: " 
+             << player.get_number_of_blocked_threads_stats()
+             << "busy threads stats: " 
+             << player.get_number_of_busy_threads_stats()
+             << "idle threads stats: " 
+             << player.get_number_of_idle_threads_stats()
+             << "pending threads stats: " 
+             << player.get_number_of_pending_threads_stats()
+             << endl;
 
         player_index = toggle(player_index);
     }
@@ -888,15 +901,15 @@ void uttt_alphazero_training()
 
     torch::Device device = libtorch::get_device();
     const char* const model_path =
-        "models/uttt_alphazero_experiment_2/final_model.pt";
+        "models/test/final_model.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
-    hp.simulations = 800;
+    hp.simulations = 400;
     // please save
-    const size_t worker_threads = 10; 
-    const size_t selfplay_threads = 15;
+    const size_t worker_threads = 1; 
+    const size_t selfplay_threads = 10;
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, worker_threads, uttt::alphazero::G,
-        uttt::alphazero::P, 2, 128 );
+        uttt::alphazero::P, 1, 128 );
     vector< future< vector< uttt::alphazero::training::Position >>>
         thread_pool( worker_threads );
     const size_t number_of_games = 20; 
@@ -919,8 +932,10 @@ void uttt_alphazero_training()
     }
     
     cout << "total positions: " << total_positions << endl
-        << "inference manager queue size stats:\n" << inference_manager.queue_size_stats() << '\n'
-        << "inference manager time stats:\n" << inference_manager.inference_time_stats() << '\n'
+        << "inference manager queue size stats:\n" 
+        << inference_manager.queue_size_stats() << '\n'
+        << "inference manager time stats:\n" 
+        << inference_manager.inference_time_stats() << '\n'
         << endl;
 
 /*

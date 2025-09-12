@@ -1,3 +1,5 @@
+#pragma once
+
 #include <cmath>
 #include <iostream>
 
@@ -5,6 +7,8 @@ class Statistics
 {
 public:
     void update( float value ) noexcept;
+    void update( size_t value ) noexcept
+    { update( static_cast< float >( value )); }
     // require: at least one update
     float mean() const;
     // require: at least one update
@@ -14,6 +18,8 @@ public:
     size_t count() const noexcept { return count_; }
     void reset() noexcept;
 private:
+    friend std::ostream& operator<<( std::ostream&, Statistics const& );
+
     float sum = 0.0f;
     float sum_square = 0.0f;
     float min_ = INFINITY;

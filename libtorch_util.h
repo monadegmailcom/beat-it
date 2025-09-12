@@ -87,9 +87,7 @@ public:
     InferenceManager(
         std::unique_ptr< torch::jit::script::Module >&&, torch::Device,
         size_t threads, size_t state_size, size_t policies_size,
-        size_t min_batch_size, size_t max_batch_size,
-        std::chrono::milliseconds batch_timeout
-            = std::chrono::milliseconds( 5 ));
+        size_t min_batch_size, size_t max_batch_size );
 
     // be sure not to copy or assign the inference manager accidentally
     InferenceManager() = delete;
@@ -121,7 +119,7 @@ private:
 
     size_t min_batch_size;
     size_t max_batch_size;
-    const std::chrono::milliseconds batch_timeout;
+    const std::chrono::milliseconds batch_timeout{ 5 };
 
     size_t state_size;
     size_t policies_size;
@@ -157,19 +155,21 @@ protected:
     InferenceManager& inference_manager;
 
     std::pair< float, std::array< float, BasePlayerT::policy_size > > predict(
-        std::array< float, BasePlayerT::game_size > const& game_state_players ) override
+        std::array< float, BasePlayerT::game_size > const& game_state_players ) 
+            override
     {
         // provide the buffer to copy predicted policies into
         std::array< float, BasePlayerT::policy_size > policies;
+        
         // blocking call
-        float value = async_predict( inference_manager, game_state_players.data(),
-            policies.data());
+        auto future = inference_manager.queue_request( 
+            game_state_players.data(), policies.data());
+        auto value = future.get(); // blocking call
+
         return std::make_pair( value, policies );
     }
 };
 
 } // namespace async
-
-float async_predict( InferenceManager&, float const* game_state_players, float* policies );
 
 } // namespace libtorch

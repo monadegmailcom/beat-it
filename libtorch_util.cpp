@@ -14,7 +14,8 @@ namespace libtorch {
 
 torch::Device get_device()
 {
-    // Check for available hardware backends, preferring MPS on Apple Silicon, then CUDA.
+    // Check for available hardware backends, preferring MPS on Apple Silicon, 
+    // then CUDA.
     if (torch::mps::is_available())
         return torch::kMPS;
     else if (torch::cuda::is_available())
@@ -29,7 +30,8 @@ template <typename T>
 T get_required_value(const boost::json::object& obj, string const& key)
 {
     if (!obj.contains(key))
-        throw runtime_error("Required key not found in self_play_config: '" + key + "'");
+        throw invalid_argument(
+            "Required key not found in self_play_config: '" + key + "'");
     return boost::json::value_to<T>(obj.at(key));
 }
 
@@ -49,31 +51,35 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
     // Read the entire model file into a string buffer.
     ifstream model_file(model_path, ios::binary);
     if (!model_file)
-        throw runtime_error("Failed to open model file: " + string(model_path));
+        throw invalid_argument(
+            "Failed to open model file: " + string(model_path));
 
     stringstream model_buffer;
     model_buffer << model_file.rdbuf();
     string model_data = model_buffer.str();
 
     // Use `unzip` via `popen` to robustly extract the metadata.json.
-    // This is more reliable than relying on libtorch's extra file reading from streams.
-    // Use a wildcard '*' to find metadata.json regardless of the parent directory name
-    // (e.g., 'final_model/extra/metadata.json' or 'checkpoint/extra/metadata.json').
-    string command = "unzip -p " + string(model_path) + " '*/extra/metadata.json' 2>/dev/null";
+    // This is more reliable than relying on libtorch's extra file reading from 
+    // streams. Use a wildcard '*' to find metadata.json regardless of the 
+    // parent directory name.
+    string command = "unzip -p " + string(model_path) 
+        + " '*/extra/metadata.json' 2>/dev/null";
     FILE* pipe = popen(command.c_str(), "r");
     if (!pipe)
-        throw runtime_error("popen() failed!");
+        throw system_error(
+            errno, system_category(), "popen() for unzip failed");
 
-    char buffer[128];
+    array< char, 128 > buffer;
     string metadata_json;
-    while (fgets(buffer, sizeof(buffer), pipe))
-        metadata_json += buffer;
+    while (fgets(buffer.data(), buffer.size(), pipe))
+        metadata_json += buffer.data();
 
     if (int exit_code = pclose(pipe); exit_code != 0)
-        throw runtime_error("unzip command failed with exit code " + to_string(exit_code));
+        throw system_error(errno, system_category(), "unzip command failed");
 
     if (metadata_json.empty())
-        throw runtime_error("Failed to extract metadata.json from model file. Is the path correct?");
+        throw invalid_argument( 
+            "Failed to extract metadata.json from model file.");
 
     // Call the other load_model overload that takes memory buffers.
     return load_model(
@@ -104,14 +110,16 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
 Hyperparameters::Hyperparameters( string const& metadata_json )
 {
     boost::json::value metadata = boost::json::parse( metadata_json );
-    if (!metadata.is_object() || !metadata.as_object().contains("self_play_config"))
-        throw std::runtime_error("Model metadata is missing or incomplete.");
+    if (!metadata.is_object() 
+            || !metadata.as_object().contains("self_play_config"))
+        throw std::invalid_argument("Model metadata is missing or incomplete.");
     const auto& sp_config = metadata.at("self_play_config").as_object();
 
     c_base = get_required_value<float>(sp_config, "c_base");
     c_init = get_required_value<float>(sp_config, "c_init");
     dirichlet_alpha = get_required_value<float>(sp_config, "dirichlet_alpha");
-    dirichlet_epsilon = get_required_value<float>(sp_config, "dirichlet_epsilon");
+    dirichlet_epsilon = get_required_value<float>(
+        sp_config, "dirichlet_epsilon");
     simulations = get_required_value<int32_t>(sp_config, "simulations");
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
     threads = get_required_value<size_t>(sp_config, "threads");
@@ -129,7 +137,7 @@ float sync_predict(
     float* policies, size_t policies_size )
 {
     auto input_tensor = torch::from_blob(
-        const_cast< float* >( game_state_players ),
+        const_cast< float* >( game_state_players ), // NOSONAR
         {1, (long)game_state_players_size }, torch::kFloat32);
 
     // Move tensor to the correct device.
@@ -141,8 +149,10 @@ float sync_predict(
 
     // Get results and move them to CPU.
     // The output tensors will have a batch dimension of 1.
-    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to( torch::kCPU );
-    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to( torch::kCPU );
+    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to( 
+        torch::kCPU );
+    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to( 
+        torch::kCPU );
 
     // Copy policy data to the output buffer.
     float const* const policy_ptr = policy_tensor.data_ptr< float >();
@@ -151,32 +161,16 @@ float sync_predict(
     return value_tensor[0].item< float >();
 }
 
-float async_predict( InferenceManager& im, float const* game_state_players, float* policies )
-{
-    try
-    {
-        auto future = im.queue_request( game_state_players, policies );
-        return future.get(); // blocking call
-    }
-    catch (exception const& e)
-    {
-        ostringstream stream;
-        stream << "libtorch::predict: " << e.what() << endl;
-        throw runtime_error( stream.str());
-    }
-}
-
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
     torch::Device device,
     size_t threads /*for inference histogram size*/,
     size_t state_size, size_t policies_size,
-    size_t min_batch_size, size_t max_batch_size,
-    chrono::milliseconds batch_timeout )
+    size_t min_batch_size, size_t max_batch_size )
 :   min_batch_size( min_batch_size ), max_batch_size( max_batch_size ),
-    batch_timeout( batch_timeout ), state_size( state_size ),
-    policies_size( policies_size ), device( device ), model( std::move( model )),
-    stop_flag( false ), inference_histogram( threads + 1, 0 )
+    state_size( state_size ), policies_size( policies_size ), device( device ), 
+    model( std::move( model )), stop_flag( false ), 
+    inference_histogram( threads + 1, 0 )
 {
     // Start the inference loop thread after everything is initialized.
     inference_future = std::async( &InferenceManager::inference_loop, this );
@@ -195,12 +189,13 @@ vector< size_t > const& InferenceManager::get_inference_histogram() const
     return inference_histogram;
 }
 
-future< float > InferenceManager::queue_request( float const* state, float* policies )
+future< float > InferenceManager::queue_request( 
+    float const* state, float* policies )
 {
     promise< float > promise;
     auto future = promise.get_future();
     {
-        lock_guard< mutex > lock(queue_mutex);
+        scoped_lock< mutex > _(queue_mutex);
         request_queue.emplace( state, policies, std::move( promise ));
     }
     cv.notify_one();
@@ -212,7 +207,7 @@ void InferenceManager::update_model(
 {
     // Lock and swap the new model into place. This is much more efficient
     // than destroying and recreating the entire InferenceManager.
-    lock_guard< mutex > lock( model_update_mutex );
+    scoped_lock< mutex > _( model_update_mutex );
     model = std::move( new_model );
 }
 
@@ -230,13 +225,14 @@ void InferenceManager::inference_loop()
     while (!stop_flag)
     {
         {
-            unique_lock< mutex > lock( queue_mutex );
+            unique_lock lock( queue_mutex );
             // Wait until the queue has items or a timeout occurs.
-            // The timeout is crucial to process incomplete batches with low latency.
-            // lock is released while waiting
+            // The timeout is crucial to process incomplete batches with low 
+            // latency. lock is released while waiting
             cv.wait_for(lock, batch_timeout, [this] {
-                // Wait until the queue has a reasonable number of items, or we need to stop.
-                // This prevents waking up for every single request and helps form larger batches.
+                // Wait until the queue has a reasonable number of items, or we 
+                // need to stop. This prevents waking up for every single 
+                // request and helps form larger batches.
                 return request_queue.size() >= min_batch_size || stop_flag; });
 
             if (stop_flag)
@@ -269,16 +265,17 @@ void InferenceManager::inference_loop()
         // Prepare the batch tensor for the model.
         batch_tensors.clear();
         batch_tensors.reserve( request_batch.size());
-        for (auto& req : request_batch)
+        for (auto const& req : request_batch)
             batch_tensors.push_back( torch::from_blob(
-                const_cast< float* >( req.state ), state_size, torch::kFloat32));
+                const_cast< float* >( req.state ), // NOSONAR
+                state_size, torch::kFloat32)); 
         torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
 
         torch::jit::IValue output_ivalue;
         {
             // Lock the module while running inference to prevent it from being
             // replaced by an update call from another thread mid-operation.
-            lock_guard< mutex > lock( model_update_mutex);
+            scoped_lock< mutex > _( model_update_mutex);
             output_ivalue = model->forward({input_batch});
         }
 
@@ -296,11 +293,13 @@ void InferenceManager::inference_loop()
             request_batch[i].promise.set_value( value_batch[i].item< float >());
         }
 
+        const auto duration_per_item =
+            std::chrono::duration<float, std::micro>(
+                std::chrono::steady_clock::now() - start
+            ) / request_batch.size();
         inference_time_stats_.update(
-            chrono::duration_cast< std::chrono::microseconds >(
-                chrono::steady_clock::now() - start ).count() /
-                    request_batch.size());
+            static_cast<size_t>(duration_per_item.count()));
     }
 }
 
-} // namespace libtorch {
+} // namespace libtorch

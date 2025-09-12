@@ -35,7 +35,7 @@ void Statistics::reset() noexcept
     count_ = 0;
 }
 
-ostream& operator<<( ostream& os, Statistics const& stats )
+ostream& operator<<( ostream& os, Statistics const& stats ) // NOSONAR
 {
     os
         << "mean = " << stats.mean() << ", stddev = " << stats.stddev() << '\n'
