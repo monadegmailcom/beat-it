@@ -148,3 +148,10 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
     _mm_setcsr(_mm_getcsr() | 0x8040);
 #endif
 ```
+## vscode & neovim vscode extension
+- fix keystroke repeat to reach vscode in bash: 
+  - `defaults write com.microsoft.VSCode ApplePressAndHoldEnabled -bool false`
+- toggle side bar: `⌘B`
+- gemini chat: `⌘I`
+- switch file: `⌘P`
+- switch group: `⌘[n]` 

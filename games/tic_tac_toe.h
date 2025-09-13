@@ -5,29 +5,35 @@
 
 #include <array>
 #include <iostream>
+#include <utility>
 
 // forward decl so we do not have to include libtorch_helper.h here
-namespace torch {
-namespace jit {
+namespace torch::jit {
 struct Module;
-}}
+}
 
 namespace ttt
 {
 
-enum Symbol : char
+enum class Symbol : char
 {
     Empty = ' ',
     Player1 = 'X',
     Player2 = 'O'
 };
 
+inline std::ostream& operator<<( std::ostream& os, Symbol symbol )
+{
+    os << std::to_underlying(symbol);
+    return os;
+}
+
 using Move = uint8_t;
 using State = std::array< Symbol, 9 >;
 using Game = ::Game< Move, State >;
 using Player = ::Player< Move >;
 
-extern const std::array< Move, 3 > wins[8];
+extern const std::array< std::array< Move, 3 >, 8 > wins;
 
 Symbol player_index_to_symbol( PlayerIndex );
 
@@ -48,8 +54,7 @@ using PlayerFactory = ::PlayerFactory< Move >;
 class Player : public ::minimax::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, unsigned seed )
-    : ::minimax::Player< Move, State >( game, depth, seed ) {}
+    using ::minimax::Player< Move, State >::Player;
     double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
@@ -61,16 +66,13 @@ using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
-    Player( Game const& game, unsigned depth, unsigned seed,
-        NodeAllocator& allocator )
-    : ::minimax::tree::Player< Move, State >( game, depth, seed, allocator ) {}
+    using ::minimax::tree::Player< Move, State >::Player;
     double score( Game const& game ) const override
     { return minimax::score( game.get_state() ); };
 };
 
-} // namespace tree {
-
-} // namespace minimax {
+} // namespace tree
+} // namespace minimax
 
 namespace montecarlo
 {
@@ -91,28 +93,29 @@ const size_t P = 9;
 namespace training {
 using Position = ::alphazero::training::Position< G, P >;
 using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
-} // namespace training {
+} // namespace training 
 
 class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 {
 public:
-    BasePlayer( Game game,
-                ::alphazero::params::Ucb const& ucb,
-                ::alphazero::params::GamePlay const& game_play,
-                unsigned seed, NodeAllocator& allocator )
-        : ::alphazero::Player< Move, State, G, P >(
-              std::move(game), ucb, game_play, seed, allocator ) {}
+    BasePlayer( 
+        Game game,
+        ::alphazero::params::Ucb const& ucb,
+        ::alphazero::params::GamePlay const& game_play,
+        unsigned seed, NodeAllocator& allocator,
+        SchedulerStats& scheduler_stats )
+    : ::alphazero::Player< Move, State, G, P >(
+        std::move(game), ucb, game_play, seed, allocator,
+        scheduler_stats ) {}
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;
 };
 
-namespace libtorch {
-namespace async {
+namespace libtorch::async {
 using Player = ::libtorch::async::Player< BasePlayer >;
-} // namespace async {
-} // namespace libtorch {
-} // namespace alphazero {
+} // namespace libtorch::async
+} // namespace alphazero
 
 namespace console
 {
@@ -120,7 +123,7 @@ namespace console
 class HumanPlayer : public Player
 {
 public:
-    HumanPlayer( Game const& game ) : game( game ) {}
+    explicit HumanPlayer( Game const& game ) : game( game ) {}
     Move choose_move() override;
     void apply_opponent_move( Move const& ) override;
 private:

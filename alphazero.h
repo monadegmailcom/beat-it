@@ -75,6 +75,25 @@ struct GamePlay
 
 } // namespace params
 
+template< typename ValueT >
+float shannon_entropy( Node< ValueT > const& node )
+{
+    float visit_sum = 0;
+    for (auto const& child : node.get_children())
+        visit_sum += child.get_value().visits.load(
+            std::memory_order_relaxed);
+
+    float entropy = 0;
+    for (auto const& child : node.get_children())
+    {
+        const float p = child.get_value().visits.load(
+            std::memory_order_relaxed) / visit_sum;
+        if (p > 0)
+            entropy -= p * std::log2f( p );
+    }
+    return entropy;
+}
+
 template< typename MoveT, typename StateT, size_t G, size_t P >
 class Player : public ::Player< MoveT >, public Scheduler
 {
@@ -90,9 +109,11 @@ public:
         params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
-        NodeAllocator< MoveT, StateT >& allocator)
+        NodeAllocator< MoveT, StateT >& allocator,
+        SchedulerStats& scheduler_stats )
     : Scheduler( game_play.max_number_of_busy_threads,
-                 game_play.max_number_of_threads_totally ),
+                 game_play.max_number_of_threads_totally,
+                 scheduler_stats ),
       root( new (allocator.allocate(1)) node_type(
                 value_type( std::move(game), MoveT()), allocator ),
             NodeDeleter<value_type>{allocator} ),
@@ -105,8 +126,9 @@ public:
 
     auto choose_move_iterator()
     {        
+        remaining_simulations.store( game_play.simulations );
         Scheduler::run();
-
+        
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
@@ -164,14 +186,13 @@ public:
 
     void task() override // Scheduler::
     {
-        if (!remaining_simulations)
-            throw std::source_location::current();
+        remaining_simulations.fetch_sub( 1 );
         simulation( *root );
     }
 
     bool completed() override // Scheduler::
     {
-        return remaining_simulations == 0;
+        return remaining_simulations <= 0;
     }
 
     float simulation( node_type& node )
@@ -371,7 +392,7 @@ private:
     size_t move_count = 0;
     std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
-    size_t remaining_simulations;
+    std::atomic< int64_t > remaining_simulations;
 };
 
 namespace training {
@@ -394,9 +415,14 @@ public:
         float dirichlet_alpha,
         float dirichlet_epsilon,
         std::mt19937& g,
-        std::vector< Position< G, P >>& positions )
+        std::vector< Position< G, P >>& positions,
+        Statistics& root_node_entropy_stat )
     : player( player ), dirichlet_epsilon( dirichlet_epsilon ),
-      g( g ), gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ) {}
+      g( g ), gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ),
+      root_node_entropy_stat( root_node_entropy_stat ) {}
+
+    Statistics const& get_root_node_entropy() const noexcept 
+    { return root_node_entropy_stat; }
 
     void run()
     {
@@ -407,16 +433,16 @@ public:
              game_result = player.get_root()->get_value().game_result)
         {
             // expand root node on first visit, for dirichlet noise addition
-            //  the root node needs to be expanded and evaluated
+            //  the root node needs to be expanded
             if (auto& root = *player.get_root(); !root.get_value().visits)
-            {
                 player.expand( root );
-                player.nn_eval( root );
-            }
+
             add_dirichlet_noise();
 
             auto itr = player.choose_move_iterator();
             append_training_data();
+            root_node_entropy_stat.update(
+                shannon_entropy( *player.get_root() ));
 
             player.advance_root(itr);
         }
@@ -481,6 +507,7 @@ private:
     std::mt19937& g;
     std::gamma_distribution< float > gamma_dist;
     std::vector< Position< G, P >>& positions;
+    Statistics& root_node_entropy_stat;
 };
 
 } // namespace training

@@ -145,11 +145,11 @@ class Player : public BasePlayerT
 public:
     Player( typename BasePlayerT::game_type game,
             alphazero::params::Ucb const& ucb,
-            alphazero::params::GamePlay const& game_play,
-            unsigned seed,
+            alphazero::params::GamePlay const& game_play, unsigned seed,
             NodeAllocator< typename BasePlayerT::value_type >& allocator,
-            InferenceManager& im )
-        : BasePlayerT( std::move(game), ucb, game_play, seed, allocator ),
+            InferenceManager& im, SchedulerStats& scheduler_stats )
+        : BasePlayerT( std::move(game), ucb, game_play, seed, allocator,
+                       scheduler_stats ),
           inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;

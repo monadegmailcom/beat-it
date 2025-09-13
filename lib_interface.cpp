@@ -34,6 +34,8 @@ struct Session {
     // Game-specific position queues
     PositionQueue<ttt::alphazero::training::Position> ttt_position_queue;
     PositionQueue<uttt::alphazero::training::Position> uttt_position_queue;
+    
+    Statistics root_node_entropy_stat;
 };
 
 // A struct to define the layout of the data pointers. This must be mirrored in
@@ -172,7 +174,8 @@ size_t fetch_selfplay_data(
 template< typename PlayerT >
 unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
     Session* session, typename PlayerT::game_type game, unsigned seed,
-    AlphazeroNodeAllocator< PlayerT >& node_allocator )
+    AlphazeroNodeAllocator< PlayerT >& node_allocator,
+    SchedulerStats& scheduler_stats)
 {
     const auto& hp = session->hyperparameters;
     alphazero::params::Ucb ucb_params
@@ -185,7 +188,7 @@ unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
 
     return make_unique< PlayerT >(
         std::move(game), ucb_params, gameplay_params, seed,
-        node_allocator, *session->inference_manager );
+        node_allocator, *session->inference_manager, scheduler_stats );
 }
 
 template< typename PlayerT >
@@ -200,11 +203,13 @@ template< typename PlayerT >
 unique_ptr< AlphazeroSelfPlay< PlayerT >> selfplay_factory(
     Session* session, AlphazeroPlayer< PlayerT >& player,
     vector< AlphazeroPosition< PlayerT >>& positions,
+    Statistics& root_node_entropy_stat,
     mt19937& g ) //NOSONAR
 {
     return make_unique< AlphazeroSelfPlay< PlayerT >>(
         player, session->hyperparameters.dirichlet_alpha,
-        session->hyperparameters.dirichlet_epsilon, g, positions );
+        session->hyperparameters.dirichlet_epsilon, g, positions,
+        root_node_entropy_stat );
 }
 
 // run self play in worker thread
@@ -247,14 +252,16 @@ void selfplay_worker( Session* session,
             hp = session->hyperparameters;
         }
 
+        SchedulerStats scheduler_stats;
         auto player =
             player_factory< PlayerT >( session,
                 typename PlayerT::game_type( player_index, initial_state ),
-                g(), node_allocator );
+                g(), node_allocator, scheduler_stats );
 
         positions.clear();
         auto selfplay =
-            selfplay_factory< PlayerT >( session, *player, positions, g );
+            selfplay_factory< PlayerT >( session, *player, positions, 
+            session->root_node_entropy_stat, g );
         selfplay->run();
 
         {
@@ -285,6 +292,9 @@ uint32_t measure_worker(
     const alphazero::params::Ucb ucb_params
         { .c_base = hp.c_base, .c_init = hp.c_init };
 
+    Statistics root_node_entropy_stat;
+    SchedulerStats scheduler_stats;
+
     for (; number_of_games > 0; --number_of_games)
     {
         alphazero::params::GamePlay gameplay_params{
@@ -296,9 +306,10 @@ uint32_t measure_worker(
         PlayerT player(
             typename PlayerT::game_type( player_index, initial_state ),
             ucb_params, gameplay_params, g(), node_allocator,
-            *session->inference_manager );
+            *session->inference_manager, scheduler_stats );
         alphazero::training::SelfPlay self_play(
-            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions );
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
+            root_node_entropy_stat );
         self_play.run();
         total_positions += positions.size();
         positions.clear();

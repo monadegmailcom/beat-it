@@ -391,10 +391,11 @@ ostream& operator<<( // NOSONAR
     return os;
 }
 
-ostream& operator<<( // NOSONAR
-    ostream& os, TaggedDispatch< uttt::State, uttt::Move > const& move )
+namespace uttt {
+ostream& operator<<( ostream& os, Move const& move ) // NOSONAR
 {
-    os << "(" << (int) move.value.big_move << ','
-        << (int) move.value.small_move << ")";
+    os << "(" << (int) move.big_move << ','
+        << (int) move.small_move << ")";
     return os;
 }
+} // namespace uttt

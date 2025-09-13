@@ -10,6 +10,7 @@ struct Move {
     ttt::Move small_move;
 
     friend bool operator==( uttt::Move const&, uttt::Move const& ) = default;
+    friend std::ostream& operator<<( std::ostream&, uttt::Move const& );
 };
 
 // require: small_states, big_state and last_small_move are consistent
@@ -96,12 +97,15 @@ using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 class BasePlayer : public ::alphazero::Player< Move, State, G, P >
 {
 public:
-    BasePlayer( Game game,
-                ::alphazero::params::Ucb const& ucb,
-                ::alphazero::params::GamePlay const& game_play,
-                unsigned seed, NodeAllocator& allocator )
-        : ::alphazero::Player< Move, State, G, P >(
-              std::move(game), ucb, game_play, seed, allocator ) {}
+    BasePlayer( 
+        Game game,
+            ::alphazero::params::Ucb const& ucb,
+            ::alphazero::params::GamePlay const& game_play,
+            unsigned seed, NodeAllocator& allocator,
+            SchedulerStats& scheduler_stats )
+    : ::alphazero::Player< Move, State, G, P >(
+        std::move(game), ucb, game_play, seed, allocator,
+        scheduler_stats ) {}
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;
@@ -117,9 +121,6 @@ std::ostream& operator<<( std::ostream&, uttt::Game const& );
 
 std::ostream& operator<<(
     std::ostream&, TaggedDispatch< uttt::State, PlayerIndex > const& );
-
-std::ostream& operator<<(
-    std::ostream&, TaggedDispatch< uttt::State, uttt::Move > const& );
 
 template<>
 struct GameState< uttt::Move, uttt::State >

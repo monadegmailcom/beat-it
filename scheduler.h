@@ -4,6 +4,14 @@
 
 #include "statistics.h"
 
+struct SchedulerStats
+{
+    Statistics busy_threads;
+    Statistics blocked_threads;
+    Statistics pending_threads;
+    Statistics idle_threads;
+};
+
 /*
 Scheduler class to keep the cpu busy. it tries to execute a task concurrently 
 using a constant number of busy threads. typically your task has at least one 
@@ -28,23 +36,6 @@ Usage:
 */
 class Scheduler
 {
-public:
-    size_t get_number_of_busy_threads() const noexcept 
-    { return number_of_busy_threads; }
-    size_t get_number_of_blocked_threads() const noexcept 
-    { return number_of_blocked_threads; }
-    size_t get_number_of_pending_threads() const noexcept 
-    { return number_of_pending_threads; }
-    size_t get_number_of_idle_threads() const noexcept 
-    { return number_of_idle_threads; }
-    Statistics const& get_number_of_busy_threads_stats() const noexcept 
-    { return number_of_busy_threads_stats; }
-    Statistics const& get_number_of_blocked_threads_stats() const noexcept 
-    { return number_of_blocked_threads_stats; } 
-    Statistics const& get_number_of_pending_threads_stats() const noexcept 
-    { return number_of_pending_threads_stats; }
-    Statistics const& get_number_of_idle_threads_stats() const noexcept 
-    { return number_of_idle_threads_stats; }
 protected:
     struct Async
     {
@@ -70,9 +61,11 @@ protected:
 
     explicit Scheduler( 
         size_t max_number_of_busy_threads, 
-        size_t max_number_of_threads_totally)
+        size_t max_number_of_threads_totally,
+        SchedulerStats& stats)
         : max_number_of_busy_threads( max_number_of_busy_threads),
-          max_number_of_threads_totally( max_number_of_threads_totally)
+          max_number_of_threads_totally( max_number_of_threads_totally),
+          stats( stats )
     {
         if (!max_number_of_busy_threads)
             throw std::source_location::current();
@@ -120,25 +113,34 @@ protected:
     virtual void task() = 0;
     virtual bool completed() = 0;
 private:    
-    void enter_async_section()
+    // returns true if a thread is notified, false otherwise
+    bool notify_thread()
     {
-        std::unique_lock lock( scheduler_mutex );
-        
-        ++number_of_blocked_threads;
-        number_of_blocked_threads_stats.update( number_of_blocked_threads );
-
-        --number_of_busy_threads;
-        number_of_busy_threads_stats.update( number_of_busy_threads );
-
         // activate a pending thread if there are any.
         if (number_of_pending_threads)
             pending_threads_cv.notify_one();
         // otherwise activate an idle thread if there are any.
         else if (number_of_idle_threads)
             idle_threads_cv.notify_one();
-        // otherwise create new thread if there is more to schedule.
-        else if (!stopped && !completed() 
-                 && thread_pool.size() < max_number_of_threads_totally)
+        else
+            return false;
+
+        return true;
+    }
+
+    void enter_async_section()
+    {
+        std::unique_lock lock( scheduler_mutex );
+        
+        ++number_of_blocked_threads;
+        stats.blocked_threads.update( number_of_blocked_threads );
+
+        --number_of_busy_threads;
+        stats.busy_threads.update( number_of_busy_threads );
+
+        // if no thread is notified create a new thread if allowed.
+        if (!notify_thread() && !stopped && !completed() 
+             && thread_pool.size() < max_number_of_threads_totally)
             add_worker();
     }
     
@@ -147,21 +149,22 @@ private:
         std::unique_lock lock( scheduler_mutex );
 
         --number_of_blocked_threads;
-        number_of_blocked_threads_stats.update( number_of_blocked_threads );
+        stats.blocked_threads.update( number_of_blocked_threads );
 
         ++number_of_pending_threads;
-        number_of_pending_threads_stats.update( number_of_pending_threads );
+        stats.pending_threads.update( number_of_pending_threads );
 
+        notify_thread();
         pending_threads_cv.wait(
             lock, 
             [this] 
             { return number_of_busy_threads < max_number_of_busy_threads; });
 
         --number_of_pending_threads;
-        number_of_pending_threads_stats.update( number_of_pending_threads );
+        stats.pending_threads.update( number_of_pending_threads );
 
         ++number_of_busy_threads;
-        number_of_busy_threads_stats.update( number_of_busy_threads );
+        stats.busy_threads.update( number_of_busy_threads );
     }
 
     void worker()
@@ -171,9 +174,9 @@ private:
             {
                 std::unique_lock lock( scheduler_mutex );
                 ++number_of_busy_threads;
-                number_of_busy_threads_stats.update( number_of_busy_threads ); 
+                stats.busy_threads.update( number_of_busy_threads ); 
             }
-        
+            
             // run task unlocked
             task();
         
@@ -181,18 +184,19 @@ private:
                 std::unique_lock lock( scheduler_mutex );
 
                 --number_of_busy_threads;
-                number_of_busy_threads_stats.update( number_of_busy_threads );
+                stats.busy_threads.update( number_of_busy_threads );
 
                 ++number_of_idle_threads;
-                number_of_idle_threads_stats.update( number_of_idle_threads );
+                stats.idle_threads.update( number_of_idle_threads );
 
                 scheduler_cv.notify_one();
+
                 idle_threads_cv.wait( 
                     lock,
                     [this] { return stopped || !completed(); });
-
+                
                 --number_of_idle_threads;
-                number_of_idle_threads_stats.update( number_of_idle_threads );
+                stats.idle_threads.update( number_of_idle_threads );
             }    
         }
     }
@@ -216,8 +220,5 @@ private:
     size_t number_of_pending_threads = 0;
     size_t number_of_idle_threads = 0;
     bool stopped = false;
-    Statistics number_of_busy_threads_stats;
-    Statistics number_of_blocked_threads_stats;
-    Statistics number_of_pending_threads_stats;
-    Statistics number_of_idle_threads_stats;
+    SchedulerStats& stats;
 };
