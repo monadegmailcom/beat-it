@@ -909,7 +909,7 @@ void uttt_alphazero_training()
     // please save
     const size_t worker_threads = 1; 
     const size_t selfplay_threads = 10;
-    const size_t max_total_selfplay_threads = 40;
+    const size_t max_total_selfplay_threads = 320;
     libtorch::InferenceManager inference_manager(
         std::move( model ), device, worker_threads, uttt::alphazero::G,
         uttt::alphazero::P, 1, 128 );
@@ -918,7 +918,8 @@ void uttt_alphazero_training()
     const size_t number_of_games = 10; 
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
     cout << "start " << thread_pool.size() << " worker threads"
-        << " with " << selfplay_threads << " selfplay threads each and "
+        << " with " << selfplay_threads << " selfplay threads each, "
+        << max_total_selfplay_threads << " max threads and "
         << hp.simulations << " simulations for " << number_of_games << " games"
         << endl;
     unsigned local_seed = seed;

@@ -73,23 +73,20 @@ protected:
             throw std::source_location::current();
     }
     
-    virtual ~Scheduler()
+    virtual ~Scheduler() 
     {
-        stopped = true;
+        stop = true;
         idle_threads_cv.notify_all();
-
         for (auto& thread : thread_pool)
             thread.join();
     }
-    
+
     // blocks until there are no more tasks to schedule and all tasks finished.
     void run()
     {
         std::unique_lock lock( scheduler_mutex );
-        if (!number_of_idle_threads)
-            add_worker();
-        else
-            idle_threads_cv.notify_one();
+
+        activate_worker();
 
         // wait until all tasks are finished.
         scheduler_cv.wait( 
@@ -113,21 +110,6 @@ protected:
     virtual void task() = 0;
     virtual bool completed() = 0;
 private:    
-    // returns true if a thread is notified, false otherwise
-    bool notify_thread()
-    {
-        // activate a pending thread if there are any.
-        if (number_of_pending_threads)
-            pending_threads_cv.notify_one();
-        // otherwise activate an idle thread if there are any.
-        else if (number_of_idle_threads)
-            idle_threads_cv.notify_one();
-        else
-            return false;
-
-        return true;
-    }
-
     void enter_async_section()
     {
         std::unique_lock lock( scheduler_mutex );
@@ -138,10 +120,7 @@ private:
         --number_of_busy_threads;
         stats.busy_threads.update( number_of_busy_threads );
 
-        // if no thread is notified create a new thread if allowed.
-        if (!notify_thread() && !stopped && !completed() 
-             && thread_pool.size() < max_number_of_threads_totally)
-            add_worker();
+        activate_worker();
     }
     
     void leave_async_section()
@@ -151,60 +130,89 @@ private:
         --number_of_blocked_threads;
         stats.blocked_threads.update( number_of_blocked_threads );
 
-        ++number_of_pending_threads;
-        stats.pending_threads.update( number_of_pending_threads );
+        if (number_of_busy_threads < max_number_of_busy_threads)
+        { // thread is allowed to proceed.
+            ++number_of_busy_threads;
+            stats.busy_threads.update( number_of_busy_threads );
+        }
+        else
+        { // thread has to to enter pending state and wait.
+            ++number_of_pending_threads;
+            stats.pending_threads.update( number_of_pending_threads );
 
-        notify_thread();
-        pending_threads_cv.wait(
-            lock, 
-            [this] 
-            { return number_of_busy_threads < max_number_of_busy_threads; });
+            // note: because the current thread was blocked the number of busy
+            // threads does not decrease when it enters pending state.
+          
+            pending_threads_cv.wait(
+                lock, 
+                [this] 
+                { 
+                    return number_of_busy_threads < max_number_of_busy_threads; 
+                });
 
-        --number_of_pending_threads;
-        stats.pending_threads.update( number_of_pending_threads );
+            --number_of_pending_threads;
+            stats.pending_threads.update( number_of_pending_threads );
 
-        ++number_of_busy_threads;
-        stats.busy_threads.update( number_of_busy_threads );
+            ++number_of_busy_threads;
+            stats.busy_threads.update( number_of_busy_threads );
+        }
     }
 
     void worker()
     {
-        while (!stopped)
+        while (!stop)
         {
-            {
-                std::unique_lock lock( scheduler_mutex );
-                ++number_of_busy_threads;
-                stats.busy_threads.update( number_of_busy_threads ); 
-            }
-            
             // run task unlocked
-            task();
-        
-            {
-                std::unique_lock lock( scheduler_mutex );
+            task(); 
 
+            std::unique_lock lock( scheduler_mutex );
+
+            // go to idle state if nothing more is to be done.
+            if (completed())
+            {
                 --number_of_busy_threads;
                 stats.busy_threads.update( number_of_busy_threads );
 
                 ++number_of_idle_threads;
                 stats.idle_threads.update( number_of_idle_threads );
 
+                // notify scheduler so it can leave run method.
                 scheduler_cv.notify_one();
-
-                idle_threads_cv.wait( 
-                    lock,
-                    [this] { return stopped || !completed(); });
+                pending_threads_cv.notify_one();
                 
+                idle_threads_cv.wait( 
+                    lock, [this] { return stop || !completed();});
+
+                ++number_of_busy_threads;
+                stats.busy_threads.update( number_of_busy_threads );
+
                 --number_of_idle_threads;
                 stats.idle_threads.update( number_of_idle_threads );
-            }    
+            }
         }
     }
 
     // require: scheduler_mutex is locked
-    void add_worker()
+    void activate_worker()
     {
-        thread_pool.emplace_back( std::jthread( &Scheduler::worker, this ));
+        // do not activate a thread if there is nothing more to be done.
+        if (completed())
+            return;
+        // otherwise activate a pending thread if there are any.
+        else if (number_of_pending_threads)
+            pending_threads_cv.notify_one();
+        // otherwise activate an idle thread if there are any.
+        else if (number_of_idle_threads)
+            idle_threads_cv.notify_one();
+        // otherwise start new thread if allowed.
+        else if (thread_pool.size() < max_number_of_threads_totally)
+        {
+            ++number_of_busy_threads;
+            stats.busy_threads.update( number_of_busy_threads ); 
+                    
+            thread_pool.emplace_back( std::jthread( &Scheduler::worker, this ));
+        }
+        // give up.
     }
 
     std::vector< std::jthread > thread_pool;
@@ -219,6 +227,6 @@ private:
     size_t number_of_blocked_threads = 0;
     size_t number_of_pending_threads = 0;
     size_t number_of_idle_threads = 0;
-    bool stopped = false;
     SchedulerStats& stats;
+    bool stop = false;
 };
