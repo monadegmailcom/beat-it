@@ -79,8 +79,8 @@ void set_model(
     {
         // create the InferenceManager instance
         session->inference_manager.reset( new libtorch::InferenceManager(
-            std::move( model ), device, hp.threads, state_size, policies_size,
-            hp.min_batch_size, 128 ));
+            std::move( model ), device, state_size, policies_size,
+            hp.max_batch_size ));
         session->hyperparameters = hp;
 
         // Set the thread pool size based on the model's hyperparameters
@@ -174,8 +174,7 @@ size_t fetch_selfplay_data(
 template< typename PlayerT >
 unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
     Session* session, typename PlayerT::game_type game, unsigned seed,
-    AlphazeroNodeAllocator< PlayerT >& node_allocator,
-    SchedulerStats& scheduler_stats)
+    AlphazeroNodeAllocator< PlayerT >& node_allocator )
 {
     const auto& hp = session->hyperparameters;
     alphazero::params::Ucb ucb_params
@@ -183,12 +182,11 @@ unique_ptr< AlphazeroPlayer< PlayerT >> player_factory(
     alphazero::params::GamePlay gameplay_params{
         .simulations = hp.simulations,
         .opening_moves = hp.opening_moves,
-        .max_number_of_busy_threads = hp.selfplay_threads,
-        .max_number_of_threads_totally = hp.max_selfplay_threads };
+        .max_batch_size = hp.max_batch_size };
 
     return make_unique< PlayerT >(
         std::move(game), ucb_params, gameplay_params, seed,
-        node_allocator, *session->inference_manager, scheduler_stats );
+        node_allocator, *session->inference_manager );
 }
 
 template< typename PlayerT >
@@ -252,11 +250,10 @@ void selfplay_worker( Session* session,
             hp = session->hyperparameters;
         }
 
-        SchedulerStats scheduler_stats;
         auto player =
             player_factory< PlayerT >( session,
                 typename PlayerT::game_type( player_index, initial_state ),
-                g(), node_allocator, scheduler_stats );
+                g(), node_allocator );
 
         positions.clear();
         auto selfplay =
@@ -279,8 +276,7 @@ uint32_t measure_worker(
     Session* session,
     typename PlayerT::game_type::state_type const& initial_state,
     uint32_t simulations_per_move, uint32_t number_of_games,
-    uint32_t number_of_threads_per_selfplay_worker,
-    uint32_t max_number_of_threads_per_selfplay_worker )
+    uint32_t number_of_threads_per_selfplay_worker )
 {
     // tld
     auto g = mt19937( random_device{}());
@@ -293,20 +289,18 @@ uint32_t measure_worker(
         { .c_base = hp.c_base, .c_init = hp.c_init };
 
     Statistics root_node_entropy_stat;
-    SchedulerStats scheduler_stats;
 
     for (; number_of_games > 0; --number_of_games)
     {
         alphazero::params::GamePlay gameplay_params{
             .simulations = simulations_per_move,
             .opening_moves = hp.opening_moves,
-            .max_number_of_busy_threads =       number_of_threads_per_selfplay_worker,
-            .max_number_of_threads_totally = max_number_of_threads_per_selfplay_worker };
+            .selfplay_threads = number_of_threads_per_selfplay_worker };
 
         PlayerT player(
             typename PlayerT::game_type( player_index, initial_state ),
             ucb_params, gameplay_params, g(), node_allocator,
-            *session->inference_manager, scheduler_stats );
+            *session->inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
             root_node_entropy_stat );
@@ -322,8 +316,7 @@ struct OptimizerParams
 {
     uint32_t number_of_selfplay_workers;
     uint32_t number_of_threads_per_selfplay_worker;
-    uint32_t max_number_of_threads_per_selfplay_worker;
-    uint32_t min_batch_size;
+    uint32_t max_batch_size;
 };
 
 struct FixParams
@@ -407,8 +400,6 @@ uint32_t measure_uttt_selfplay_throughput(
         if (!opt_params.number_of_selfplay_workers)
             throw invalid_argument( "number_of_selfplay_workers is zero" );
 
-        session->inference_manager->set_min_batch_size(
-            opt_params.min_batch_size );
         vector< future< uint32_t > > thread_pool(
             opt_params.number_of_selfplay_workers );
 
@@ -423,8 +414,7 @@ uint32_t measure_uttt_selfplay_throughput(
                 measure_worker< uttt::alphazero::libtorch::async::Player >,
                 session, uttt::empty_state, fix_params.simulations_per_move,
                 number_of_games_per_worker,
-                opt_params.number_of_threads_per_selfplay_worker,
-                opt_params.max_number_of_threads_per_selfplay_worker );
+                opt_params.number_of_threads_per_selfplay_worker );
 
         // collect all results
         uint32_t total_positions = 0;

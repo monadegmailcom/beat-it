@@ -101,11 +101,9 @@ public:
         Game game,
             ::alphazero::params::Ucb const& ucb,
             ::alphazero::params::GamePlay const& game_play,
-            unsigned seed, NodeAllocator& allocator,
-            SchedulerStats& scheduler_stats )
+            unsigned seed, NodeAllocator& allocator )
     : ::alphazero::Player< Move, State, G, P >(
-        std::move(game), ucb, game_play, seed, allocator,
-        scheduler_stats ) {}
+        std::move(game), ucb, game_play, seed, allocator ) {}
 protected:
     std::array< float, G > serialize_state( Game const& ) const override;
     size_t move_to_policy_index( Move const& ) const override;

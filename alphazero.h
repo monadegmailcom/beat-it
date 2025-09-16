@@ -3,7 +3,7 @@
 #include "player.h"
 #include "game.h"
 #include "node.h"
-#include "scheduler.h"
+#include "statistics.h"
 
 #include <random>
 #include <thread>
@@ -69,8 +69,8 @@ struct GamePlay
     // simulations and opening moves may be different from model training
     size_t simulations = 0;
     size_t opening_moves = 0;
-    size_t max_number_of_busy_threads = 0;
-    size_t max_number_of_threads_totally = 0;
+    size_t selfplay_threads = 0;
+    size_t max_batch_size = 0;
 };
 
 } // namespace params
@@ -95,7 +95,7 @@ float shannon_entropy( Node< ValueT > const& node )
 }
 
 template< typename MoveT, typename StateT, size_t G, size_t P >
-class Player : public ::Player< MoveT >, public Scheduler
+class Player : public ::Player< MoveT >
 {
 public:
     using game_type = Game< MoveT, StateT >;
@@ -109,12 +109,8 @@ public:
         params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
-        NodeAllocator< MoveT, StateT >& allocator,
-        SchedulerStats& scheduler_stats )
-    : Scheduler( game_play.max_number_of_busy_threads,
-                 game_play.max_number_of_threads_totally,
-                 scheduler_stats ),
-      root( new (allocator.allocate(1)) node_type(
+        NodeAllocator< MoveT, StateT >& allocator )
+    : root( new (allocator.allocate(1)) node_type(
                 value_type( std::move(game), MoveT()), allocator ),
             NodeDeleter<value_type>{allocator} ),
       ucb_params( ucb ), game_play( game_play ), g( seed ),
@@ -127,7 +123,6 @@ public:
     auto choose_move_iterator()
     {        
         remaining_simulations.store( game_play.simulations );
-        Scheduler::run();
         
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
@@ -183,17 +178,6 @@ public:
 
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
-
-    void task() override // Scheduler::
-    {
-        remaining_simulations.fetch_sub( 1 );
-        simulation( *root );
-    }
-
-    bool completed() override // Scheduler::
-    {
-        return remaining_simulations <= 0;
-    }
 
     float simulation( node_type& node )
     {
@@ -271,11 +255,7 @@ public:
         
         float nn_value;
         std::array< float, P > policies;
-        {
-            auto _( async_section());
-            std::tie(nn_value, policies) = predict( 
-                serialize_state( value.game ));
-        }
+        std::tie(nn_value, policies) = predict( serialize_state( value.game ));
         
         if (lock) // Re-acquire the lock to safely update children.
             lock->lock();

@@ -775,7 +775,6 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stat;
-    SchedulerStats scheduler_stats;
     for (; runs_per_thread; --runs_per_thread)
     {
         alphazero::params::Ucb ucb_params
@@ -784,13 +783,12 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
         {
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
-            .max_number_of_busy_threads = selfplay_threads,
-            .max_number_of_threads_totally = 10 * selfplay_threads 
+            .selfplay_threads = selfplay_threads,
+            .max_batch_size = 10 * selfplay_threads 
         };
         ttt::alphazero::libtorch::async::Player player(
             ttt::Game( player_index, ttt::empty_state ), ucb_params,
-            gameplay_params, seed, node_allocator, inference_manager,
-            scheduler_stats );
+            gameplay_params, seed, node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
             root_node_entropy_stat );
@@ -817,11 +815,10 @@ void alphazero_training()
     const char* const model_path =
         "runs/models/ttt_alphazero_experiment_6/final_model.pt";
     auto [model, hp] =  libtorch::load_model( model_path, device );
-    const size_t threads = 10;
     const size_t selfplay_threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, ttt::alphazero::G,
-        ttt::alphazero::P, 1, 128 );
+        std::move( model ), device, ttt::alphazero::G, ttt::alphazero::P,
+        hp.max_batch_size );
 
     vector< future< vector< ttt::alphazero::training::Position >>>
         thread_pool( 8 );
@@ -844,13 +841,12 @@ void alphazero_training()
 vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     libtorch::InferenceManager& inference_manager,
     libtorch::Hyperparameters const& hp, size_t selfplay_threads,
-    size_t max_total_selfplay_threads, size_t runs_per_thread, unsigned local_seed )
+    size_t max_batch_size, size_t runs_per_thread, unsigned local_seed )
 {
     auto g = mt19937( local_seed );
     uttt::alphazero::NodeAllocator node_allocator;
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
-    SchedulerStats scheduler_stats;
     Statistics root_node_entropy_stats;
     for (; runs_per_thread; --runs_per_thread)
     {
@@ -860,12 +856,11 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
         alphazero::params::GamePlay gameplay_params{
             .simulations = hp.simulations,
             .opening_moves = hp.opening_moves,
-            .max_number_of_busy_threads = selfplay_threads,
-            .max_number_of_threads_totally = max_total_selfplay_threads };
+            .selfplay_threads= selfplay_threads,
+            .max_batch_size = max_batch_size };
         uttt::alphazero::libtorch::async::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
-            gameplay_params, g(), node_allocator, inference_manager,
-            scheduler_stats );
+            gameplay_params, g(), node_allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
             root_node_entropy_stats );
@@ -881,10 +876,6 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     }
     
     cout << "root node entropy stats: " << root_node_entropy_stats
-        << "blocked threads stats: " << scheduler_stats.blocked_threads
-        << "busy threads stats: " << scheduler_stats.busy_threads
-        << "idle threads stats: " << scheduler_stats.idle_threads
-        << "pending threads stats: " << scheduler_stats.pending_threads
         << endl;
 
     return positions;
@@ -909,17 +900,17 @@ void uttt_alphazero_training()
     // please save
     const size_t worker_threads = 1; 
     const size_t selfplay_threads = 10;
-    const size_t max_total_selfplay_threads = 320;
+    const size_t max_batch_size= 320;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, worker_threads, uttt::alphazero::G,
-        uttt::alphazero::P, 1, 128 );
+        std::move( model ), device, uttt::alphazero::G, uttt::alphazero::P,
+        max_batch_size );
     vector< future< vector< uttt::alphazero::training::Position >>>
         thread_pool( worker_threads );
     const size_t number_of_games = 10; 
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
     cout << "start " << thread_pool.size() << " worker threads"
         << " with " << selfplay_threads << " selfplay threads each, "
-        << max_total_selfplay_threads << " max threads and "
+        << max_batch_size << " max batch size and "
         << hp.simulations << " simulations for " << number_of_games << " games"
         << endl;
     unsigned local_seed = seed;
@@ -927,7 +918,7 @@ void uttt_alphazero_training()
     {    
         future = async(
             uttt_selfplay_worker, ref(inference_manager), hp, selfplay_threads,
-            max_total_selfplay_threads, runs_per_worker_thread, local_seed );
+            max_batch_size, runs_per_worker_thread, local_seed );
         ++local_seed;
     }
 
@@ -1042,17 +1033,15 @@ void uttt_alphazero_nn_vs_minimax()
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, uttt::alphazero::G,
-        uttt::alphazero::P, 1, 128 );
+        std::move( model ), device, uttt::alphazero::G, uttt::alphazero::P,
+        hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 20;
-    SchedulerStats scheduler_stats;
     uttt::PlayerFactory factory1 =
-        [&game,&hp, &allocator, &inference_manager, &scheduler_stats]
-        (unsigned seed)
+        [&game,&hp, &allocator, &inference_manager ] (unsigned seed)
         {
             const size_t simulations = 400;
             const size_t selfplay_threads = 10;
@@ -1061,11 +1050,11 @@ void uttt_alphazero_nn_vs_minimax()
             alphazero::params::GamePlay gameplay_params{
                 .simulations = simulations,
                 .opening_moves = hp.opening_moves,
-                .max_number_of_busy_threads = selfplay_threads,
-                .max_number_of_threads_totally = 10 * selfplay_threads };
+                .selfplay_threads = selfplay_threads,
+                .max_batch_size = 10 * selfplay_threads };
             return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, 
-                inference_manager, scheduler_stats );
+                inference_manager );
         };
     uttt::PlayerFactory factory2 = 
         [&game](unsigned seed) 
@@ -1112,47 +1101,44 @@ void uttt_alphazero_nn_vs_alphazero()
     auto [model2, hp2] = libtorch::load_model( model_path2, device );
     const size_t threads = 10;
     libtorch::InferenceManager inference_manager(
-        std::move( model ), device, threads, uttt::alphazero::G,
-        uttt::alphazero::P, 1, 128 );
+        std::move( model ), device, uttt::alphazero::G, uttt::alphazero::P,
+        hp.max_batch_size );
     libtorch::InferenceManager inference_manager2(
-        std::move( model2 ), device, threads, uttt::alphazero::G,
-        uttt::alphazero::P, 1, 128 );
+        std::move( model2 ), device, uttt::alphazero::G, uttt::alphazero::P,
+        hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
     uttt::alphazero::NodeAllocator allocator;
 
     const size_t rounds = 10;
     const size_t selfplay_threads = 10;
-    SchedulerStats scheduler_stats;
     uttt::PlayerFactory factory1 =
-        [&game, &hp, &allocator, &inference_manager, &scheduler_stats]
-        (unsigned seed)
+        [&game, &hp, &allocator, &inference_manager] (unsigned seed)
         {
             alphazero::params::Ucb ucb_params
             { .c_base = hp.c_base, .c_init = hp.c_init };
             alphazero::params::GamePlay gameplay_params{
                 .simulations = 400,
                 .opening_moves = hp.opening_moves,
-                .max_number_of_busy_threads = selfplay_threads,
-                .max_number_of_threads_totally = 10 * selfplay_threads };
+                .selfplay_threads = selfplay_threads,
+                .max_batch_size = 10 * selfplay_threads };
             return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, 
-                inference_manager, scheduler_stats );
+                inference_manager );
         };
     uttt::PlayerFactory factory2 =
-        [&hp2, &game, &allocator, &inference_manager2, &scheduler_stats]
-        (unsigned seed)
+        [&hp2, &game, &allocator, &inference_manager2] (unsigned seed)
         {
             alphazero::params::Ucb ucb_params{ 
                 .c_base = hp2.c_base, .c_init = hp2.c_init };
             alphazero::params::GamePlay gameplay_params{
                 .simulations = 400,
                 .opening_moves = hp2.opening_moves,
-                .max_number_of_busy_threads = selfplay_threads,
-                .max_number_of_threads_totally = 10 * selfplay_threads };
+                .selfplay_threads = selfplay_threads,
+                .max_batch_size = 10 * selfplay_threads };
             return make_unique< uttt::alphazero::libtorch::async::Player >(
                 game, ucb_params, gameplay_params, seed, allocator, 
-                inference_manager2, scheduler_stats );
+                inference_manager2 );
         };
 
     LogMultiMatch match(

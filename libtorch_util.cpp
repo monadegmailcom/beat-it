@@ -124,11 +124,9 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
     threads = get_required_value<size_t>(sp_config, "threads");
     selfplay_threads = get_value_with_default<size_t>(
-        sp_config, "selfplay_threads", 20);
-    max_selfplay_threads = get_value_with_default<size_t>(
-        sp_config, "max_selfplay_threads", 100);
-    min_batch_size = get_value_with_default<size_t>(
-        sp_config, "min_batch_size", 2);
+        sp_config, "selfplay_threads", 10);
+    max_batch_size = get_value_with_default<size_t>(
+        sp_config, "max_batch_size", 100);
 }
 
 float sync_predict(
@@ -163,14 +161,11 @@ float sync_predict(
 
 InferenceManager::InferenceManager(
     unique_ptr< torch::jit::script::Module >&& model,
-    torch::Device device,
-    size_t threads /*for inference histogram size*/,
-    size_t state_size, size_t policies_size,
-    size_t min_batch_size, size_t max_batch_size )
-:   min_batch_size( min_batch_size ), max_batch_size( max_batch_size ),
-    state_size( state_size ), policies_size( policies_size ), device( device ), 
+    torch::Device device, size_t state_size, size_t policies_size,
+    size_t max_queue_size )
+:   state_size( state_size ), policies_size( policies_size ), device( device ), 
     model( std::move( model )), stop_flag( false ), 
-    inference_histogram( threads + 1, 0 )
+    max_queue_size( max_queue_size )
 {
     // Start the inference loop thread after everything is initialized.
     inference_future = std::async( &InferenceManager::inference_loop, this );
@@ -184,20 +179,21 @@ InferenceManager::~InferenceManager()
         inference_future.wait();
 }
 
-vector< size_t > const& InferenceManager::get_inference_histogram() const
-{
-    return inference_histogram;
-}
-
 future< float > InferenceManager::queue_request( 
     float const* state, float* policies )
 {
     promise< float > promise;
     auto future = promise.get_future();
     {
-        scoped_lock< mutex > _(queue_mutex);
+        unique_lock lock(queue_mutex);
+        // block if queue is full.
+        if (request_queue.size() >= max_queue_size)
+            queue_full_cv.wait(
+                lock, 
+                [this] { return request_queue.size() < max_queue_size; });
         request_queue.emplace( state, policies, std::move( promise ));
     }
+
     cv.notify_one();
     return future;
 }
@@ -220,47 +216,37 @@ void InferenceManager::reset_stats() noexcept
 void InferenceManager::inference_loop()
 {
     vector< InferenceRequest > request_batch;
-    request_batch.reserve( max_batch_size );
 
     while (!stop_flag)
     {
+        std::queue<InferenceRequest> local_queue;
         {
             unique_lock lock( queue_mutex );
-            // Wait until the queue has items or a timeout occurs.
-            // The timeout is crucial to process incomplete batches with low 
-            // latency. lock is released while waiting
-            cv.wait_for(lock, batch_timeout, [this] {
-                // Wait until the queue has a reasonable number of items, or we 
-                // need to stop. This prevents waking up for every single 
-                // request and helps form larger batches.
-                return request_queue.size() >= min_batch_size || stop_flag; });
+            cv.wait(
+                lock, [this] { return !request_queue.empty() || stop_flag; });
 
             if (stop_flag)
-                return;
+                break;
 
-            // Pull requests from the queue to form a batch.
-            request_batch.clear();
-
-            while (!request_queue.empty() && request_batch.size() < max_batch_size)
-            {
-                request_batch.push_back( std::move( request_queue.front()));
-                request_queue.pop();
-            }
+            // Swap with the member queue inside the lock. This is an O(1)
+            // operation and minimizes the time the mutex is held.
+            request_queue.swap(local_queue);
         }
+        
+        // notify potentially blocked threads waiting to fill the queue again.
+        queue_full_cv.notify_all();
 
-        if (request_batch.empty())
-            continue;
+        request_batch.clear();
+        request_batch.reserve(local_queue.size());
+        while (!local_queue.empty()) {
+            request_batch.push_back(std::move(local_queue.front()));
+            local_queue.pop();
+        }
 
         auto start = std::chrono::steady_clock::now();
 
         // Increment the histogram bin corresponding to the current batch size.
         queue_size_stats_.update( request_batch.size());
-
-        // update inference histogram (has at least 1 size 1)
-        // accumulate too large batch sizes in the last bucket
-        ++inference_histogram[
-            request_batch.size() < inference_histogram.size()
-            ? request_batch.size() : inference_histogram.size() - 1];
 
         // Prepare the batch tensor for the model.
         batch_tensors.clear();

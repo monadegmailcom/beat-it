@@ -61,8 +61,7 @@ struct Hyperparameters
     size_t opening_moves = 0;
     size_t threads = 0;
     size_t selfplay_threads = 0;
-    size_t max_selfplay_threads = 0;
-    size_t min_batch_size = 0;
+    size_t max_batch_size = 0;
 };
 
 // promise: model is set to eval mode
@@ -86,8 +85,7 @@ class InferenceManager
 public:
     InferenceManager(
         std::unique_ptr< torch::jit::script::Module >&&, torch::Device,
-        size_t threads, size_t state_size, size_t policies_size,
-        size_t min_batch_size, size_t max_batch_size );
+        size_t state_size, size_t policies_size, size_t max_queue_size );
 
     // be sure not to copy or assign the inference manager accidentally
     InferenceManager() = delete;
@@ -104,22 +102,16 @@ public:
     // This is called by worker threads to queue a request for inference.
     // predicted value is returned in the future,
     // memory for predicted policies is provided by the caller.
+    // blocks if max queue size is reached.
     std::future< float > queue_request( float const* state, float* policies );
 
-    std::vector<size_t> const& get_inference_histogram() const;
     Statistics const& queue_size_stats() const noexcept
         { return queue_size_stats_; }
     Statistics const& inference_time_stats() const noexcept
         { return inference_time_stats_; }
-    void set_min_batch_size( size_t size ) noexcept
-    { min_batch_size = size; }
     void reset_stats() noexcept;
 private:
     void inference_loop();
-
-    size_t min_batch_size;
-    size_t max_batch_size;
-    const std::chrono::milliseconds batch_timeout{ 5 };
 
     size_t state_size;
     size_t policies_size;
@@ -131,10 +123,11 @@ private:
     std::mutex queue_mutex;
     std::condition_variable cv;
     std::atomic< bool > stop_flag;
-    std::vector<size_t> inference_histogram;
     std::future< void > inference_future;
     Statistics queue_size_stats_;
     Statistics inference_time_stats_;
+    size_t max_queue_size;
+    std::condition_variable queue_full_cv;
 };
 
 namespace async {
@@ -147,10 +140,9 @@ public:
             alphazero::params::Ucb const& ucb,
             alphazero::params::GamePlay const& game_play, unsigned seed,
             NodeAllocator< typename BasePlayerT::value_type >& allocator,
-            InferenceManager& im, SchedulerStats& scheduler_stats )
-        : BasePlayerT( std::move(game), ucb, game_play, seed, allocator,
-                       scheduler_stats ),
-          inference_manager( im ) {}
+            InferenceManager& im )
+    : BasePlayerT( std::move(game), ucb, game_play, seed, allocator),
+      inference_manager( im ) {}
 protected:
     InferenceManager& inference_manager;
 
