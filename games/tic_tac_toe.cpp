@@ -38,16 +38,16 @@ double score( State const& state )
     return score;
 }
 
-} // namespace minimax {
+} // namespace minimax 
 
 namespace alphazero {
 
-size_t BasePlayer::move_to_policy_index( Move const& move ) const
+size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move );
 }
 
-array< float, G > BasePlayer::serialize_state( Game const& game ) const
+array< float, G > Player::serialize_state( Game const& game ) const
 {
     auto const& state = game.get_state();
     array< float, G > game_state_players = { 0.0f };
@@ -75,11 +75,11 @@ array< float, G > BasePlayer::serialize_state( Game const& game ) const
     return game_state_players;
 }
 
-} // namespace alphazero {
+} // namespace alphazero 
 
 Symbol player_index_to_symbol( PlayerIndex player_index )
 {
-    const Symbol symbols[] = { Symbol::Player1, Symbol::Player2 };
+    const Symbol symbols[] = { Symbol::Player1, Symbol::Player2 }; // NOSONAR
     return symbols[player_index];
 }
 
@@ -108,7 +108,7 @@ Move HumanPlayer::choose_move()
             continue;
         }
 
-        if (std::find( valid_moves.begin(), valid_moves.end(), Move( move ))
+        if (std::ranges::find( valid_moves, Move( move ))
             == valid_moves.end())
         {
             cout << "not a valid move" << endl;
@@ -116,7 +116,7 @@ Move HumanPlayer::choose_move()
         }
 
         game = game.apply( Move( move ) );
-        return move;
+        return static_cast< Move >( move );
     }
 }
 
@@ -131,12 +131,12 @@ void HumanPlayer::apply_opponent_move( Move const& move )
 void GameState< ttt::Move, ttt::State >::next_valid_move(
     optional< ttt::Move >& move, PlayerIndex, ttt::State const& state )
 {
-    if (!move)
+    if (!move.has_value())
         move = 0; // first possibly valid move
     else
         ++*move; // next possible move
 
-    while (true)
+    while (true) // NOSONAR
     {
         if (move >= 9) // no valid move possible anymore
         {
@@ -178,7 +178,7 @@ ttt::State GameState< ttt::Move, ttt::State >::apply(
 }
 
 GameResult GameState< ttt::Move, ttt::State >::result(
-    PlayerIndex player_index, ttt::State const& state )
+    PlayerIndex, ttt::State const& state )
 {
     // check for wins
     for (const auto& win : ttt::wins)
@@ -190,7 +190,7 @@ GameResult GameState< ttt::Move, ttt::State >::result(
     }
 
     // check for undecided
-    if (std::any_of(state.begin(), state.end(),
+    if (std::ranges::any_of(state,
         [](ttt::Symbol symbol) { return symbol == ttt::Symbol::Empty; }))
         return GameResult::Undecided;
 
@@ -198,7 +198,7 @@ GameResult GameState< ttt::Move, ttt::State >::result(
     return GameResult::Draw;
 }
 
-ostream& operator<<( ostream& os, ttt::Game const& game )
+ostream& operator<<( ostream& os, ttt::Game const& game ) // NOSONAR
 {
     os << "player " << game.current_player_index() + 1 << '\n'
        << "state: " << '\n';

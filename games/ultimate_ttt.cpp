@@ -144,12 +144,12 @@ double Player::score( Game const& game ) const
 
 namespace alphazero {
 
-size_t BasePlayer::move_to_policy_index( Move const& move ) const
+size_t Player::move_to_policy_index( Move const& move ) const
 {
     return size_t( move.big_move * 9 + move.small_move );
 }
 
-array< float, G > BasePlayer::serialize_state( Game const& game ) const
+array< float, G > Player::serialize_state( Game const& game ) const
 {
     auto const& state = game.get_state();
     array< float, G > game_state_players = { 0.0f };

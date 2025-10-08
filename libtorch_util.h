@@ -2,18 +2,16 @@
 
 #include "node.h"
 #include "statistics.h"
-#include "alphazero.h"
+#include "inference.h"
 
-#include <torch/script.h> // Main LibTorch header for loading models
+#include <torch/script.h>
 #include <torch/torch.h>
 
 #include <boost/json.hpp>
 
 #include <iostream>
 #include <future>
-#include <queue>
 #include <mutex>
-#include <shared_mutex>
 #include <condition_variable>
 #include <atomic>
 #include <vector>
@@ -22,28 +20,10 @@ namespace libtorch {
 
 struct DataBuffer {
     const char* data;
-    int32_t len;
+    uint32_t len;
 };
 
 torch::Device get_device();
-
-struct InferenceRequest
-{
-    // needed for usage in std::deque
-    InferenceRequest(
-        float const* state, float* policies, std::promise< float >&& promise )
-    : state( state ), policies( policies ), promise( std::move( promise ) ) {}
-
-    InferenceRequest() = delete;
-    InferenceRequest( const InferenceRequest& ) = delete;
-    InferenceRequest& operator=( const InferenceRequest& ) = delete;
-    InferenceRequest( InferenceRequest&& ) noexcept = default;
-    InferenceRequest& operator=( InferenceRequest&& ) noexcept = default;
-
-    float const* state;
-    float* policies;
-    std::promise< float > promise;
-};
 
 struct Hyperparameters
 {
@@ -59,8 +39,8 @@ struct Hyperparameters
     float dirichlet_epsilon = 0.0f;
     size_t simulations = 0;
     size_t opening_moves = 0;
-    size_t threads = 0;
-    size_t selfplay_threads = 0;
+    size_t parallel_games = 0;
+    size_t parallel_simulations = 0;
     size_t max_batch_size = 0;
 };
 
@@ -73,95 +53,67 @@ std::pair< std::unique_ptr< torch::jit::script::Module >,
            Hyperparameters > load_model(
     DataBuffer model_buffer,
     DataBuffer metadata_buffer, torch::Device );
+// promise: model is set to eval mode
+std::unique_ptr< torch::jit::script::Module > load_model(
+    DataBuffer model_buffer, torch::Device );
 
-float sync_predict(
-    torch::jit::script::Module& model, torch::Device,
-    float const* game_state_players, size_t game_state_players_size,
-    float* policies, size_t policies_size );
-
-// This class manages a dedicated thread for running batched model inference.
-class InferenceManager
+template< size_t G, size_t P >
+class InferenceService : public inference::Service< G, P >
 {
 public:
-    InferenceManager(
-        std::unique_ptr< torch::jit::script::Module >&&, torch::Device,
-        size_t state_size, size_t policies_size, size_t max_queue_size );
-
-    // be sure not to copy or assign the inference manager accidentally
-    InferenceManager() = delete;
-    InferenceManager( const InferenceManager& ) = delete;
-    InferenceManager& operator=( const InferenceManager& ) = delete;
-    InferenceManager( InferenceManager&& ) = delete;
-    InferenceManager& operator=( InferenceManager&&) = delete;
-
-    ~InferenceManager();
+    using service_type = inference::Service< G, P >;
+    InferenceService(
+        std::unique_ptr< torch::jit::script::Module >&& model, 
+        torch::Device device, size_t max_batch_size ) 
+    : service_type( max_batch_size ), device( device ), 
+      model( std::move( model )) {}
 
     // threadsafe replacement of model
-    void update_model( std::unique_ptr< torch::jit::script::Module >&& );
-
-    // This is called by worker threads to queue a request for inference.
-    // predicted value is returned in the future,
-    // memory for predicted policies is provided by the caller.
-    // blocks if max queue size is reached.
-    std::future< float > queue_request( float const* state, float* policies );
-
-    Statistics const& queue_size_stats() const noexcept
-        { return queue_size_stats_; }
-    Statistics const& inference_time_stats() const noexcept
-        { return inference_time_stats_; }
-    void reset_stats() noexcept;
+    void update_model( 
+        std::unique_ptr< torch::jit::script::Module >&& new_model )
+    {
+        std::scoped_lock _( model_update_mutex );
+        model = std::move( new_model );
+    }
 private:
-    void inference_loop();
+    void inference( 
+        service_type::request_type request_batch[], size_t batch_size ) override
+    {
+        batch_tensors.clear();
+        for (size_t i = 0; i < batch_size; ++i)
+            batch_tensors.push_back( torch::from_blob(
+                const_cast< float* >( request_batch[i].state.data()), // NOSONAR
+                G, torch::kFloat32)); 
+        torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
 
-    size_t state_size;
-    size_t policies_size;
+        torch::jit::IValue output_ivalue;
+        {
+            // Lock the module while running inference to prevent it from being
+            // replaced by an update call from another thread mid-operation.
+            std::scoped_lock _( model_update_mutex);
+            output_ivalue = model->forward({input_batch});
+        }
+
+        auto output_tuple = output_ivalue.toTuple();
+        torch::Tensor value_batch = 
+            output_tuple->elements()[0].toTensor().to( torch::kCPU);
+        torch::Tensor policy_batch = 
+            output_tuple->elements()[1].toTensor().to( torch::kCPU);
+    
+        for (size_t i = 0; i < batch_size; ++i)
+        {
+            auto& request = request_batch[i];
+            request.nn_value = value_batch[i].item< float >();
+            std::copy_n(
+                policy_batch[i].data_ptr< float >(), P,
+                request.policies.begin());
+        }
+    }
+
     std::vector< torch::Tensor > batch_tensors;
     torch::Device device;
     std::unique_ptr< torch::jit::script::Module > model;
     std::mutex model_update_mutex;
-    std::queue< InferenceRequest > request_queue;
-    std::mutex queue_mutex;
-    std::condition_variable cv;
-    std::atomic< bool > stop_flag;
-    std::future< void > inference_future;
-    Statistics queue_size_stats_;
-    Statistics inference_time_stats_;
-    size_t max_queue_size;
-    std::condition_variable queue_full_cv;
 };
-
-namespace async {
-
-template< typename BasePlayerT >
-class Player : public BasePlayerT
-{
-public:
-    Player( typename BasePlayerT::game_type game,
-            alphazero::params::Ucb const& ucb,
-            alphazero::params::GamePlay const& game_play, unsigned seed,
-            NodeAllocator< typename BasePlayerT::value_type >& allocator,
-            InferenceManager& im )
-    : BasePlayerT( std::move(game), ucb, game_play, seed, allocator),
-      inference_manager( im ) {}
-protected:
-    InferenceManager& inference_manager;
-
-    std::pair< float, std::array< float, BasePlayerT::policy_size > > predict(
-        std::array< float, BasePlayerT::game_size > const& game_state_players ) 
-            override
-    {
-        // provide the buffer to copy predicted policies into
-        std::array< float, BasePlayerT::policy_size > policies;
-        
-        // blocking call
-        auto future = inference_manager.queue_request( 
-            game_state_players.data(), policies.data());
-        auto value = future.get(); // blocking call
-
-        return std::make_pair( value, policies );
-    }
-};
-
-} // namespace async
 
 } // namespace libtorch

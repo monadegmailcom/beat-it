@@ -83,14 +83,22 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
 
     // Call the other load_model overload that takes memory buffers.
     return load_model(
-        {model_data.data(), static_cast<int32_t>(model_data.size())},
-        {metadata_json.data(), static_cast<int32_t>(metadata_json.size())},
+        {model_data.data(), static_cast<uint32_t>(model_data.size())},
+        {metadata_json.data(), static_cast<uint32_t>(metadata_json.size())},
         device );
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
-    DataBuffer model_buffer,
-    DataBuffer metadata_buffer, torch::Device device )
+    DataBuffer model_buffer, DataBuffer metadata_buffer, torch::Device device )
+{
+    return make_pair(
+        load_model( model_buffer, device ),
+        Hyperparameters( string( metadata_buffer.data, metadata_buffer.len ))
+    );
+}
+
+unique_ptr< torch::jit::script::Module > load_model(
+    DataBuffer model_buffer, torch::Device device )
 {
     static std::istringstream model_data_stream;
     // when reading the model from a string stream there seems to be a problem
@@ -101,10 +109,7 @@ pair< unique_ptr< torch::jit::script::Module >, Hyperparameters > load_model(
         model_data_stream, device ));
     model->eval();
 
-    return make_pair(
-        std::move( model ),
-        Hyperparameters( string( metadata_buffer.data, metadata_buffer.len ))
-    );
+    return model;
 }
 
 Hyperparameters::Hyperparameters( string const& metadata_json )
@@ -122,170 +127,11 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
         sp_config, "dirichlet_epsilon");
     simulations = get_required_value<int32_t>(sp_config, "simulations");
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
-    threads = get_required_value<size_t>(sp_config, "threads");
-    selfplay_threads = get_value_with_default<size_t>(
-        sp_config, "selfplay_threads", 10);
+    parallel_games = get_required_value<size_t>(sp_config, "parallel_games");
+    parallel_simulations = get_value_with_default<size_t>(
+        sp_config, "parallel_simulations", 10);
     max_batch_size = get_value_with_default<size_t>(
         sp_config, "max_batch_size", 100);
-}
-
-float sync_predict(
-    torch::jit::script::Module& model, torch::Device device,
-    float const* game_state_players, size_t game_state_players_size,
-    float* policies, size_t policies_size )
-{
-    auto input_tensor = torch::from_blob(
-        const_cast< float* >( game_state_players ), // NOSONAR
-        {1, (long)game_state_players_size }, torch::kFloat32);
-
-    // Move tensor to the correct device.
-    input_tensor = input_tensor.to( device );
-
-    // Run inference.
-    torch::jit::IValue output_ivalue = model.forward( {input_tensor} );
-    auto output_tuple = output_ivalue.toTuple();
-
-    // Get results and move them to CPU.
-    // The output tensors will have a batch dimension of 1.
-    torch::Tensor value_tensor = output_tuple->elements()[0].toTensor().to( 
-        torch::kCPU );
-    torch::Tensor policy_tensor = output_tuple->elements()[1].toTensor().to( 
-        torch::kCPU );
-
-    // Copy policy data to the output buffer.
-    float const* const policy_ptr = policy_tensor.data_ptr< float >();
-    copy( policy_ptr, policy_ptr + policies_size, policies );
-
-    return value_tensor[0].item< float >();
-}
-
-InferenceManager::InferenceManager(
-    unique_ptr< torch::jit::script::Module >&& model,
-    torch::Device device, size_t state_size, size_t policies_size,
-    size_t max_queue_size )
-:   state_size( state_size ), policies_size( policies_size ), device( device ), 
-    model( std::move( model )), stop_flag( false ), 
-    max_queue_size( max_queue_size )
-{
-    // Start the inference loop thread after everything is initialized.
-    inference_future = std::async( &InferenceManager::inference_loop, this );
-}
-
-InferenceManager::~InferenceManager()
-{
-    stop_flag = true;
-    cv.notify_one();
-    if (inference_future.valid())
-        inference_future.wait();
-}
-
-future< float > InferenceManager::queue_request( 
-    float const* state, float* policies )
-{
-    promise< float > promise;
-    auto future = promise.get_future();
-    {
-        unique_lock lock(queue_mutex);
-        // block if queue is full.
-        if (request_queue.size() >= max_queue_size)
-            queue_full_cv.wait(
-                lock, 
-                [this] { return request_queue.size() < max_queue_size; });
-        request_queue.emplace( state, policies, std::move( promise ));
-    }
-
-    cv.notify_one();
-    return future;
-}
-
-void InferenceManager::update_model(
-    unique_ptr< torch::jit::script::Module >&& new_model )
-{
-    // Lock and swap the new model into place. This is much more efficient
-    // than destroying and recreating the entire InferenceManager.
-    scoped_lock< mutex > _( model_update_mutex );
-    model = std::move( new_model );
-}
-
-void InferenceManager::reset_stats() noexcept
-{
-    queue_size_stats_.reset();
-    inference_time_stats_.reset();
-}
-
-void InferenceManager::inference_loop()
-{
-    vector< InferenceRequest > request_batch;
-
-    while (!stop_flag)
-    {
-        std::queue<InferenceRequest> local_queue;
-        {
-            unique_lock lock( queue_mutex );
-            cv.wait(
-                lock, [this] { return !request_queue.empty() || stop_flag; });
-
-            if (stop_flag)
-                break;
-
-            // Swap with the member queue inside the lock. This is an O(1)
-            // operation and minimizes the time the mutex is held.
-            request_queue.swap(local_queue);
-        }
-        
-        // notify potentially blocked threads waiting to fill the queue again.
-        queue_full_cv.notify_all();
-
-        request_batch.clear();
-        request_batch.reserve(local_queue.size());
-        while (!local_queue.empty()) {
-            request_batch.push_back(std::move(local_queue.front()));
-            local_queue.pop();
-        }
-
-        auto start = std::chrono::steady_clock::now();
-
-        // Increment the histogram bin corresponding to the current batch size.
-        queue_size_stats_.update( request_batch.size());
-
-        // Prepare the batch tensor for the model.
-        batch_tensors.clear();
-        batch_tensors.reserve( request_batch.size());
-        for (auto const& req : request_batch)
-            batch_tensors.push_back( torch::from_blob(
-                const_cast< float* >( req.state ), // NOSONAR
-                state_size, torch::kFloat32)); 
-        torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
-
-        torch::jit::IValue output_ivalue;
-        {
-            // Lock the module while running inference to prevent it from being
-            // replaced by an update call from another thread mid-operation.
-            scoped_lock< mutex > _( model_update_mutex);
-            output_ivalue = model->forward({input_batch});
-        }
-
-        auto output_tuple = output_ivalue.toTuple();
-        torch::Tensor value_batch = output_tuple->elements()[0].toTensor().to( torch::kCPU);
-        torch::Tensor policy_batch = output_tuple->elements()[1].toTensor().to( torch::kCPU);
-
-        // Distribute the results back to the waiting threads.
-        for (size_t i = 0; i < request_batch.size(); ++i)
-        {
-            // copy the policy items into the provided buffer from the request
-            float* const policy_ptr = policy_batch[i].data_ptr< float >();
-            copy( policy_ptr, policy_ptr + policies_size, request_batch[i].policies );
-
-            request_batch[i].promise.set_value( value_batch[i].item< float >());
-        }
-
-        const auto duration_per_item =
-            std::chrono::duration<float, std::micro>(
-                std::chrono::steady_clock::now() - start
-            ) / request_batch.size();
-        inference_time_stats_.update(
-            static_cast<size_t>(duration_per_item.count()));
-    }
 }
 
 } // namespace libtorch

@@ -116,7 +116,30 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
     --study_name my_name`
 - `optuna-dashboard sqlite:///db.sqlite3`
 - open browser at the output url
-
+- find the sweet spot of 
+  - intra game parallelism (selfplay threads)
+  - inter game parallelism (parallel game play)
+  - gpu utilization (batch_size)
+  - well-guided search (shannon entropy of root-children-visit distribution)
+- "flying blind" -> high entropy
+- well-guided search -> low entropy
+- find the pareto front by simultaneously
+  - maximizing throughput
+  - minimizing shannon entropy
+ 
+# Lock-free techniques
+- use boost::lockfree::queue for a producer-consumer-pattern
+  - a failed mutex lock slows down a thread for orders of magnitude
+  - note: a lock-free queue has a fixed maximal size
+- use semaphores for maintaining resources
+  - a resource in this context is
+    - the number of free slots in a lock-free queue
+    - the number of requests to be processed
+    - the number of notifications to deliver
+  - a semaphore can be used to let a thread sleep until a resource is free without busy-spinning.
+- a lock-free queue with a semaphore should be a high performance replacement for mutex and condition variables.
+- exit a blocking semaphore acquire by sending a "poison-pill" dummy value.
+   
 ## Todos
 - regularly evaluate game play in a match
   - add match function to shared lib

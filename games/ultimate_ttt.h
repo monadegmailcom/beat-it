@@ -84,34 +84,31 @@ using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 namespace alphazero {
 
+using Node = ::Node< ::alphazero::Value< Move, State > >;
 using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
 
 const size_t G = 4 * 81;
 const size_t P = 81;
+
+class Player : public ::alphazero::Player< Move, State, G, P >
+{
+public:
+    using base_type = ::alphazero::Player< Move, State, G, P >;
+    using base_type::base_type;
+private:
+    size_t move_to_policy_index( Move const& ) const override;
+    std::array< float, G > serialize_state(
+        Game const& ) const override;
+};
 
 namespace training {
 using Position = ::alphazero::training::Position< G, P >;
 using Selfplay = ::alphazero::training::SelfPlay< Move, State, G, P >;
 } // namespace training
 
-class BasePlayer : public ::alphazero::Player< Move, State, G, P >
-{
-public:
-    BasePlayer( 
-        Game game,
-            ::alphazero::params::Ucb const& ucb,
-            ::alphazero::params::GamePlay const& game_play,
-            unsigned seed, NodeAllocator& allocator )
-    : ::alphazero::Player< Move, State, G, P >(
-        std::move(game), ucb, game_play, seed, allocator ) {}
-protected:
-    std::array< float, G > serialize_state( Game const& ) const override;
-    size_t move_to_policy_index( Move const& ) const override;
-};
-
-namespace libtorch::async {
-using Player = ::libtorch::async::Player< BasePlayer >;
-} // namespace libtorch::async
+namespace libtorch {
+using InferenceService = ::libtorch::InferenceService< G, P >;
+} // namespace libtorch
 } // namespace alphazero
 } // namespace uttt
 
