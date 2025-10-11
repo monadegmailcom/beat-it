@@ -106,6 +106,7 @@ public:
     using node_type = Node< value_type >;
     using inference_service_type = inference::Service< G, P >;
     using request_type = inference::Request< G, P >;
+    using response_type = inference::Response< P >;
 
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
@@ -122,7 +123,8 @@ public:
             NodeDeleter<value_type>{allocator} ),
       ucb_params( ucb ), game_play( game_play ), g( seed ),
       allocator( allocator ), thread_pool( game_play.parallel_simulations ),
-      inference_service( inference_service )
+      inference_service( inference_service ),
+      response_queue( inference_service.get_max_batch_size()) 
     {
         if (!game_play.simulations)
             throw std::source_location::current();
@@ -166,14 +168,6 @@ public:
         else
             advance_root(itr);
     }
-
-    static void static_callback_handler(
-        void* caller, void* node, // NOSONAR
-        std::array< float, P > const& policies, float nn_value )
-    {
-        static_cast< Player* >( caller )->backpropagation( 
-            *static_cast< node_type* >( node ), policies, nn_value );       
-    }
 protected:
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
@@ -185,8 +179,6 @@ private:
     // require: node is not expanded and game is Undecided.
     void expand( node_type& node)
     {
-        // lock the node while expanding.
-        std::unique_lock lock(node.get_mutex());
         auto& value = node.get_value();
         for (MoveT const& move : value.game)
         {
@@ -195,6 +187,7 @@ private:
                 Node( value_type( value.game.apply( move ), move, &node ), 
                 allocator );
 
+            std::unique_lock lock(node.get_mutex());
             node.get_children().push_front( *child );
         }
     }
@@ -208,7 +201,7 @@ private:
             value.visits.fetch_add( 1, std::memory_order_relaxed) == 0;
         // and apply virtual loss to avoid entering this path from the 
         // parent's node perspective, so increase nn_value;
-        value.nn_value_sum.fetch_sub( virtual_loss, std::memory_order_relaxed);
+        value.nn_value_sum.fetch_add( virtual_loss, std::memory_order_relaxed);
 
         if (value.game_result != GameResult::Undecided)
             backpropagation( 
@@ -220,10 +213,8 @@ private:
 
             // pushing a request to the inference service may block if the
             // request queue is full.
-            pending_requests.fetch_add( 1, std::memory_order_relaxed);
             inference_service.push( {
-                .callback = &Player::static_callback_handler,
-                .caller = this,
+                .response_queue = &response_queue,
                 .node = &node,
                 .state = serialize_state( value.game )
             });
@@ -235,17 +226,21 @@ private:
     // require: single-threaded access.
     auto choose_move_iterator()
     {        
-        remaining_simulations = game_play.simulations;
-
-        // wake up all waiting threads.
+        // wake up waiting worker threads.
+        remaining_simulations.fetch_add( 
+            game_play.simulations, std::memory_order_relaxed);
         simulations_cv.notify_all();
 
-        // goto sleep until all simulations finished and no more request
-        // pending.
+        // goto sleep until all simulations finished.
         std::unique_lock lock( simulations_mutex );
         simulations_cv.wait(
-            lock,
-            [this] { return !remaining_simulations && !pending_requests; });
+            lock, 
+            [this]
+            {
+                return stop || remaining_simulations.load( 
+                    std::memory_order_relaxed) == 0; 
+            });
+
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
@@ -335,7 +330,7 @@ private:
         }
 
         // remove virtual loss.
-        value.nn_value_sum.fetch_add( virtual_loss, std::memory_order_relaxed);
+        value.nn_value_sum.fetch_sub( virtual_loss, std::memory_order_relaxed);
 
         // backpropagate nn value. note the alternating sign of nn_value
         // the player's perspective is changing on the way up to the root node.
@@ -343,25 +338,42 @@ private:
         { 
             next->get_value().nn_value_sum.fetch_add(
                 nn_value, std::memory_order_relaxed);
+            // toggle sign
             nn_value = -nn_value;
         }
-        
-        // request is fully processed.
-        pending_requests.fetch_sub( 1, std::memory_order_relaxed);
+
+        // notify all potential waiter if simulation is completed.
+        if (remaining_simulations.fetch_sub(1, std::memory_order_relaxed) == 1)
+            simulations_cv.notify_all();                   
     }
 
     void worker()
     {
         while (!stop)
         {
-            // lockfree simulation processing.
-            while (atomic_decrement_if_positive( remaining_simulations ))
-                simulation( *root );
+            // first backpropagate nn responses.
+            response_type response;
+            while (response_queue.pop( response ))
+                backpropagation( 
+                    *static_cast< node_type* >( response.node ), 
+                    response.policies, response.nn_value );
 
-            // wait until there is work to be done. 
-            std::unique_lock lock(simulations_mutex);
-            simulations_cv.wait( 
-                lock, [this] { return remaining_simulations || stop; });        
+            if (remaining_simulations.load( std::memory_order_relaxed) != 0)
+                // then simulate. 
+                simulation( *root );
+            else
+            {
+                // blocking wait if all simulations are finished.
+                // wake up if simulations are pending again.
+                std::unique_lock lock( simulations_mutex );
+                simulations_cv.wait( 
+                    lock, 
+                    [this]
+                    { 
+                        return stop || remaining_simulations.load(
+                            std::memory_order_relaxed) != 0; 
+                    });
+            }
         }
     }
 
@@ -421,14 +433,14 @@ private:
     std::mt19937 g;
     NodeAllocator< MoveT, StateT >& allocator;
     std::vector< std::jthread > thread_pool;
+    std::atomic< size_t > remaining_simulations {0};
     std::condition_variable simulations_cv;
-    std::atomic< std::size_t > pending_requests = 0;
-    std::atomic< std::size_t > remaining_simulations = 0;
     std::mutex simulations_mutex;
     bool stop = false;
     inference_service_type& inference_service;
-    const float virtual_loss = -1.0; // must be negative
+    const float virtual_loss = 1.0; // must be positive
     std::vector< float > policy_buffer; 
+    boost::lockfree::queue< response_type > response_queue;
 };
 
 namespace training {

@@ -103,10 +103,15 @@ private:
         for (size_t i = 0; i < batch_size; ++i)
         {
             auto& request = request_batch[i];
-            request.nn_value = value_batch[i].item< float >();
+            inference::Response< P > response {
+                .node = request.node,
+                .nn_value = value_batch[i].item< float >()
+            };
             std::copy_n(
                 policy_batch[i].data_ptr< float >(), P,
-                request.policies.begin());
+                response.policies.begin());
+            while (!request.response_queue->push( response ))
+                std::this_thread::yield();
         }
     }
 
