@@ -1,4 +1,5 @@
 #include <vector>
+#include <deque>
 #include <atomic>
 #include <memory>
 #include <mutex>
@@ -6,6 +7,7 @@
 class ArenaAllocator
 {
 public:
+    using Block = std::vector< char >;
     explicit ArenaAllocator( size_t block_size );
 
     ArenaAllocator( ArenaAllocator const& ) = delete;
@@ -16,10 +18,9 @@ public:
     // not thread safe.
     void reset();
 private:
-    using Block = std::vector< char >;
-    std::vector< std::unique_ptr< Block >> blocks;
+    std::deque< std::unique_ptr< Block >> blocks;
     std::mutex block_mutex;
-    std::atomic< size_t > current_block_idx;
+    std::atomic< Block* > current_block_ptr {nullptr};
     std::atomic< size_t > current_offset {0};
 };
 

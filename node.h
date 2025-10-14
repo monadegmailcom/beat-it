@@ -67,15 +67,15 @@ public:
     {
         std::swap( current_allocator, previous_allocator ); 
         current_allocator->reset();
-        root = &move( node ); 
+        root = &copy_tree( node ); 
     }
 private:
-    // recursively move the whole subtree.
-    node_type& move( node_type& node)
+    // recursively copy the whole subtree.
+    node_type& copy_tree( node_type& node)
     {
         node_type& new_node = allocate( std::move( node.get_value()));
         for (node_type& child : node.get_children())
-            new_node.get_children().push_back( move( child ));
+            new_node.get_children().push_back( copy_tree( child ));
         return new_node;
     }
 
