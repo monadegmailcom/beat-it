@@ -1,6 +1,7 @@
 #pragma once
 
-#include <boost/pool/pool_alloc.hpp>
+#include "allocator.h"
+
 #include <boost/intrusive/list.hpp>
 #include <boost/intrusive/list_hook.hpp>
 
@@ -12,39 +13,16 @@ template< typename ValueT >
 class Node;
 
 template< typename ValueT >
-using NodeAllocator = boost::pool_allocator< Node< ValueT >>;
-
-template< typename ValueT >
 class Node : public boost::intrusive::list_base_hook<>
 {
 public:
     using value_type = ValueT;
-    using allocator_type = NodeAllocator< ValueT >;
+    using allocator_type = TypedAllocator< Node >;
 
-    Node( ValueT&& value, NodeAllocator< ValueT >& allocator )
-    : value( std::move( value )), allocator( allocator ) {}
+    explicit Node( ValueT&& value ) : value( std::move( value )) {}
 
     Node( Node const& ) = delete;
     Node& operator=( Node const& ) = delete;
-
-    // The destructor is responsible for cleaning up the entire subtree rooted at this node.
-    ~Node()
-    {
-        // To safely destroy children while iterating, we first move them to a
-        // temporary list. This unlinks them from `this->children`.
-        boost::intrusive::list<Node<ValueT>> children_to_delete;
-        children_to_delete.splice(children_to_delete.begin(), children);
-
-        // Now that the original `children` list is empty, we can safely dispose
-        // of the nodes in the temporary list. The disposer lambda will be called
-        // for each child, which in turn calls its destructor, leading to safe recursion.
-        children_to_delete.clear_and_dispose([this](auto child) {
-            child->~Node();
-            this->allocator.deallocate(child, 1);
-        });
-    }
-
-    NodeAllocator< ValueT >& get_allocator() { return allocator; }
 
     ValueT& get_value() { return value; }
     ValueT const& get_value() const { return value; }
@@ -58,27 +36,55 @@ public:
     { return std::unique_lock< std::mutex >( node_mutex ); }
 private:
     ValueT value;
-    NodeAllocator< ValueT >& allocator;
     boost::intrusive::list< Node > children;
     std::shared_mutex node_mutex;
 };
 
-template<typename ValueT>
-struct NodeDeleter {
-    NodeAllocator<ValueT>& allocator;
-    void operator()(Node<ValueT>* ptr) const {
-        if (ptr) {
-            ptr->~Node();
-            allocator.deallocate(ptr, 1);
-        }
-    }
-};
-
-template< typename ValueT >
-using NodePtr = std::unique_ptr<Node<ValueT>, NodeDeleter<ValueT>>;
-
 template< typename ValueT >
 using List = boost::intrusive::list< Node< ValueT >>;
+
+template< typename ValueT >
+class NodeAllocator
+{
+public:
+    using value_type = ValueT;
+    using node_type = Node< ValueT >;
+    using allocator_type = TypedAllocator< node_type >;
+
+    explicit NodeAllocator( size_t nodes_per_block )
+    : fst_allocator( nodes_per_block ), snd_allocator( nodes_per_block ) {}
+
+    node_type* get_root() noexcept { return root; }
+    node_type const* get_root() const noexcept { return root; }
+    
+    node_type& allocate( value_type&& value )
+    {
+        return *(new (current_allocator->allocate()) 
+            node_type( std::move( value )));
+    }
+
+    void rebase( node_type& node )
+    {
+        std::swap( current_allocator, previous_allocator ); 
+        current_allocator->reset();
+        root = &move( node ); 
+    }
+private:
+    // recursively move the whole subtree.
+    node_type& move( node_type& node)
+    {
+        node_type& new_node = allocate( std::move( node.get_value()));
+        for (node_type& child : node.get_children())
+            new_node.get_children().push_back( move( child ));
+        return new_node;
+    }
+
+    allocator_type fst_allocator;
+    allocator_type snd_allocator;
+    allocator_type* current_allocator = &fst_allocator;
+    allocator_type* previous_allocator = &snd_allocator;
+    node_type* root = nullptr;
+};
 
 template< typename ValueT >
 size_t node_count( Node< ValueT > const& node )

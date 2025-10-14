@@ -7,8 +7,6 @@
 
 namespace montecarlo {
 
-namespace detail {
-
 template< typename MoveT, typename StateT >
 struct Value
 {
@@ -29,36 +27,36 @@ struct Value
     const GameResult game_result; // the cached game result
     // iterator to next valid move not already added as a child node
     typename Game< MoveT, StateT >::MoveItr next_move_itr;
-    double points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
+    float points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
     size_t visits = 0;
 };
 
-} // namespace detail
-
 template< typename MoveT, typename StateT >
-using NodeAllocator = ::NodeAllocator< detail::Value< MoveT, StateT > >;
+using NodeAllocator = ::NodeAllocator< Value< MoveT, StateT > >;
 
 template< typename MoveT, typename StateT >
 class Player : public ::Player< MoveT >
 {
 public:
-    Player( Game< MoveT, StateT > const& game, double exploration,
+    using value_type = Value< MoveT, StateT >;
+    using node_type = Node< value_type >;
+
+    Player( 
+        Game< MoveT, StateT > const& game, double exploration,
         size_t simulations, unsigned seed,
         NodeAllocator< MoveT, StateT >& allocator )
-    : g( seed ), allocator( allocator),
-      root( new (allocator.allocate(1))
-            Node< detail::Value< MoveT, StateT >>(
-                detail::Value< MoveT, StateT >( game, MoveT()), allocator ),
-            NodeDeleter<detail::Value< MoveT, StateT >>{allocator}
-          ),
-      exploration( exploration ), simulations( simulations )
-    {}
+    : g( seed ), allocator( allocator), exploration( exploration ), 
+      simulations( simulations )
+    {
+        allocator.rebase( allocator.allocate( value_type( game, MoveT())));
+    }
 
-    double uct( detail::Value< MoveT, StateT > const& value, size_t parent_visits )
+    double uct( value_type const& value, size_t parent_visits )
     {
         return
             1 - value.points / value.visits
-            + exploration * std::sqrt( std::log( parent_visits ) / value.visits );
+            + exploration * std::sqrtf( 
+                std::logf( parent_visits ) / value.visits );
     }
 
     // require: game finally ends into result != Undecided
@@ -82,21 +80,18 @@ public:
         return result;
     }
 
-    Node< detail::Value< MoveT, StateT >>& select(
-        Node< detail::Value< MoveT, StateT >>& node )
+    node_type& select( node_type& node )
     {
         auto& value = node.get_value();
         // if another move is available push front newly created child node
         if (value.next_move_itr != value.game.end())
         {
             const MoveT move = *value.next_move_itr++;
-            auto child = new (node.get_allocator().allocate(1))
-                Node(
-                    detail::Value( value.game.apply( move ), move ),
-                    node.get_allocator());
+            auto& child = allocator.allocate(
+                value_type( value.game.apply( move ), move ));
 
-            node.get_children().push_front( *child );
-            return *child;
+            node.get_children().push_front( child );
+            return child;
         }
         else // otherwise SELECT child node from children list
         {
@@ -114,7 +109,7 @@ public:
         }
     }
 
-    GameResult simulation( Node< detail::Value< MoveT, StateT >>& node )
+    GameResult simulation( Node< Value< MoveT, StateT >>& node )
     {
         auto& value = node.get_value();
         ++value.visits;
@@ -143,58 +138,43 @@ public:
     MoveT choose_move() override
     {
         for (size_t i = simulations; i != 0; --i)
-            simulation( *root );
+            simulation( *allocator.get_root());
 
         // remove child with most visits
         auto itr =
-            std::ranges::max_element( root->get_children(),
+            std::ranges::max_element( allocator.get_root()->get_children(),
                 [](auto const& a, auto const& b)
                 { return a.get_value().visits < b.get_value().visits; } );
-        if (itr == root->get_children().end())
+        if (itr == allocator.get_root()->get_children().end())
             throw std::runtime_error( "no move choosen" );
 
-        auto new_root = &*itr;
-        root->get_children().erase( itr );
-        root.reset( new_root );
-
-        return root->get_value().move;
+        allocator.rebase( *itr);
+        return allocator.get_root()->get_value().move;
     }
 
     void apply_opponent_move( MoveT const& move ) override
     {
-        auto itr =
-            std::ranges::find_if(
-                root->get_children(),
-                [move](auto const& node)
-                { return node.get_value().move == move; } );
-        Node< detail::Value< MoveT, StateT >>* new_root = nullptr;
+        auto& root = *allocator.get_root();
+        auto itr = std::ranges::find_if(
+            root.get_children(),
+            [move](auto const& node)
+            { return node.get_value().move == move; } );
+        node_type& new_root = (itr == root.get_children().end())
+            ? allocator.allocate( value_type( 
+                root.get_value().game.apply( move ), move))
+            : *itr;
 
-        if (itr == root->get_children().end())
-            new_root = new (this->allocator.allocate(1))
-                   Node< detail::Value< MoveT, StateT >>(
-                        detail::Value< MoveT, StateT >(
-                            root->get_value().game.apply( move ), move),
-                        this->allocator );
-        else
-        {
-            new_root = &*itr;
-            root->get_children().erase( itr );
-        }
-
-        root.reset( new_root );
+        allocator.rebase( new_root );
     }
-
-    // debug interface ->
-    Node< detail::Value< MoveT, StateT >> const& root_node() const { return *root; }
-    // <- debug interface
+    
+    node_type& root_node() const { return *allocator.get_root(); }
 private:
     std::mt19937 g;
     std::vector< MoveT > move_stack;
     NodeAllocator< MoveT, StateT >& allocator;
     size_t playout_count = 0;
 
-    NodePtr< detail::Value< MoveT, StateT > > root;
-    double exploration;
+    float exploration;
     size_t simulations;
 };
 

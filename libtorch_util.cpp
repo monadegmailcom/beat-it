@@ -132,6 +132,8 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
         sp_config, "parallel_simulations", 10);
     max_batch_size = get_value_with_default<size_t>(
         sp_config, "max_batch_size", 100);
+    nodes_per_block = get_value_with_default< size_t >(
+        sp_config, "nodes_per_block", 50*simulations );
 }
 
 } // namespace libtorch

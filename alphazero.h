@@ -10,7 +10,8 @@
 #include <semaphore>
 #include <atomic>
 #include <source_location>
-#include <tuple>
+#include <ranges>
+#include <algorithm>
 
 namespace alphazero
 {
@@ -18,6 +19,9 @@ namespace alphazero
 template< typename MoveT, typename StateT >
 struct Value
 {
+    explicit Value( Game< MoveT, StateT > game ) 
+        : game( std::move(game)), move( MoveT()),
+          game_result( this->game.result()) {}
     Value( Game< MoveT, StateT > game, MoveT const& move, 
            Node< Value >* parent )
     : game( std::move(game) ), move( move ), 
@@ -34,7 +38,7 @@ struct Value
     const MoveT move; // the previous move resulting in this game
     const GameResult game_result; // the cached game result
 
-    Node< Value >* parent;
+    Node< Value >* parent = nullptr;
 
     std::atomic< size_t > visits = 0;
     // policy probabilities of choosing this move from the parent's node
@@ -44,9 +48,6 @@ struct Value
 };
 
 float game_result_2_score( GameResult, PlayerIndex );
-
-template< typename MoveT, typename StateT >
-using NodeAllocator = ::NodeAllocator< Value< MoveT, StateT > >;
 
 namespace params {
 
@@ -107,22 +108,20 @@ public:
     using inference_service_type = inference::Service< G, P >;
     using request_type = inference::Request< G, P >;
     using response_type = inference::Response< P >;
+    using node_allocator_type = NodeAllocator< value_type >;
 
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
 
     Player(
-        Game< MoveT, StateT > game,
-        params::Ucb const& ucb,
+        Game< MoveT, StateT > game, params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
-        NodeAllocator< MoveT, StateT >& allocator,
+        node_allocator_type& node_allocator, 
         inference_service_type& inference_service )
-    : root( new (allocator.allocate(1)) node_type(
-                value_type( std::move(game), MoveT(), nullptr ), allocator ),
-            NodeDeleter<value_type>{allocator} ),
-      ucb_params( ucb ), game_play( game_play ), g( seed ),
-      allocator( allocator ), thread_pool( game_play.parallel_simulations ),
+    : node_allocator( node_allocator ), ucb_params( ucb ), 
+      game_play( game_play ), g( seed ), 
+      thread_pool( game_play.parallel_simulations ),
       inference_service( inference_service ),
       response_queue( inference_service.get_max_batch_size()) 
     {
@@ -130,6 +129,8 @@ public:
             throw std::source_location::current();
         if (!game_play.parallel_simulations)
             throw std::source_location::current();
+        node_allocator.rebase( 
+            node_allocator.allocate( value_type( std::move( game ))));
 
         for (auto& thread : thread_pool)
             thread = std::jthread( &Player::worker, this );
@@ -146,33 +147,32 @@ public:
     // require: single-threaded access.
     MoveT choose_move() override
     {
-        advance_root(choose_move_iterator());
-        return root->get_value().move;
+        auto& node = run_simulations();
+        node_allocator.rebase( node );
+        return node.get_value().move;
     }
 
-    NodePtr< value_type > const& get_root() const { return root; }
+    node_type& get_root() const { return *node_allocator.get_root(); }
 
     // require: move is valid.
     void apply_opponent_move( MoveT const& move ) override
     {
+        auto& root = *node_allocator.get_root();
         auto itr = std::ranges::find_if(
-            root->get_children(),
+            root.get_children(),
             [move](auto const& node)
                 { return node.get_value().move == move; } );
-        if (itr == root->get_children().end())
-            root.reset( 
-                new (allocator.allocate(1))
-                node_type( value_type(
-                    root->get_value().game.apply( move ), move, nullptr ),
-                allocator ));
-        else
-            advance_root(itr);
+        node_type& new_root = (itr == root.get_children().end())
+            ? node_allocator.allocate( value_type(
+                root.get_value().game.apply( move ), move, nullptr ))
+            : *itr; 
+        node_allocator.rebase( new_root );
     }
 protected:
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const& ) const = 0;
     virtual std::array< float, G > serialize_state(
-        Game< MoveT, StateT > const& ) const = 0;
+        game_type const& ) const = 0;
 private:
     friend class training::SelfPlay< MoveT, StateT, G, P >;
 
@@ -182,13 +182,11 @@ private:
         auto& value = node.get_value();
         for (MoveT const& move : value.game)
         {
-            auto child = new
-                (allocator.allocate(1))
-                Node( value_type( value.game.apply( move ), move, &node ), 
-                allocator );
+            auto& child = node_allocator.allocate( 
+                value_type( value.game.apply( move ), move, &node ));
 
             std::unique_lock lock(node.get_mutex());
-            node.get_children().push_front( *child );
+            node.get_children().push_front( child );
         }
     }
 
@@ -224,7 +222,8 @@ private:
     }
 
     // require: single-threaded access.
-    auto choose_move_iterator()
+    // return move to choose.
+    node_type& run_simulations()
     {        
         // wake up waiting worker threads.
         remaining_simulations.fetch_add( 
@@ -245,17 +244,6 @@ private:
             return choose_opening_move();
         else
             return choose_best_move();
-    }
-
-    // Advances the root of the MCTS tree to the specified child node.
-    // require: single-threaded access.
-    void advance_root(auto itr)
-    {
-        node_type* new_root = &*itr;
-        root->get_children().erase(itr);
-        root.reset( new_root );
-        // set new root's parent to null.
-        root->get_value().parent = nullptr;
     }
 
     // upper confidence bound
@@ -286,11 +274,11 @@ private:
     // Node< ValueT > member boost::intrusive::list< Node > children has
     // incomplete type
     // require: root node is expanded
-    auto choose_best_move()
+    node_type& choose_best_move()
     {
         // choose child with most visits
-        return std::ranges::max_element( 
-            root->get_children(),
+        return *std::ranges::max_element( 
+            node_allocator.get_root()->get_children(),
             [](auto const& a, auto const& b)
             { 
                 return a.get_value().visits.load( std::memory_order_relaxed ) 
@@ -360,7 +348,7 @@ private:
 
             if (remaining_simulations.load( std::memory_order_relaxed) != 0)
                 // then simulate. 
-                simulation( *root );
+                simulation( *node_allocator.get_root());
             else
             {
                 // blocking wait if all simulations are finished.
@@ -378,9 +366,9 @@ private:
     }
 
     // require: root node is expanded
-    auto choose_opening_move()
+    node_type& choose_opening_move()
     {
-        auto& children = root->get_children();
+        auto& children = node_allocator.get_root()->get_children();
 
         // sample from children in opening phase by visit distribution
         // so we are more versatile in the opening
@@ -392,7 +380,7 @@ private:
         if (!total_visits)
         {
             std::uniform_int_distribution< size_t > dist(0, std::size( children ) - 1);
-            return std::next( children.begin(), dist( g ));
+            return *std::next( children.begin(), dist( g ));
         }
 
         std::uniform_int_distribution< size_t > dist(0, total_visits - 1);
@@ -403,11 +391,11 @@ private:
             child_visits = itr->get_value().visits.load(
                 std::memory_order_relaxed);
             if (r < child_visits)
-                return itr;
+                return *itr;
             r -= child_visits;
         }
 
-        return children.begin(); // Fallback, should ideally not be reached
+        throw std::source_location::current(); 
     }
 
     // require: node has children
@@ -426,12 +414,11 @@ private:
             });
     }
 
-    NodePtr< value_type > root;
+    NodeAllocator< value_type >& node_allocator;
     const params::Ucb ucb_params;
     const params::GamePlay game_play;
     size_t move_count = 0;
     std::mt19937 g;
-    NodeAllocator< MoveT, StateT >& allocator;
     std::vector< std::jthread > thread_pool;
     std::atomic< size_t > remaining_simulations {0};
     std::condition_variable simulations_cv;
@@ -476,23 +463,23 @@ public:
     {
         const size_t prev_size = positions.size();
         GameResult game_result;
-        for (game_result = player.get_root()->get_value().game_result;
+        for (game_result = player.get_root().get_value().game_result;
              game_result == GameResult::Undecided;
-             game_result = player.get_root()->get_value().game_result)
+             game_result = player.get_root().get_value().game_result)
         {
             // expand root node on first visit, for dirichlet noise addition
             //  the root node needs to be expanded
-            if (auto& root = *player.get_root(); !root.get_value().visits)
+            if (auto& root = player.get_root(); !root.get_value().visits)
                 player.expand( root );
 
             add_dirichlet_noise();
 
-            auto itr = player.choose_move_iterator();
+            auto& node = player.run_simulations();
             append_training_data();
             root_node_entropy_stat.update(
-                shannon_entropy( *player.get_root() ));
+                shannon_entropy( player.get_root() ));
 
-            player.advance_root(itr);
+            player.node_allocator.rebase( node );
         }
 
         // set target value to game result for all new positions
@@ -505,7 +492,7 @@ protected:
     // require: root node is expanded
     void add_dirichlet_noise()
     {
-        auto& root = *player.get_root();
+        auto& root = player.get_root();
 
         // add noise for root node
         for (auto& child : root.get_children())
@@ -523,7 +510,7 @@ protected:
     {
         positions.emplace_back();
         auto& position = positions.back();
-        auto& root = *player.get_root();
+        auto& root = player.get_root();
         auto& value = root.get_value();
 
         position.current_player = value.game.current_player_index();

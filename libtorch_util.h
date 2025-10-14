@@ -42,6 +42,7 @@ struct Hyperparameters
     size_t parallel_games = 0;
     size_t parallel_simulations = 0;
     size_t max_batch_size = 0;
+    size_t nodes_per_block = 0;
 };
 
 // promise: model is set to eval mode

@@ -319,10 +319,8 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
             cout << "score: " << p->score( game ) << endl;
         else if (auto mp = dynamic_cast< const ttt::montecarlo::Player* >( 
                     &player ))
-            cout << "point ratio: "
-                 << mp->root_node().get_value().points / static_cast< double >(
-                        mp->root_node().get_value().visits )
-                 << endl;
+            cout << "point ratio: " << mp->root_node().get_value().visits 
+                << endl;
     }
 };
 
@@ -505,38 +503,34 @@ void montecarlo_node()
     cout << source_location::current().function_name() << endl;
 
     vector< ttt::Move > move_stack;
-    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::NodeAllocator allocator( 20000 );
     ttt::Game game( Player1, ttt::empty_state );
 
-    using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
+    using Value = montecarlo::Value< ttt::Move, ttt::State >;
 
-    auto* node = new (allocator.allocate(1)) // NOSONAR
-        Node< Value >( Value( game, ttt::no_move ), allocator );
-    assert (node->get_children().size() == 0);
-    assert (node_count( *node) == 1);
+    auto& node = allocator.allocate( Value( game, ttt::no_move ));
+    assert (node.get_children().size() == 0);
+    assert (node_count( node) == 1);
 
     for (auto const& move : game)
-        node->get_children().push_front(
-            *(new (allocator.allocate(1)) Node< Value >( // NOSONAR
-                Value( game.apply( move ), move), allocator )));
+        node.get_children().push_front(
+            allocator.allocate( Value( game.apply( move ), move)));
 
-    assert (node->get_children().size() == 9);
-    assert (node_count( *node) == 10);
-    node->~Node(); // NOSONAR
-    allocator.deallocate( node, 1); // NOSONAR
+    assert (node.get_children().size() == 9);
+    assert (node_count( node) == 10);
 }
 
 void montecarlo_player()
 {
     cout << source_location::current().function_name() << endl;
 
-    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::NodeAllocator allocator( 20000 );
     ttt::Game game( Player1, ttt::empty_state );
     ttt::montecarlo::Player player( game, 1.0, 2, seed, allocator );
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
-    using Value = montecarlo::detail::Value< ttt::Move, ttt::State >;
+    using Value = montecarlo::Value< ttt::Move, ttt::State >;
 
     Node< Value > const& root = player.root_node();
     assert (root.get_value().move == ttt::Move( 4 ));
@@ -562,7 +556,7 @@ void montecarlo_ttt_human()
 
     ttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
-    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::NodeAllocator allocator( 20000 );
     ttt::montecarlo::Player player( game, 0.4, 100, seed, allocator );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player );
@@ -587,7 +581,7 @@ void montecarlo_ttt_match()
         return;
     }
 
-    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::NodeAllocator allocator( 20000 );
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -629,7 +623,7 @@ void montecarlo_minimax_ttt_match()
         return;
     }
 
-    ttt::montecarlo::NodeAllocator allocator;
+    ttt::montecarlo::NodeAllocator allocator( 20000 );
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -669,7 +663,7 @@ void montecarlo_minimax_uttt_match()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    uttt::montecarlo::NodeAllocator allocator;
+    uttt::montecarlo::NodeAllocator allocator( 20000 );
     const double exploration = 0.4;
     size_t simulations = 3200;
 
@@ -722,7 +716,7 @@ void uttt_match_mm_vs_tree_mm()
         return;
     }
 
-    uttt::minimax::tree::NodeAllocator allocator;
+    uttt::minimax::tree::NodeAllocator allocator( 20000 );
 
     size_t fst_depth = 2; 
     size_t snd_depth = 2; 
@@ -771,7 +765,7 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     size_t runs_per_thread, size_t parallel_simulations )
 {
     auto g = mt19937( random_device{}());
-    ttt::alphazero::NodeAllocator node_allocator;
+    ttt::alphazero::NodeAllocator node_allocator( 20000 );
     vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stat;
@@ -842,7 +836,7 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     size_t runs_per_thread, unsigned local_seed )
 {
     auto g = mt19937( local_seed );
-    uttt::alphazero::NodeAllocator node_allocator;
+    uttt::alphazero::NodeAllocator node_allocator( 20000 );
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stats;
@@ -1032,7 +1026,7 @@ void uttt_alphazero_nn_vs_minimax()
         std::move( model ), device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
-    uttt::alphazero::NodeAllocator allocator;
+    uttt::alphazero::NodeAllocator allocator( 20000 );
 
     const size_t rounds = 20;
     uttt::PlayerFactory factory1 =
@@ -1104,7 +1098,7 @@ void uttt_alphazero_nn_vs_alphazero()
         std::move( model2 ), device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
-    uttt::alphazero::NodeAllocator allocator;
+    uttt::alphazero::NodeAllocator allocator( 20000 );
 
     const size_t rounds = 10;
     const size_t parallel_simulations = 10;

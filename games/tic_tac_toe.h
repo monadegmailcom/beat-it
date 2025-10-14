@@ -77,16 +77,19 @@ public:
 namespace montecarlo
 {
 
+using Value = ::montecarlo::Value< Move, State >;
+using Node = ::Node< Value >;
 using Player = ::montecarlo::Player< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
-using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
+using NodeAllocator = ::NodeAllocator< Value >;
 
 } // namespace montecarlo
 
 namespace alphazero {
 
-using Node = ::Node< ::alphazero::Value< Move, State > >;
-using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
+using Value = ::alphazero::Value< Move, State >;
+using Node = ::Node< Value >;
+using NodeAllocator = ::NodeAllocator< Value >;
 
 const size_t G = 3 * 9;
 const size_t P = 9;

@@ -84,8 +84,9 @@ using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 namespace alphazero {
 
-using Node = ::Node< ::alphazero::Value< Move, State > >;
-using NodeAllocator = ::alphazero::NodeAllocator< Move, State >;
+using Value = ::alphazero::Value< Move, State >;
+using Node = ::Node< Value >;
+using NodeAllocator = ::NodeAllocator< Value >;
 
 const size_t G = 4 * 81;
 const size_t P = 81;

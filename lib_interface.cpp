@@ -20,7 +20,7 @@ struct Session
     using state_type = game_type::state_type;
     using value_type = PlayerT::value_type;
     using node_type = Node< value_type >;
-    using node_allocator_type = node_type::allocator_type;
+    using node_allocator_type = NodeAllocator< value_type >;
     using inference_service_type = 
         libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;
     using request_type = inference_service_type::request_type;
@@ -99,7 +99,7 @@ struct Session
 
         // thread local memory allocator and position buffer avoid 
         // synchronization delays
-        node_allocator_type node_allocator;
+        node_allocator_type node_allocator( hp.nodes_per_block );
         vector< position_type > positions;
 
         // start with player 1, toggle for each self play run
