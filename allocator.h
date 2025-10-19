@@ -13,6 +13,12 @@ public:
     ArenaAllocator( ArenaAllocator const& ) = delete;
     ArenaAllocator& operator=( ArenaAllocator const& ) = delete;
 
+    template< typename T >
+    void* allocate( size_t n = 1 ) // NOSONAR
+    {
+        return allocate( n * sizeof( T ), alignof( T ));
+    }
+
     void* allocate( size_t size, size_t alignment );
     void deallocator( void*, size_t ) const { /*do nothing*/ } // NOSONAR
     // not thread safe.
@@ -24,6 +30,28 @@ private:
     std::atomic< size_t > current_offset {0};
 };
 
+class GenerationalArenaAllocator
+{
+public:
+    explicit GenerationalArenaAllocator( size_t block_size );
+    GenerationalArenaAllocator( GenerationalArenaAllocator const& ) = delete;
+    GenerationalArenaAllocator& operator=( GenerationalArenaAllocator const& ) 
+        = delete;
+
+    template< typename T >
+    void* allocate( size_t n = 1 ) // NOSONAR
+    {
+        return current_allocator->allocate< T >( n );
+    }
+
+    void reset();
+private:
+    ArenaAllocator fst_arena_allocator;
+    ArenaAllocator snd_arena_allocator;
+    ArenaAllocator* current_allocator = &fst_arena_allocator;
+    ArenaAllocator* previous_allocator = &snd_arena_allocator;
+};
+
 template< typename T >
 class TypedAllocator
 {
@@ -33,8 +61,7 @@ public:
 
     T* allocate( size_t n = 1 )
     {
-        void* memory = arena_allocator.allocate( 
-            n * sizeof( T ), alignof( T ));
+        void* memory = arena_allocator.allocate( n * sizeof( T ), alignof( T ));
         return static_cast< T* >( memory );
     }
 

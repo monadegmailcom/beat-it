@@ -130,7 +130,7 @@ namespace tree {
 
 Player::Player(
     Game const& game, double weight, unsigned depth, unsigned seed,
-        NodeAllocator& allocator )
+        GenerationalArenaAllocator& allocator )
     : ::minimax::tree::Player< Move, State >( game, depth, seed, allocator ),
       weight( weight ) {}
 

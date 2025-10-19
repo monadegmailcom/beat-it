@@ -14,9 +14,9 @@ struct Value
     : game( game ), move( move ), game_result( game.result()),
       next_move_itr(this->game.begin()) {}
 
-    Value( Value&& other ) noexcept
-        : game(std::move(other.game)), // Game is truly moved
-          move(std::move(other.move)),
+    Value( Value const& other ) noexcept
+        : game(other.game), 
+          move(other.move),
           game_result(other.game_result),
           next_move_itr(this->game.begin()), // Iterator bound to the newly moved-to this->game
           points(other.points),
@@ -25,6 +25,7 @@ struct Value
     Game< MoveT, StateT > game;
     MoveT move; // the previous move resulting in this game
     const GameResult game_result; // the cached game result
+
     // iterator to next valid move not already added as a child node
     typename Game< MoveT, StateT >::MoveItr next_move_itr;
     float points = 0.0; // 1 for win, 0.5 for draw, 0 for loss
@@ -32,24 +33,21 @@ struct Value
 };
 
 template< typename MoveT, typename StateT >
-using NodeAllocator = ::NodeAllocator< Value< MoveT, StateT > >;
-
-template< typename MoveT, typename StateT >
 class Player : public ::Player< MoveT >
 {
 public:
+    using game_type = Game< MoveT, StateT >;
     using value_type = Value< MoveT, StateT >;
     using node_type = Node< value_type >;
+    using allocator_type = GenerationalArenaAllocator;
 
     Player( 
         Game< MoveT, StateT > const& game, double exploration,
         size_t simulations, unsigned seed,
-        NodeAllocator< MoveT, StateT >& allocator )
+        allocator_type& allocator )
     : g( seed ), allocator( allocator), exploration( exploration ), 
-      simulations( simulations )
-    {
-        allocator.rebase( allocator.allocate( value_type( game, MoveT())));
-    }
+      simulations( simulations ), root( build_node( game, MoveT()))
+    {}
 
     double uct( value_type const& value, size_t parent_visits )
     {
@@ -87,8 +85,7 @@ public:
         if (value.next_move_itr != value.game.end())
         {
             const MoveT move = *value.next_move_itr++;
-            auto& child = allocator.allocate(
-                value_type( value.game.apply( move ), move ));
+            auto& child = *build_node( value.game.apply( move ), move );
 
             node.get_children().push_front( child );
             return child;
@@ -138,44 +135,61 @@ public:
     MoveT choose_move() override
     {
         for (size_t i = simulations; i != 0; --i)
-            simulation( *allocator.get_root());
+            simulation( *root );
 
         // remove child with most visits
         auto itr =
-            std::ranges::max_element( allocator.get_root()->get_children(),
+            std::ranges::max_element( root->get_children(),
                 [](auto const& a, auto const& b)
                 { return a.get_value().visits < b.get_value().visits; } );
-        if (itr == allocator.get_root()->get_children().end())
+        if (itr == root->get_children().end())
             throw std::runtime_error( "no move choosen" );
 
-        allocator.rebase( *itr);
-        return allocator.get_root()->get_value().move;
+        allocator.reset(); 
+        root = &copy_tree( *itr );
+        return root->get_value().move;
     }
 
     void apply_opponent_move( MoveT const& move ) override
     {
-        auto& root = *allocator.get_root();
         auto itr = std::ranges::find_if(
-            root.get_children(),
+            root->get_children(),
             [move](auto const& node)
             { return node.get_value().move == move; } );
-        node_type& new_root = (itr == root.get_children().end())
-            ? allocator.allocate( value_type( 
-                root.get_value().game.apply( move ), move))
+        node_type& new_root = (itr == root->get_children().end())
+            ? *build_node( root->get_value().game.apply( move ), move )
             : *itr;
 
-        allocator.rebase( new_root );
+        allocator.reset();
+        root = &copy_tree( new_root );
     }
     
-    node_type& root_node() const { return *allocator.get_root(); }
+    node_type& root_node() const { return *root; }
 private:
+    node_type* build_node( game_type const& game, MoveT const& move )
+    {
+        return new (allocator.allocate< node_type >()) 
+            node_type( value_type( game, move ));
+    }
+
+    node_type& copy_tree( node_type const& node )
+    {
+        auto* new_node = new (allocator.allocate< node_type >()) 
+            node_type( node.get_value());
+
+        for (node_type const& child : node.get_children())
+            new_node->get_children().push_back( copy_tree( child ));
+        return *new_node;
+    }
+
     std::mt19937 g;
     std::vector< MoveT > move_stack;
-    NodeAllocator< MoveT, StateT >& allocator;
+    allocator_type& allocator;
     size_t playout_count = 0;
 
     float exploration;
     size_t simulations;
+    node_type* root;
 };
 
 } // namespace montecarlo

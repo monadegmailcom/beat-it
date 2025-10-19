@@ -20,7 +20,7 @@ struct Session
     using state_type = game_type::state_type;
     using value_type = PlayerT::value_type;
     using node_type = Node< value_type >;
-    using node_allocator_type = NodeAllocator< value_type >;
+    using allocator_type = GenerationalArenaAllocator;
     using inference_service_type = 
         libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;
     using request_type = inference_service_type::request_type;
@@ -99,7 +99,7 @@ struct Session
 
         // thread local memory allocator and position buffer avoid 
         // synchronization delays
-        node_allocator_type node_allocator( hp.nodes_per_block );
+        allocator_type allocator( hp.nodes_per_block * sizeof( node_type ));
         vector< position_type > positions;
 
         // start with player 1, toggle for each self play run
@@ -115,7 +115,7 @@ struct Session
 
             auto player = make_unique< player_type >(
                 game_type( player_index, initial_state ), ucb_params, 
-                gameplay_params, g(), node_allocator, inference_service );
+                gameplay_params, g(), allocator, inference_service );
 
             positions.clear();
             auto selfplay = make_unique< selfplay_type >(

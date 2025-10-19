@@ -61,8 +61,6 @@ public:
 
 namespace tree {
 
-using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
-
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
@@ -81,7 +79,6 @@ using Value = ::montecarlo::Value< Move, State >;
 using Node = ::Node< Value >;
 using Player = ::montecarlo::Player< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
-using NodeAllocator = ::NodeAllocator< Value >;
 
 } // namespace montecarlo
 
@@ -89,7 +86,6 @@ namespace alphazero {
 
 using Value = ::alphazero::Value< Move, State >;
 using Node = ::Node< Value >;
-using NodeAllocator = ::NodeAllocator< Value >;
 
 const size_t G = 3 * 9;
 const size_t P = 9;

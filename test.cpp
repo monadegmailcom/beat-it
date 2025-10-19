@@ -503,36 +503,38 @@ void montecarlo_node()
     cout << source_location::current().function_name() << endl;
 
     vector< ttt::Move > move_stack;
-    ttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = ttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
     ttt::Game game( Player1, ttt::empty_state );
 
     using Value = montecarlo::Value< ttt::Move, ttt::State >;
 
-    auto& node = allocator.allocate( Value( game, ttt::no_move ));
-    assert (node.get_children().size() == 0);
-    assert (node_count( node) == 1);
+    auto* node = new (allocator.allocate< Node >()) 
+        Node( Value( game, ttt::no_move ));
+    assert (node->get_children().size() == 0);
+    assert (node_count( *node) == 1);
 
     for (auto const& move : game)
-        node.get_children().push_front(
-            allocator.allocate( Value( game.apply( move ), move)));
+        node->get_children().push_front(
+            *(new (allocator.allocate< Node >()) 
+                Node( Value( game.apply( move ), move))));
 
-    assert (node.get_children().size() == 9);
-    assert (node_count( node) == 10);
+    assert (node->get_children().size() == 9);
+    assert (node_count( *node) == 10);
 }
 
 void montecarlo_player()
 {
     cout << source_location::current().function_name() << endl;
 
-    ttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = ttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
     ttt::Game game( Player1, ttt::empty_state );
     ttt::montecarlo::Player player( game, 1.0, 2, seed, allocator );
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
-    using Value = montecarlo::Value< ttt::Move, ttt::State >;
-
-    Node< Value > const& root = player.root_node();
+    Node const& root = player.root_node();
     assert (root.get_value().move == ttt::Move( 4 ));
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves( game.begin(), game.end() );
@@ -556,7 +558,8 @@ void montecarlo_ttt_human()
 
     ttt::console::HumanPlayer human( game );
     chrono::microseconds human_duration;
-    ttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = ttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
     ttt::montecarlo::Player player( game, 0.4, 100, seed, allocator );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player );
@@ -581,7 +584,8 @@ void montecarlo_ttt_match()
         return;
     }
 
-    ttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = ttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -623,7 +627,8 @@ void montecarlo_minimax_ttt_match()
         return;
     }
 
-    ttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = ttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
 
     ttt::Game game( Player1, ttt::empty_state );
 
@@ -663,7 +668,8 @@ void montecarlo_minimax_uttt_match()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    uttt::montecarlo::NodeAllocator allocator( 20000 );
+    using Node = uttt::montecarlo::Node;
+    GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
     const double exploration = 0.4;
     size_t simulations = 3200;
 
@@ -716,7 +722,8 @@ void uttt_match_mm_vs_tree_mm()
         return;
     }
 
-    uttt::minimax::tree::NodeAllocator allocator( 20000 );
+    using Node = uttt::minimax::tree::Node;
+    GenerationalArenaAllocator allocator( 50 * 100 * sizeof( Node ));
 
     size_t fst_depth = 2; 
     size_t snd_depth = 2; 
@@ -765,7 +772,8 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     size_t runs_per_thread, size_t parallel_simulations )
 {
     auto g = mt19937( random_device{}());
-    ttt::alphazero::NodeAllocator node_allocator( 20000 );
+    GenerationalArenaAllocator allocator( 
+        50 * hp.simulations * sizeof( ttt::alphazero::Node ));
     vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stat;
@@ -781,7 +789,7 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
         };
         ttt::alphazero::Player player(
             ttt::Game( player_index, ttt::empty_state ), ucb_params,
-            gameplay_params, seed, node_allocator, inference_manager );
+            gameplay_params, seed, allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
             root_node_entropy_stat );
@@ -836,7 +844,8 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
     size_t runs_per_thread, unsigned local_seed )
 {
     auto g = mt19937( local_seed );
-    uttt::alphazero::NodeAllocator node_allocator( 20000 );
+    GenerationalArenaAllocator allocator( 
+        50 * hp.simulations * sizeof( uttt::alphazero::Node ));
     vector< uttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stats;
@@ -851,7 +860,7 @@ vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
             .parallel_simulations = parallel_simulations };
         uttt::alphazero::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
-            gameplay_params, g(), node_allocator, inference_service );
+            gameplay_params, g(), allocator, inference_service );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
             root_node_entropy_stats );
@@ -1026,7 +1035,8 @@ void uttt_alphazero_nn_vs_minimax()
         std::move( model ), device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
-    uttt::alphazero::NodeAllocator allocator( 20000 );
+    GenerationalArenaAllocator allocator( 
+        50 * hp.simulations * sizeof( uttt::alphazero::Node ));
 
     const size_t rounds = 20;
     uttt::PlayerFactory factory1 =
@@ -1098,7 +1108,8 @@ void uttt_alphazero_nn_vs_alphazero()
         std::move( model2 ), device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
-    uttt::alphazero::NodeAllocator allocator( 20000 );
+    GenerationalArenaAllocator allocator( 
+        50 * hp.simulations * sizeof( uttt::alphazero::Node ));
 
     const size_t rounds = 10;
     const size_t parallel_simulations = 10;

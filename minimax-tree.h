@@ -14,9 +14,9 @@ struct Value
     Value( Game< MoveT, StateT > const& game, MoveT const& move )
     : game( game ), move( move ), game_result( game.result()) {}
 
-    Value( Value&& other ) noexcept
-        : game(std::move(other.game)), // Game is truly moved
-          move(std::move(other.move)),
+    Value( Value const& other ) noexcept
+        : game(other.game), 
+          move(other.move),
           game_result(other.game_result)
     {}
 
@@ -27,44 +27,60 @@ struct Value
 };
 
 template< typename MoveT, typename StateT >
-using NodeAllocator = ::NodeAllocator< Value< MoveT, StateT > >;
-
-template< typename MoveT, typename StateT >
 class Player : public ::Player< MoveT >
 {
 public:
+    using game_type = Game< MoveT, StateT >;
     using value_type = Value< MoveT, StateT >;
     using node_type = Node< value_type >; 
+    using allocator_type = GenerationalArenaAllocator;
+
     Player( Game< MoveT, StateT > const& game, unsigned max_depth, unsigned seed,
-        NodeAllocator< MoveT, StateT >& allocator )
-    : max_depth( max_depth ), g( seed ), allocator( allocator )
-    {
-        allocator.rebase( allocator.allocate( value_type( game, MoveT())));
-    }
+        allocator_type& allocator )
+    : max_depth( max_depth ), g( seed ), allocator( allocator ),
+      root( build_node( game, MoveT()))
+    {}
 
     virtual double score( Game< MoveT, StateT > const&) const
     { return 0; };
 private:
     unsigned max_depth;
     std::mt19937 g;
-    NodeAllocator< MoveT, StateT >& allocator;
+    allocator_type& allocator;
     std::vector< MoveT > move_stack;
     size_t eval_calls = 0;
+    node_type* root;
+
+    node_type* build_node( game_type const& game, MoveT const& move )
+    {
+        return new (allocator.allocate< node_type >()) 
+            node_type( value_type( game, move ));
+    }
+
+    node_type& copy_tree( node_type const& node )
+    {
+        auto* new_node = new (allocator.allocate< node_type >()) 
+            node_type( node.get_value());
+
+        for (node_type const& child : node.get_children())
+            new_node->get_children().push_back( copy_tree( child ));
+        return *new_node;
+    }
 
     void apply_opponent_move( MoveT const& move ) override
     {
-        auto root = allocator.get_root();
         auto itr =
             std::ranges::find_if(
                 root->get_children(),
                 [move](auto const& node)
                 { return node.get_value().move == move; } );
         node_type& new_root = (itr == root->get_children().end())
-            ? allocator.allocate( value_type(
-                   root->get_value().game.apply( move ), move))
+            ? *(new (allocator.allocate< node_type >()) node_type( value_type(
+                   root->get_value().game.apply( move ), move)))
             : *itr;
 
-        allocator.rebase( new_root );
+        allocator.reset();
+        root = &copy_tree( new_root );
     }
 
     double eval( node_type& node, unsigned depth, double alpha, double beta )
@@ -112,8 +128,8 @@ private:
 
             for (MoveT const& move : move_stack)
                 node.get_children().push_front( 
-                    allocator.allocate(
-                        value_type( value.game.apply( move ), move )));
+                    *(new (allocator.allocate< node_type >())
+                        node_type( value_type( value.game.apply( move ), move ))));
         }
         // evaluate child nodes recursively until pruning
         auto child_itr = node.get_children().begin();
@@ -156,8 +172,6 @@ private:
 
     MoveT choose_move() override
     {
-        auto root = allocator.get_root();
-
         if (root->get_value().game.result() != GameResult::Undecided)
             throw std::source_location::current();
 
@@ -171,7 +185,8 @@ private:
         if (root->get_children().empty())
             throw std::source_location::current();
 
-        allocator.rebase( *root->get_children().begin());
+        allocator.reset(); 
+        root = &copy_tree( *root->get_children().begin());
 
         return root->get_value().move;
     }

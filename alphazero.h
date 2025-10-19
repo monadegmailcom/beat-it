@@ -4,49 +4,82 @@
 #include "game.h"
 #include "node.h"
 #include "inference.h"
-
+#include "exception.h"
+#include <cassert>
 #include <random>
 #include <thread>
 #include <semaphore>
+#include <condition_variable>
 #include <atomic>
 #include <source_location>
 #include <ranges>
 #include <algorithm>
+#include <iostream>
+#include <system_error>
 
 namespace alphazero
 {
 
+// additional payload for undecided leaf nodes. for inner 
+// game nodes or decided games we do not need the additional payload. for 
+// such nodes the additional playload will not be copied on node allocator 
+// swapping.
+template< typename MoveT, typename StateT >
+struct AdditionalPayload
+{
+    const Game< MoveT, StateT > game;
+    std::shared_mutex node_mutex;
+};
+
 template< typename MoveT, typename StateT >
 struct Value
 {
-    explicit Value( Game< MoveT, StateT > game ) 
-        : game( std::move(game)), move( MoveT()),
-          game_result( this->game.result()) {}
-    Value( Game< MoveT, StateT > game, MoveT const& move, 
-           Node< Value >* parent )
-    : game( std::move(game) ), move( move ), 
-      game_result( this->game.result()), parent( parent ) {}
+    using add_payload_type = AdditionalPayload< MoveT, StateT >;
 
-    Value( Value&& value ) noexcept
-    // this is not a move, atomics are not movable.
-    : game( value.game ), move( value.move ), 
-      game_result( value.game_result ), parent( value.parent ),
-      visits( value.visits.load()), nn_policy( value.nn_policy.load()), 
-      nn_value_sum( value.nn_value_sum.load()) {}
+    Value( 
+        add_payload_type& additional_payload, MoveT const& move,
+        Node< Value >* parent ) noexcept : 
+        move( move ), game_result( additional_payload.game.result()), 
+        current_player_index( additional_payload.game.current_player_index()),
+        parent( parent ), additional_payload( &additional_payload ) {}
 
-    const Game< MoveT, StateT > game;
+    // note: additional payload is not copied!
+    Value( Value const& value ) noexcept : 
+        move( value.move ), game_result( value.game_result ), 
+        current_player_index( value.current_player_index ),
+        parent( value.parent ), visits( value.visits.load()), 
+        nn_policy( value.nn_policy.load()),
+        nn_value_sum( value.nn_value_sum.load()) {}
+
     const MoveT move; // the previous move resulting in this game
-    const GameResult game_result; // the cached game result
+    // game_result and current_player_index has be saved as attributes because
+    // additional_payload may not be present.
+    const GameResult game_result;
+    const PlayerIndex current_player_index;
+    // for backpropagation we need the parent node, may be null for root.
+    Node< Value >* const parent;
+    // additional payload for undecided leaf nodes.
+    AdditionalPayload< MoveT, StateT >* additional_payload = nullptr;
 
-    Node< Value >* parent = nullptr;
-
-    std::atomic< size_t > visits = 0;
+    // a node is expanded iff its visits count is > 0.
+    std::atomic< size_t > visits { 0 };
     // policy probabilities of choosing this move from the parent's node
-    // perspective
-    std::atomic< float > nn_policy = 0.0;
-    std::atomic< float > nn_value_sum = 0.0;
+    // perspective.
+    std::atomic< float > nn_policy { 0.0f };
+    // value from the current player's perspective.
+    std::atomic< float > nn_value_sum { 0.0f };
 };
 
+// not thread-safe.
+template< typename MoveT, typename StateT >
+bool is_fixed( Node< Value< MoveT, StateT >> const& node )
+{
+    auto const& value = node.get_value();
+    return value.game_result == GameResult::Undecided
+        && value.visits.load( std::memory_order_relaxed);
+}
+
+// the score's sign is depending on the player's perspective, thread-safe.
 float game_result_2_score( GameResult, PlayerIndex );
 
 namespace params {
@@ -59,7 +92,7 @@ struct Ucb
 
 struct GamePlay
 {
-    // simulations and opening moves may be different from model training
+    // simulations and opening moves may be different from model training.
     size_t simulations = 0;
     size_t opening_moves = 0;
     size_t parallel_simulations = 0;
@@ -67,6 +100,7 @@ struct GamePlay
 
 } // namespace params
 
+// not thread-safe. 
 template< typename ValueT >
 float shannon_entropy( Node< ValueT > const& node )
 {
@@ -83,15 +117,12 @@ float shannon_entropy( Node< ValueT > const& node )
             std::memory_order_relaxed );
         if (!visits)
             continue;
-        const float p = static_cast< float >( visits ) / visit_sum;
+        const float p = static_cast< float >( visits ) / 
+                        static_cast< float >( visit_sum );
         entropy -= p * std::logf( p );
     }
     return entropy;
 }
-
-// Atomically decrements 'atom' but only if its value is > 0.
-// Returns true if the decrement was successful, false otherwise.
-bool atomic_decrement_if_positive(std::atomic< size_t >& atom);
 
 namespace training {
 template< typename MoveT, typename StateT, size_t G, size_t P >
@@ -108,7 +139,8 @@ public:
     using inference_service_type = inference::Service< G, P >;
     using request_type = inference::Request< G, P >;
     using response_type = inference::Response< P >;
-    using node_allocator_type = NodeAllocator< value_type >;
+    using allocator_type = GenerationalArenaAllocator;
+    using additional_payload_type = AdditionalPayload< MoveT, StateT >;
 
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
@@ -117,56 +149,52 @@ public:
         Game< MoveT, StateT > game, params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
-        node_allocator_type& node_allocator, 
-        inference_service_type& inference_service )
-    : node_allocator( node_allocator ), ucb_params( ucb ), 
-      game_play( game_play ), g( seed ), 
-      thread_pool( game_play.parallel_simulations ),
-      inference_service( inference_service ),
-      response_queue( inference_service.get_max_batch_size()) 
+        allocator_type& allocator, 
+        inference_service_type& inference_service ) : 
+        allocator( allocator ), ucb_params( ucb ), game_play( game_play ), 
+        g( seed ), thread_pool( game_play.parallel_simulations ),
+        inference_service( inference_service ),
+        response_queue( inference_service.get_max_batch_size()),
+        root( build_node( game, MoveT(), nullptr ))
     {
         if (!game_play.simulations)
-            throw std::source_location::current();
+            throw beat_it::Exception("Simulations cannot be zero.");
         if (!game_play.parallel_simulations)
-            throw std::source_location::current();
-        node_allocator.rebase( 
-            node_allocator.allocate( value_type( std::move( game ))));
+            throw beat_it::Exception("Parallel simulations cannot be zero.");
 
         for (auto& thread : thread_pool)
-            thread = std::jthread( &Player::worker, this );
+            thread = std::jthread( 
+                &Player::worker, this, stop_source.get_token());
     }
 
-    virtual ~Player()
+    virtual ~Player() noexcept
     {
-        stop = true;
-        simulations_cv.notify_all();
-        for (auto& thread : thread_pool)
-            thread.join();
+        stop_source.request_stop();
     }
 
-    // require: single-threaded access.
+    // not thread safe.
     MoveT choose_move() override
     {
         auto& node = run_simulations();
-        node_allocator.rebase( node );
-        return node.get_value().move;
+        allocator.reset(); 
+        root = copy_tree( node );
+        return root.get().get_value().move;
     }
 
-    node_type& get_root() const { return *node_allocator.get_root(); }
+    node_type& get_root() const { return root; }
 
     // require: move is valid.
     void apply_opponent_move( MoveT const& move ) override
     {
-        auto& root = *node_allocator.get_root();
         auto itr = std::ranges::find_if(
-            root.get_children(),
+            root.get().get_children(),
             [move](auto const& node)
                 { return node.get_value().move == move; } );
-        node_type& new_root = (itr == root.get_children().end())
-            ? node_allocator.allocate( value_type(
-                root.get_value().game.apply( move ), move, nullptr ))
-            : *itr; 
-        node_allocator.rebase( new_root );
+        if (itr == root.get().get_children().end())
+            throw std::source_location::current();
+        node_type& new_root = *itr; 
+        allocator.reset();
+        root = copy_tree( new_root );
     }
 protected:
     // promise: return index of move in policy_vector
@@ -176,16 +204,46 @@ protected:
 private:
     friend class training::SelfPlay< MoveT, StateT, G, P >;
 
+    node_type& build_node( 
+        game_type const& game, MoveT const& move, node_type* parent)
+    {
+        auto* additional_payload = 
+            new (allocator.allocate< additional_payload_type >()) 
+                additional_payload_type { .game = game };
+        auto* node = new (allocator.allocate< node_type >()) 
+            node_type( value_type( *additional_payload, move, parent ));
+        return *node;
+    }
+
+    node_type& copy_tree( node_type const& node )
+    {
+        // copy node, note: only copy additional payload if necessary.
+        auto* new_node = new (allocator.allocate< node_type >()) 
+            node_type( node.get_value());
+        if (is_fixed( node ))
+            new_node->get_value().additional_payload = 
+                new (allocator.allocate< additional_payload_type >())
+                    additional_payload_type 
+                    { .game = node.get_value().additional_payload->game };
+
+        for (node_type const& child : node.get_children())
+            new_node->get_children().push_back( copy_tree( child ));
+        return *new_node;
+    }
+
     // require: node is not expanded and game is Undecided.
     void expand( node_type& node)
     {
         auto& value = node.get_value();
-        for (MoveT const& move : value.game)
-        {
-            auto& child = node_allocator.allocate( 
-                value_type( value.game.apply( move ), move, &node ));
+        if (!value.additional_payload)
+            throw std::source_location::current();
+        auto& game = value.additional_payload->game;
 
-            std::unique_lock lock(node.get_mutex());
+        for (MoveT const& move : game)
+        {
+            auto& child = build_node( game.apply( move ), move, &node );
+
+            std::unique_lock lock(value.additional_payload->node_mutex);
             node.get_children().push_front( child );
         }
     }
@@ -204,17 +262,19 @@ private:
         if (value.game_result != GameResult::Undecided)
             backpropagation( 
                 node, {}, game_result_2_score(
-                    value.game_result, value.game.current_player_index())); 
+                    value.game_result, value.current_player_index)); 
         else if (is_leaf_node)
         {
             expand( node );
+            if (!value.additional_payload)
+                throw std::source_location::current();
 
             // pushing a request to the inference service may block if the
             // request queue is full.
             inference_service.push( {
                 .response_queue = &response_queue,
                 .node = &node,
-                .state = serialize_state( value.game )
+                .state = serialize_state( value.additional_payload->game )
             });
         }
         else
@@ -233,10 +293,10 @@ private:
         // goto sleep until all simulations finished.
         std::unique_lock lock( simulations_mutex );
         simulations_cv.wait(
-            lock, 
+            lock, stop_source.get_token(), 
             [this]
             {
-                return stop || remaining_simulations.load( 
+                return remaining_simulations.load( 
                     std::memory_order_relaxed) == 0; 
             });
 
@@ -269,16 +329,13 @@ private:
 
         return q + c * p;
     }
-    // Apple clang version 17.0.0 (clang-1700.0.13.3) produces strange errors
-    // when i specify the return value iterator type explicitly:
-    // Node< ValueT > member boost::intrusive::list< Node > children has
-    // incomplete type
+
     // require: root node is expanded
     node_type& choose_best_move()
     {
         // choose child with most visits
         return *std::ranges::max_element( 
-            node_allocator.get_root()->get_children(),
+            root.get().get_children(),
             [](auto const& a, auto const& b)
             { 
                 return a.get_value().visits.load( std::memory_order_relaxed ) 
@@ -335,9 +392,9 @@ private:
             simulations_cv.notify_all();                   
     }
 
-    void worker()
+    void worker( std::stop_token token )
     {
-        while (!stop)
+        while (!token.stop_requested())
         {
             // first backpropagate nn responses.
             response_type response;
@@ -348,17 +405,17 @@ private:
 
             if (remaining_simulations.load( std::memory_order_relaxed) != 0)
                 // then simulate. 
-                simulation( *node_allocator.get_root());
+                simulation( root );
             else
             {
                 // blocking wait if all simulations are finished.
                 // wake up if simulations are pending again.
                 std::unique_lock lock( simulations_mutex );
                 simulations_cv.wait( 
-                    lock, 
+                    lock, token,
                     [this]
                     { 
-                        return stop || remaining_simulations.load(
+                        return remaining_simulations.load( 
                             std::memory_order_relaxed) != 0; 
                     });
             }
@@ -368,7 +425,7 @@ private:
     // require: root node is expanded
     node_type& choose_opening_move()
     {
-        auto& children = node_allocator.get_root()->get_children();
+        auto& children = root.get().get_children();
 
         // sample from children in opening phase by visit distribution
         // so we are more versatile in the opening
@@ -379,7 +436,8 @@ private:
 
         if (!total_visits)
         {
-            std::uniform_int_distribution< size_t > dist(0, std::size( children ) - 1);
+            std::uniform_int_distribution< size_t > dist(
+                0, std::size( children ) - 1);
             return *std::next( children.begin(), dist( g ));
         }
 
@@ -403,10 +461,14 @@ private:
     {
         // multiple threads are allowed to read access, but it blocks if
         // node is in expanding right now.
-        std::shared_lock lock( node.get_mutex());
+        auto& value = node.get_value();
+        if (!value.additional_payload)
+            throw std::source_location::current();
+        std::shared_lock lock( value.additional_payload->node_mutex );
         return *std::ranges::max_element(
             node.get_children(),
-            [this, parent_visits = node.get_value().visits.load()]
+            [this, parent_visits = value.visits.load( 
+                                    std::memory_order_relaxed)]
             (auto const& a, auto const& b)
             {
                 return   ucb( a.get_value(), parent_visits )
@@ -414,20 +476,21 @@ private:
             });
     }
 
-    NodeAllocator< value_type >& node_allocator;
+    allocator_type& allocator;
     const params::Ucb ucb_params;
     const params::GamePlay game_play;
     size_t move_count = 0;
     std::mt19937 g;
     std::vector< std::jthread > thread_pool;
     std::atomic< size_t > remaining_simulations {0};
-    std::condition_variable simulations_cv;
+    std::condition_variable_any simulations_cv;
     std::mutex simulations_mutex;
-    bool stop = false;
+    std::stop_source stop_source; 
     inference_service_type& inference_service;
     const float virtual_loss = 1.0; // must be positive
     std::vector< float > policy_buffer; 
     boost::lockfree::queue< response_type > response_queue;
+    std::reference_wrapper< node_type > root;
 };
 
 namespace training {
@@ -463,6 +526,10 @@ public:
     {
         const size_t prev_size = positions.size();
         GameResult game_result;
+        // we need to keep track of the actual game because it will not be
+        // copied in the next generation root node due to optimization.
+        Game< MoveT, StateT > game = 
+            player.get_root().get_value().additional_payload->game;
         for (game_result = player.get_root().get_value().game_result;
              game_result == GameResult::Undecided;
              game_result = player.get_root().get_value().game_result)
@@ -475,11 +542,15 @@ public:
             add_dirichlet_noise();
 
             auto& node = player.run_simulations();
-            append_training_data();
+            append_training_data( game );
+            // update game.
+            game = game.apply( node.get_value().move );
+
             root_node_entropy_stat.update(
                 shannon_entropy( player.get_root() ));
 
-            player.node_allocator.rebase( node );
+            player.allocator.reset();
+            player.copy_tree( node );
         }
 
         // set target value to game result for all new positions
@@ -506,17 +577,17 @@ protected:
         }
     }
 
-    void append_training_data()
+    void append_training_data( Game< MoveT, StateT > const& game )
     {
         positions.emplace_back();
         auto& position = positions.back();
         auto& root = player.get_root();
         auto& value = root.get_value();
 
-        position.current_player = value.game.current_player_index();
+        position.current_player = value.current_player_index;
 
         // append serialized game state
-        position.game_state = player.serialize_state( value.game );
+        position.game_state = player.serialize_state( game );
 
         // root visits should be the children's visits sum.
         const size_t sum_visits = root.get_value().visits.load(

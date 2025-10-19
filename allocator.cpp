@@ -61,3 +61,13 @@ void ArenaAllocator::reset()
     current_block_ptr.store( blocks.front().get(), std::memory_order_relaxed );
     current_offset.store( 0, std::memory_order_relaxed );
 }
+
+GenerationalArenaAllocator::GenerationalArenaAllocator( size_t block_size ) :
+    fst_arena_allocator( block_size ),
+    snd_arena_allocator( block_size ) {}
+
+void GenerationalArenaAllocator::reset()
+{
+    std::swap( current_allocator, previous_allocator ); 
+    current_allocator->reset();
+}

@@ -59,13 +59,14 @@ private:
 
 namespace tree {
 
-using NodeAllocator = ::minimax::tree::NodeAllocator< Move, State >;
+using Value = ::minimax::tree::Value< Move, State >;
+using Node = ::Node< Value >;
 
 class Player : public ::minimax::tree::Player< Move, State >
 {
 public:
     Player( Game const& game, double weight, unsigned depth, unsigned seed,
-        NodeAllocator& allocator );
+        allocator_type& allocator );
     double score( Game const& game ) const override;
 private:
     const double weight;
@@ -77,8 +78,9 @@ private:
 namespace montecarlo
 {
 
+using Value = ::montecarlo::Value< Move, State >;
+using Node = ::Node< Value >;
 using Player = ::montecarlo::Player< Move, State >;
-using NodeAllocator = ::montecarlo::NodeAllocator< Move, State >;
 
 } // namespace montecarlo
 
@@ -86,7 +88,6 @@ namespace alphazero {
 
 using Value = ::alphazero::Value< Move, State >;
 using Node = ::Node< Value >;
-using NodeAllocator = ::NodeAllocator< Value >;
 
 const size_t G = 4 * 81;
 const size_t P = 81;
