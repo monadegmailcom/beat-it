@@ -183,7 +183,7 @@ public:
 
     node_type& get_root() const { return root; }
 
-    // require: move is valid.
+    // require: move is valid, not thread safe.
     void apply_opponent_move( MoveT const& move ) override
     {
         auto itr = std::ranges::find_if(
@@ -204,6 +204,7 @@ protected:
 private:
     friend class training::SelfPlay< MoveT, StateT, G, P >;
 
+    // thread-safe.
     node_type& build_node( 
         game_type const& game, MoveT const& move, node_type* parent)
     {
@@ -215,12 +216,13 @@ private:
         return *node;
     }
 
+    // not thread-safe.
     node_type& copy_tree( node_type const& node )
     {
         // copy node, note: only copy additional payload if necessary.
         auto* new_node = new (allocator.allocate< node_type >()) 
             node_type( node.get_value());
-        if (is_fixed( node ))
+        if (!is_fixed( node ))
             new_node->get_value().additional_payload = 
                 new (allocator.allocate< additional_payload_type >())
                     additional_payload_type 
