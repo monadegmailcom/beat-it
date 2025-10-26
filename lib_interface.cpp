@@ -17,9 +17,10 @@ template< typename PlayerT >
 struct Session 
 {
     using game_type = PlayerT::game_type;
+    using move_type = game_type::move_type;
     using state_type = game_type::state_type;
-    using value_type = PlayerT::value_type;
-    using node_type = Node< value_type >;
+    using payload_type = PlayerT::payload_type;
+    using node_type = Node< move_type, state_type, payload_type >;
     using allocator_type = GenerationalArenaAllocator;
     using inference_service_type = 
         libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;

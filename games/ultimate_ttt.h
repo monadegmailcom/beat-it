@@ -59,8 +59,8 @@ private:
 
 namespace tree {
 
-using Value = ::minimax::tree::Value< Move, State >;
-using Node = ::Node< Value >;
+using Payload = ::minimax::tree::Payload;
+using Node = ::Node< Move, State, Payload >;
 
 class Player : public ::minimax::tree::Player< Move, State >
 {
@@ -78,16 +78,16 @@ private:
 namespace montecarlo
 {
 
-using Value = ::montecarlo::Value< Move, State >;
-using Node = ::Node< Value >;
+using Payload = ::montecarlo::Payload< Move, State >;
+using Node = ::Node< Move, State, Payload >;
 using Player = ::montecarlo::Player< Move, State >;
 
 } // namespace montecarlo
 
 namespace alphazero {
 
-using Value = ::alphazero::Value< Move, State >;
-using Node = ::Node< Value >;
+using Payload = ::alphazero::Payload< Move, State >;
+using Node = ::Node< Move, State, Payload >;
 
 const size_t G = 4 * 81;
 const size_t P = 81;

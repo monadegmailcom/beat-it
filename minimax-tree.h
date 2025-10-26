@@ -2,28 +2,21 @@
 
 #include "minimax.h"
 #include "node.h"
+#include "exception.h"
 
 #include <random>
 #include <algorithm>
+#include <atomic>
 
 namespace minimax::tree {
 
-template< typename MoveT, typename StateT >
-struct Value
+struct Payload
 {
-    Value( Game< MoveT, StateT > const& game, MoveT const& move )
-    : game( game ), move( move ), game_result( game.result()) {}
+    Payload( Payload const& payload ) 
+    : evaluation( payload.evaluation.load()) {}
 
-    Value( Value const& other ) noexcept
-        : game(other.game), 
-          move(other.move),
-          game_result(other.game_result)
-    {}
-
-    Game< MoveT, StateT > game;
-    MoveT move; // the previous move resulting in this game
-    const GameResult game_result; // the cached game result
-    double evaluation = 0.0;
+    Payload() = default;
+    std::atomic< double > evaluation { 0.0 };
 };
 
 template< typename MoveT, typename StateT >
@@ -31,15 +24,15 @@ class Player : public ::Player< MoveT >
 {
 public:
     using game_type = Game< MoveT, StateT >;
-    using value_type = Value< MoveT, StateT >;
-    using node_type = Node< value_type >; 
+    using node_type = Node< MoveT, StateT, Payload >; 
+    using pre_node_type = PreNode< MoveT, StateT, Payload >;
     using allocator_type = GenerationalArenaAllocator;
 
-    Player( Game< MoveT, StateT > const& game, unsigned max_depth, unsigned seed,
+    Player( game_type const& game, unsigned max_depth, unsigned seed,
         allocator_type& allocator )
     : max_depth( max_depth ), g( seed ), allocator( allocator ),
-      root( build_node( game, MoveT()))
-    {}
+      root( new (allocator.allocate< pre_node_type >()) 
+                PreNode( MoveT(), Payload(), game )) {}
 
     virtual double score( Game< MoveT, StateT > const&) const
     { return 0; };
@@ -57,52 +50,42 @@ private:
             node_type( value_type( game, move ));
     }
 
-    node_type& copy_tree( node_type const& node )
-    {
-        auto* new_node = new (allocator.allocate< node_type >()) 
-            node_type( node.get_value());
-
-        for (node_type const& child : node.get_children())
-            new_node->get_children().push_back( copy_tree( child ));
-        return *new_node;
-    }
-
     void apply_opponent_move( MoveT const& move ) override
     {
         auto itr =
             std::ranges::find_if(
                 root->get_children(),
                 [move](auto const& node)
-                { return node.get_value().move == move; } );
-        node_type& new_root = (itr == root->get_children().end())
-            ? *(new (allocator.allocate< node_type >()) node_type( value_type(
-                   root->get_value().game.apply( move ), move)))
-            : *itr;
+                { return node.get_move() == move; } );
+        if (itr == root->get_children().end())
+            throw beat_it::Exception( "Invalid move.");
+
+        node_type& new_root = *itr;
 
         allocator.reset();
-        root = &copy_tree( new_root );
+        root = &new_root.copy_tree( allocator );
     }
 
     double eval( node_type& node, unsigned depth, double alpha, double beta )
     {
         ++eval_calls;
-        auto& value = node.get_value();
+        pre_node_type& pre_node = static_cast< pre_node_type& >( node );
 
-    if (GameResult result = value.game_result; result == GameResult::Draw)
+        if (GameResult result = node.get_game_result(); result == GameResult::Draw)
             return 0.0;
         else if (result == GameResult::Player1Win)
             return max_value( PlayerIndex::Player1 );
         else if (result == GameResult::Player2Win)
             return max_value( PlayerIndex::Player2 );
         else if (!depth)
-            return score( value.game );
+            return score( pre_node.get_game());
 
         double best_score;
         std::function< bool (double, double) > compare;
         double* palpha;
         double const* pbeta;
         // minimizing player
-        if (value.game.current_player_index() == PlayerIndex::Player1) 
+        if (node.get_current_player_index() == PlayerIndex::Player1) 
         {
             best_score = INFINITY;
             compare = std::less< double >();
@@ -122,23 +105,25 @@ private:
         {
             move_stack.clear();
             GameState< MoveT, StateT >::get_valid_moves(
-                move_stack, value.game.current_player_index(), 
-                value.game.get_state());
+                move_stack, node.get_current_player_index(), 
+                pre_node.get_game().get_state());
             std::ranges::shuffle( move_stack, g );
 
             for (MoveT const& move : move_stack)
                 node.get_children().push_front( 
-                    *(new (allocator.allocate< node_type >())
-                        node_type( value_type( value.game.apply( move ), move ))));
+                    *(new (allocator.allocate< pre_node_type >())
+                        pre_node_type( 
+                            move, Payload(), 
+                            pre_node.get_game().apply( move ))));
         }
         // evaluate child nodes recursively until pruning
         auto child_itr = node.get_children().begin();
         for (;child_itr != node.get_children().end(); ++child_itr) // NOSONAR
         {
-            child_itr->get_value().evaluation =
+            child_itr->get_payload().evaluation =
                  eval( *child_itr, depth - 1, alpha, beta );
-            if (compare( child_itr->get_value().evaluation, best_score ))
-                best_score = child_itr->get_value().evaluation;
+            if (compare( child_itr->get_payload().evaluation, best_score ))
+                best_score = child_itr->get_payload().evaluation;
             if (compare( best_score, *palpha ))
                 *palpha = best_score;
             if (!compare( *pbeta, best_score ))
@@ -162,7 +147,7 @@ private:
             [compare](auto const& a, auto const& b)
             { 
                 return compare( 
-                    a.get_value().evaluation, b.get_value().evaluation); 
+                    a.get_payload().evaluation, b.get_payload().evaluation); 
             });
 
         node.get_children().splice(node.get_children().begin(), prefix);
@@ -172,7 +157,7 @@ private:
 
     MoveT choose_move() override
     {
-        if (root->get_value().game.result() != GameResult::Undecided)
+        if (root->get_game_result() != GameResult::Undecided)
             throw std::source_location::current();
 
         // eval with increasing depth
@@ -180,15 +165,16 @@ private:
         // always start from level 0 because pruning my be different from last
         // time due to initialized alpha/beta start values
         for (size_t d = 0; d <= max_depth + 1; ++d)
-            root->get_value().evaluation = eval( *root, d, -INFINITY, INFINITY );
+            root->get_payload().evaluation = 
+                eval( *root, d, -INFINITY, INFINITY );
 
         if (root->get_children().empty())
-            throw std::source_location::current();
+            throw beat_it::Exception( "no move choosen" );
 
         allocator.reset(); 
-        root = &copy_tree( *root->get_children().begin());
+        root = &root->get_children().begin()->copy_tree( allocator );
 
-        return root->get_value().move;
+        return root->get_move();
     }
 };
 

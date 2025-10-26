@@ -10,6 +10,7 @@
 #include "minimax-tree.h"
 #include "alphazero.h"
 #include "libtorch_util.h"
+#include "node.h"
 
 #include <source_location>
 #include <boost/json.hpp>
@@ -319,7 +320,7 @@ struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
             cout << "score: " << p->score( game ) << endl;
         else if (auto mp = dynamic_cast< const ttt::montecarlo::Player* >( 
                     &player ))
-            cout << "point ratio: " << mp->root_node().get_value().visits 
+            cout << "point ratio: " << mp->root_node().get_payload().visits 
                 << endl;
     }
 };
@@ -504,20 +505,24 @@ void montecarlo_node()
 
     vector< ttt::Move > move_stack;
     using Node = ttt::montecarlo::Node;
+    using PreNode = ttt::montecarlo::PreNode;
     GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
     ttt::Game game( Player1, ttt::empty_state );
 
-    using Value = montecarlo::Value< ttt::Move, ttt::State >;
+    using Payload = ttt::montecarlo::Payload;
 
-    auto* node = new (allocator.allocate< Node >()) 
-        Node( Value( game, ttt::no_move ));
+    auto* node = new (allocator.allocate< PreNode >()) 
+        PreNode( ttt::no_move, Payload { .next_move_itr = game.begin()}, game );
     assert (node->get_children().size() == 0);
     assert (node_count( *node) == 1);
 
     for (auto const& move : game)
         node->get_children().push_front(
-            *(new (allocator.allocate< Node >()) 
-                Node( Value( game.apply( move ), move))));
+            *(new (allocator.allocate< PreNode >()) 
+                PreNode( 
+                    move, 
+                    Payload { .next_move_itr = game.begin() }, 
+                    game.apply( move ))));
 
     assert (node->get_children().size() == 9);
     assert (node_count( *node) == 10);
@@ -535,7 +540,7 @@ void montecarlo_player()
     game = game.apply( ttt::Move( 4 ) );
 
     Node const& root = player.root_node();
-    assert (root.get_value().move == ttt::Move( 4 ));
+    assert (root.get_move() == ttt::Move( 4 ));
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves( game.begin(), game.end() );
 
@@ -560,7 +565,7 @@ void montecarlo_ttt_human()
     chrono::microseconds human_duration;
     using Node = ttt::montecarlo::Node;
     GenerationalArenaAllocator allocator( 50 * sizeof( Node) );
-    ttt::montecarlo::Player player( game, 0.4, 100, seed, allocator );
+    ttt::montecarlo::Player player( game, 0.4f, 100, seed, allocator );
     chrono::microseconds player_duration;
     TicTacToeMatch match( player );
     if (GameResult result = match.play( game, human, human_duration,

@@ -75,8 +75,9 @@ public:
 namespace montecarlo
 {
 
-using Value = ::montecarlo::Value< Move, State >;
-using Node = ::Node< Value >;
+using Payload = ::montecarlo::Payload< Move, State >;
+using Node = ::Node< Move, State, Payload >;
+using PreNode = ::PreNode< Move, State, Payload >;
 using Player = ::montecarlo::Player< Move, State >;
 using PlayerFactory = ::PlayerFactory< Move >;
 
@@ -84,8 +85,8 @@ using PlayerFactory = ::PlayerFactory< Move >;
 
 namespace alphazero {
 
-using Value = ::alphazero::Value< Move, State >;
-using Node = ::Node< Value >;
+using Payload = ::alphazero::Payload< Move, State >;
+using Node = ::Node< Move, State, Payload >;
 
 const size_t G = 3 * 9;
 const size_t P = 9;
