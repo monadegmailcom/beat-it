@@ -2,7 +2,6 @@
 
 #include "exception.h"
 #include "player.h"
-#include "game.h"
 #include "node.h"
 #include "inference.h"
 
@@ -29,7 +28,6 @@ struct Payload
     // for backpropagation we need the parent node, may be null for root.
     node_type* const parent;
 
-    // a node is expanded iff its visits count is > 0.
     std::atomic< size_t > visits { 0 };
     // policy probabilities of choosing this move from the parent's node
     // perspective.
@@ -98,7 +96,6 @@ public:
     using node_type = Node< MoveT, StateT, payload_type >;
     using pre_node_type = PreNode< MoveT, StateT, payload_type >;
     using fix_node_type = FixNode< MoveT, StateT, payload_type >;
-
     using inference_service_type = inference::Service< G, P >;
     using request_type = inference::Request< G, P >;
     using response_type = inference::Response< P >;
@@ -109,11 +106,11 @@ public:
     static constexpr std::size_t policy_size = P;
 
     Player(
-        Game< MoveT, StateT > game, params::Ucb const& ucb,
+        game_type game, params::Ucb const& ucb,
         params::GamePlay const& game_play,
         unsigned seed, // make the play deterministic with seed
-        allocator_type& allocator, 
-        inference_service_type& inference_service ) : 
+        allocator_type& allocator, inference_service_type& inference_service ) 
+    : 
         allocator( allocator ), ucb_params( ucb ), game_play( game_play ), 
         g( seed ), thread_pool( game_play.parallel_simulations ),
         inference_service( inference_service ),
@@ -145,7 +142,7 @@ public:
         return root.get().get_move();
     }
 
-    node_type& get_root() const { return root; }
+    node_type& get_root() const noexcept { return root; }
 
     // require: move is valid, not thread safe.
     void apply_opponent_move( MoveT const& move ) override
@@ -169,8 +166,9 @@ private:
 
     struct ExpandVisitor : public node_visitor_type
     {
-        explicit ExpandVisitor( Player& player ) : player( player ) {}
+        explicit ExpandVisitor( Player& player ) noexcept : player( player ) {}
 
+        // thread-safe.
         void visit( pre_node_type& node ) override
         { 
             for (MoveT const& move : node.get_game())
@@ -194,7 +192,8 @@ private:
     {
         explicit InferenceVisitor( Player& player ) : player( player ) {}
 
-        void visit( pre_node_type& node ) override
+        // thread-safe.
+        void visit( pre_node_type& node ) noexcept override
         {    
             // pushing a request to the inference service may block if the
             // request queue is full.
@@ -212,47 +211,29 @@ private:
     {
         explicit SelectVisitor( Player& player ) : player( player ) {}
 
-        void visit( pre_node_type& node ) override
+        // thread-safe.
+        void visit( pre_node_type& node ) noexcept override
         {
             // multiple threads are allowed to read access, but it blocks if
             // the node is expanding right now.
             std::shared_lock _( node.get_mutex());
             selected_node = &*std::ranges::max_element(
                 node.get_children(),
-                [this, parent_visits = node.get_payload().visits.load( 
-                                        std::memory_order_relaxed)]
+                [this, 
+                 parent_visits = node.get_payload().visits.load( 
+                    std::memory_order_relaxed)]
                 (auto const& a, auto const& b)
                 {
                     return   player.ucb( a.get_payload(), parent_visits )
                            < player.ucb( b.get_payload(), parent_visits );
                 });
         }
+
         Player& player;
         node_type* selected_node = nullptr;
     };
    
-    struct ChooseBestVisitor : public node_visitor_type
-    {
-        explicit ChooseBestVisitor( Player& player ) : player( player ) {}
-
-        void visit( pre_node_type& node ) override
-        {
-            // choose child with most visits
-            choosen_node = &*std::ranges::max_element( 
-                node.get_children(),
-                [](auto const& a, auto const& b)
-                { 
-                    return a.get_payload().visits.load( 
-                            std::memory_order_relaxed ) 
-                        < b.get_payload().visits.load( 
-                            std::memory_order_relaxed );    
-                });
-        }
-        
-        Player& player;
-        node_type* choosen_node = nullptr;
-    };
-    
+    // thread-safe.
     void simulation( node_type& node )
     {
         auto& payload = node.get_payload();
@@ -260,29 +241,34 @@ private:
         // Atomically update visit count. on first visit expand leaf node.
         const bool is_leaf_node = 
             payload.visits.fetch_add( 1, std::memory_order_relaxed) == 0;
-        // and apply virtual loss to avoid entering this path from the 
+        // apply virtual loss to avoid entering this path from the 
         // parent's node perspective, so increase nn_value;
         payload.nn_value_sum.fetch_add( 
             virtual_loss, std::memory_order_relaxed);
 
         if (node.get_game_result() != GameResult::Undecided)
-            backpropagation( 
-                node, {}, game_result_2_score(
-                    node.get_game_result(), node.get_current_player_index())); 
+        {
+            const float value = game_result_2_score(
+                node.get_game_result(), node.get_current_player_index());
+            backpropagation( node, {}, value ); 
+        }
         else if (is_leaf_node)
         {
-            ExpandVisitor expand_visitor{ *this };
-            node.accept( expand_visitor );
+            { 
+                ExpandVisitor visitor{ *this };
+                node.accept( visitor ); 
+            }
 
-            InferenceVisitor inference_visitor( *this );
-            node.accept( inference_visitor );
+            InferenceVisitor visitor( *this );
+            node.accept( visitor );
         }
         else
         {
-            SelectVisitor select_visitor( *this );
-            node.accept( select_visitor );
-            assert( select_visitor.selected_node );
-            simulation( *select_visitor.selected_node );
+            SelectVisitor visitor( *this );
+            node.accept( visitor );
+
+            assert( visitor.selected_node );
+            simulation( *visitor.selected_node );
         }
     }
 
@@ -308,15 +294,20 @@ private:
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
-        {
-            ChooseBestVisitor choose_best_visitor( *this );
-            root.get().accept( choose_best_visitor );
-            assert( choose_best_visitor.choosen_node );
-            return *choose_best_visitor.choosen_node;
-        }
+            // choose child with most visits
+            return *std::ranges::max_element( 
+                root.get().get_children(),
+                [](auto const& a, auto const& b)
+                { 
+                    return   a.get_payload().visits.load( 
+                                std::memory_order_relaxed ) 
+                           < b.get_payload().visits.load( 
+                                std::memory_order_relaxed );    
+                });
     }
 
     // upper confidence bound
+    // thread-safe.
     float ucb( payload_type const& payload, size_t parent_visits )
     {
         const size_t child_visits = payload.visits.load(
@@ -342,6 +333,7 @@ private:
 
     // lockfree setting of policies and nn value and backpropagation.
     // require: mode is undecided.
+    // thread-safe.
     void backpropagation( 
         node_type& node, std::array< float, P > const& policies, 
         float nn_value )
@@ -349,19 +341,19 @@ private:
         // convert logits of legal moves to probabilities with softmax
         // and save in children. the policies are guaranteed to be set only
         // once, so the lockfree code below is threadsafe.
-
         float policy_sum = 0.0f;
-        policy_buffer.clear();
+        std::array< float, P > policy_buffer;
+        auto p_itr = policy_buffer.begin();
         for (node_type& child : node.get_children())
         {
             const float p = std::expf( policies[
                 move_to_policy_index( child.get_move())]);
-            policy_buffer.push_back( p );
+            *p_itr++ = p;
             policy_sum += p;
         }
 
         // normalize priors to probabilities.
-        auto p_itr = policy_buffer.begin();
+        p_itr = policy_buffer.begin();
         for (auto& child : node.get_children())
         { 
             const float p = *p_itr++ / policy_sum;
@@ -388,6 +380,7 @@ private:
             simulations_cv.notify_all();                   
     }
 
+    // thread-safe.
     void worker( std::stop_token token )
     {
         while (!token.stop_requested())
@@ -464,7 +457,6 @@ private:
     std::stop_source stop_source; 
     inference_service_type& inference_service;
     const float virtual_loss = 1.0; // must be positive
-    std::vector< float > policy_buffer; 
     boost::lockfree::queue< response_type > response_queue;
     std::reference_wrapper< node_type > root;
 };
@@ -489,12 +481,9 @@ public:
     using pre_node_type = player_type::pre_node_type;
 
     SelfPlay(
-        player_type& player,
-        float dirichlet_alpha,
-        float dirichlet_epsilon,
-        std::mt19937& g,
-        std::vector< Position< G, P >>& positions,
-        Statistics& root_node_entropy_stat )
+        player_type& player, float dirichlet_alpha, float dirichlet_epsilon,
+        std::mt19937& g, std::vector< Position< G, P >>& positions,
+        Statistics& root_node_entropy_stat ) noexcept
     : player( player ), dirichlet_epsilon( dirichlet_epsilon ),
       g( g ), gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ),
       root_node_entropy_stat( root_node_entropy_stat ) {}
@@ -508,7 +497,8 @@ public:
         GameResult game_result;
         // we need to keep track of the actual game because it will not be
         // copied in the next generation root node due to optimization.
-        Game< MoveT, StateT > game = [&root = player.get_root()]
+        Game< MoveT, StateT > game = 
+            [&root = player.get_root()]
             {
                 auto* pre_node = dynamic_cast< pre_node_type* >( &root );
                 if (!pre_node)
@@ -520,10 +510,14 @@ public:
              game_result == GameResult::Undecided;
              game_result = player.get_root().get_game_result())
         {
+            auto& root = player.get_root();
             // expand root node on first visit, for dirichlet noise addition
             // the root node needs to be expanded.
-            expand_visitor_type visitor{ player };
-            player.get_root().accept( visitor );
+            if (root.get_children().empty())
+            {
+                expand_visitor_type visitor{ player };
+                player.get_root().accept( visitor );
+            }
             add_dirichlet_noise();
 
             auto& node = player.run_simulations();
@@ -531,11 +525,10 @@ public:
             // update game.
             game = game.apply( node.get_move());
 
-            root_node_entropy_stat.update(
-                shannon_entropy( player.get_root()));
+            root_node_entropy_stat.update( shannon_entropy( root ));
 
             player.allocator.reset();
-            player.get_root().copy_tree( player.allocator );
+            player.root = root.copy_tree( player.allocator );
         }
 
         // set target value to game result for all new positions
@@ -544,7 +537,7 @@ public:
             itr->target_value = game_result_2_score(
                 game_result, itr->current_player );
     }
-protected:
+private:
     // require: root node is expanded
     void add_dirichlet_noise()
     {

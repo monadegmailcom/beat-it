@@ -13,12 +13,16 @@ class PreNode;
 template< typename MoveT, typename StateT, typename PayloadT >
 class FixNode;
 
+// use visitor pattern to perform different action on pre nodes and fix nodes
+// polymorphically. 
 template< typename MoveT, typename StateT, typename PayloadT >
 struct NodeVisitor
 {
     virtual ~NodeVisitor() = default;
-    virtual void visit( PreNode< MoveT, StateT, PayloadT >& ) {};
-    virtual void visit( FixNode< MoveT, StateT, PayloadT >& ) {};
+    virtual void visit( PreNode< MoveT, StateT, PayloadT >& )
+    {/* do nothing on default */};
+    virtual void visit( FixNode< MoveT, StateT, PayloadT >& )
+    {/* do nothing on default */};
 };
 
 template< typename MoveT, typename StateT, typename PayloadT >
@@ -27,26 +31,27 @@ class Node : public boost::intrusive::list_base_hook<>
 public:
     Node( 
         MoveT const& move, GameResult game_result, 
-        PlayerIndex current_player_index, PayloadT const& payload ) : 
-        move( move ), game_result( game_result ), 
+        PlayerIndex current_player_index, PayloadT const& payload ) noexcept
+    :   move( move ), game_result( game_result ), 
         current_player_index( current_player_index ), payload( payload ) {}
 
     virtual ~Node() = default;
     Node( Node const& ) = delete;
     Node& operator=( Node const& ) = delete;
 
+    // perform visitor action.
     virtual void accept( NodeVisitor< MoveT, StateT, PayloadT >& ) = 0;
 
-    MoveT const& get_move() const { return move; }
-    GameResult get_game_result() const { return game_result; }
-    PlayerIndex get_current_player_index() const 
+    MoveT const& get_move() const noexcept { return move; }
+    GameResult get_game_result() const noexcept { return game_result; }
+    PlayerIndex get_current_player_index() const noexcept
     { return current_player_index; }
-    PayloadT const& get_payload() const { return payload; }
-    PayloadT& get_payload() { return payload; }
+    PayloadT const& get_payload() const noexcept { return payload; }
+    PayloadT& get_payload() noexcept { return payload; }
 
-    boost::intrusive::list< Node >& get_children() 
+    boost::intrusive::list< Node > const& get_children() const noexcept
     { return children; }
-    boost::intrusive::list< Node > const& get_children() const
+    boost::intrusive::list< Node >& get_children() noexcept
     { return children; }
     // not thread-safe.
     virtual Node& copy_tree( GenerationalArenaAllocator& ) = 0;
@@ -75,13 +80,11 @@ private:
     using base_node_type = Node< MoveT, StateT, PayloadT >;
     using base_node_type::base_node_type;
 
-    void accept( 
-        NodeVisitor< MoveT, StateT, PayloadT >& visitor) override
+    void accept( NodeVisitor< MoveT, StateT, PayloadT >& visitor) override
     { visitor.visit( *this ); }
 
     // not thread-safe.
-    base_node_type& copy_tree( 
-        GenerationalArenaAllocator& allocator ) override
+    base_node_type& copy_tree( GenerationalArenaAllocator& allocator ) override
     {
         auto& new_node = *(new (allocator.allocate< FixNode >()) 
             FixNode( 
@@ -94,8 +97,8 @@ private:
 };
 
 // a pre-node is not yet expanded and needs an additional game attribute for
-// later expansion. its children list to be accessed with a locked read-only
-// mutex.
+// later expansion. its children list has to be accessed with a locked 
+// read-only mutex.
 template< typename MoveT, typename StateT, typename PayloadT >
 class PreNode : public Node< MoveT, StateT, PayloadT >
 {
@@ -107,10 +110,11 @@ public:
 
     PreNode( 
         MoveT const& move, PayloadT const& payload, 
-        Game< MoveT, StateT > const& game ) : 
-            base_node_type( 
-                move, game.result(), game.current_player_index(), payload ),
-            game( game ) {}
+        Game< MoveT, StateT > const& game ) noexcept
+    : 
+        base_node_type( 
+            move, game.result(), game.current_player_index(), payload ),
+        game( game ) {}
     
     void accept( visitor_type& visitor) override
     { visitor.visit( *this ); }

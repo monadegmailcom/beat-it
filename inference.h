@@ -1,10 +1,10 @@
 #pragma once
 
 #include "statistics.h"
+#include "exception.h"
 
 #include <boost/lockfree/queue.hpp>
 
-#include <functional>
 #include <array>
 #include <thread>
 #include <semaphore>
@@ -65,36 +65,32 @@ public:
     using request_type = Request< G, P >;
     using response_type = Response< P >;
 
-    explicit Service( size_t max_batch_size ) 
-    : max_batch_size( max_batch_size ), inference_queue( max_batch_size ), 
-      available_inference_slots( max_batch_size )
+    explicit Service( size_t max_batch_size )
+    :   max_batch_size( max_batch_size ), inference_queue( max_batch_size ), 
+        available_inference_slots( max_batch_size ) 
     {
         if (!max_batch_size)
-            throw std::source_location::current();
+            throw beat_it::Exception( "Max batch size cannot be zero.");
         inference_worker = std::jthread( &Service::run, this );
     }
 
-    virtual ~Service()
+    virtual ~Service() noexcept
     {
         // Signal the workers to stop.
-        stop = true;
+        stop_source.request_stop();
         // poison pill to wake up threads waiting for nn evaluation.
         inference_queue.push( request_type());
         available_requests.release();
-        
-        // join workers.
-        inference_worker.join();
     }
 
     // blocks if max queue size is reached. this slows down production of new
     // requests intentionally. 
+    // thread-safe.
     void push( request_type const& request )
     {
-        // block if queue is full.
-        available_inference_slots.acquire();
-
         while (!inference_queue.push( request ))
-            std::this_thread::yield();
+            // block if queue is full.
+            available_inference_slots.acquire();
 
         available_requests.release();
     }
@@ -111,52 +107,50 @@ public:
         inference_time_stats_.reset();
     }
 
-    size_t get_max_batch_size() const { return max_batch_size; }
+    size_t get_max_batch_size() const noexcept{ return max_batch_size; }
 protected:
     // promise: feed all batched requests into the nn and push results into
     // response queues. 
     virtual void inference( request_type[], size_t batch_size ) = 0; 
 private:
+    // not thread-safe.
     void run()
     {
         std::vector< request_type > request_batch( max_batch_size ); 
+        size_t batch_size = 0;
 
-        while (true)
+        while (!stop_source.stop_requested())
         {
             // pop all available requests from the queue, but at most 
             // max_batch_size.
-            size_t batch_size = 0;
-            for (; !stop && batch_size != max_batch_size; ++batch_size)
-                if (available_requests.try_acquire())
-                    while (!inference_queue.pop( // NOSONAR
-                                request_batch[batch_size] ))
-                        std::this_thread::yield();
-                else if (!batch_size)                    
-                    // blocking wait on empty request queue.
-                    available_requests.acquire(); 
-                else 
-                    break;
-           
-            if (stop)
-                break;
-            // signal available slots in inference queue. 
-            available_inference_slots.release( batch_size );
-            
-            // process requests
-            // call inference implementation and measure duration.
-            { 
-                TimeStats duration_per_request( 
-                    inference_time_stats_, batch_size );
-                inference( request_batch.data(), batch_size ); 
+            if (   batch_size != max_batch_size 
+                && inference_queue.pop( request_batch[batch_size] ))
+            {
+                // signal available slots in inference queue. 
+                available_inference_slots.release();
+                ++batch_size;
             }
-          
-            batch_size_stats_.update( batch_size );
+            else if (batch_size)
+            {
+                // process requests
+                // call inference implementation and measure duration.
+                { 
+                    TimeStats duration_per_request( 
+                        inference_time_stats_, batch_size );
+                    inference( request_batch.data(), batch_size ); 
+                }
+                batch_size_stats_.update( batch_size );
+                batch_size = 0;
+            }
+            else
+                // blocking wait on empty request queue.
+                available_requests.acquire(); 
         }
     }
 
     size_t max_batch_size;
     std::jthread inference_worker;
-    bool stop = false;
+    std::stop_source stop_source; 
     boost::lockfree::queue< request_type > inference_queue;
     Statistics batch_size_stats_;
     Statistics inference_time_stats_;
