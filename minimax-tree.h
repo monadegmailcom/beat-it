@@ -32,7 +32,7 @@ public:
         allocator_type& allocator )
     : max_depth( max_depth ), g( seed ), allocator( allocator ),
       root( new (allocator.allocate< pre_node_type >()) 
-                PreNode( MoveT(), Payload(), game )) {}
+                pre_node_type( game )) {}
 
     virtual double score( Game< MoveT, StateT > const&) const
     { return 0; };
@@ -113,8 +113,7 @@ private:
                 node.get_children().push_front( 
                     *(new (allocator.allocate< pre_node_type >())
                         pre_node_type( 
-                            move, Payload(), 
-                            pre_node.get_game().apply( move ))));
+                            pre_node.get_game().apply( move ), move )));
         }
         // evaluate child nodes recursively until pruning
         auto child_itr = node.get_children().begin();

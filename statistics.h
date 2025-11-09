@@ -17,6 +17,7 @@ public:
     float max() const noexcept { return max_; }
     size_t count() const noexcept { return count_; }
     void reset() noexcept;
+    void join( Statistics const& ) noexcept;
 private:
     friend std::ostream& operator<<( std::ostream&, Statistics const& );
 

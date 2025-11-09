@@ -31,9 +31,11 @@ class Node : public boost::intrusive::list_base_hook<>
 public:
     Node( 
         MoveT const& move, GameResult game_result, 
-        PlayerIndex current_player_index, PayloadT const& payload ) noexcept
+        PlayerIndex current_player_index, PayloadT const& payload,
+        Node* parent = nullptr ) noexcept
     :   move( move ), game_result( game_result ), 
-        current_player_index( current_player_index ), payload( payload ) {}
+        current_player_index( current_player_index ), payload( payload ),
+        parent( parent ) {}
 
     virtual ~Node() = default;
     Node( Node const& ) = delete;
@@ -48,19 +50,22 @@ public:
     { return current_player_index; }
     PayloadT const& get_payload() const noexcept { return payload; }
     PayloadT& get_payload() noexcept { return payload; }
+    Node* get_parent() const noexcept { return parent; }
 
     boost::intrusive::list< Node > const& get_children() const noexcept
     { return children; }
     boost::intrusive::list< Node >& get_children() noexcept
     { return children; }
     // not thread-safe.
-    virtual Node& copy_tree( GenerationalArenaAllocator& ) = 0;
+    virtual Node& copy_tree( 
+        GenerationalArenaAllocator&,
+        Node* new_parent = nullptr ) = 0;
 protected:
     // not thread-safe.
     void copy_children_to( Node& node, GenerationalArenaAllocator& allocator )
     {
         for (Node& child : children)
-            node.get_children().push_back( child.copy_tree( allocator ));
+            node.get_children().push_back( child.copy_tree( allocator, &node ));
     }
 private:
     const MoveT move; // the previous move resulting in this game
@@ -69,6 +74,7 @@ private:
 
     PayloadT payload;
     boost::intrusive::list< Node > children;
+    Node* parent;
 };
 
 // a fix node is already expanded and its children list can be accessed without
@@ -78,18 +84,22 @@ class FixNode : public Node< MoveT, StateT, PayloadT >
 {
 private:
     using base_node_type = Node< MoveT, StateT, PayloadT >;
+
     using base_node_type::base_node_type;
 
     void accept( NodeVisitor< MoveT, StateT, PayloadT >& visitor) override
     { visitor.visit( *this ); }
 
     // not thread-safe.
-    base_node_type& copy_tree( GenerationalArenaAllocator& allocator ) override
+    base_node_type& copy_tree( 
+        GenerationalArenaAllocator& allocator, base_node_type* new_parent) 
+        override
     {
         auto& new_node = *(new (allocator.allocate< FixNode >()) 
             FixNode( 
                 this->get_move(), this->get_game_result(), 
-                this->get_current_player_index(), this->get_payload()));
+                this->get_current_player_index(), this->get_payload(), 
+                new_parent ));
        
         this->copy_children_to( new_node, allocator );
         return new_node;
@@ -109,11 +119,12 @@ public:
     using visitor_type = NodeVisitor< MoveT, StateT, PayloadT >;
 
     PreNode( 
-        MoveT const& move, PayloadT const& payload, 
-        Game< MoveT, StateT > const& game ) noexcept
+        Game< MoveT, StateT > const& game, MoveT const& move = MoveT(), 
+        PayloadT const& payload = PayloadT(), 
+        base_node_type* parent = nullptr ) noexcept
     : 
         base_node_type( 
-            move, game.result(), game.current_player_index(), payload ),
+            move, game.result(), game.current_player_index(), payload, parent ),
         game( game ) {}
     
     void accept( visitor_type& visitor) override
@@ -126,7 +137,9 @@ private:
     std::shared_mutex node_mutex;
   
     // not thread-safe.
-    base_node_type& copy_tree( GenerationalArenaAllocator& allocator ) override
+    base_node_type& copy_tree( 
+        GenerationalArenaAllocator& allocator, base_node_type* new_parent) 
+        override
     {
         // a pre node may be reduced to a fix node on copy.
         base_node_type& new_node = 
@@ -134,12 +147,13 @@ private:
                 && this->get_children().empty())
             ? *static_cast< base_node_type* >(
                 new (allocator.allocate< PreNode >()) PreNode( 
-                    this->get_move(), this->get_payload(), this->get_game()))
+                    this->get_game(), this->get_move(), this->get_payload(), 
+                    new_parent ))
             : *static_cast< base_node_type* >(
                 new (allocator.allocate< fix_node_type >()) fix_node_type( 
                     this->get_move(), this->get_game_result(), 
-                    this->get_current_player_index(), 
-                    this->get_payload()));
+                    this->get_current_player_index(), this->get_payload(), 
+                    new_parent ));
         
         this->copy_children_to( new_node, allocator );
         return new_node;

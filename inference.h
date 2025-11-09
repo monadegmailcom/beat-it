@@ -6,6 +6,7 @@
 #include <boost/lockfree/queue.hpp>
 
 #include <array>
+#include <stop_token>
 #include <thread>
 #include <semaphore>
 
@@ -66,21 +67,19 @@ public:
     using response_type = Response< P >;
 
     explicit Service( size_t max_batch_size )
-    :   max_batch_size( max_batch_size ), inference_queue( max_batch_size ), 
-        available_inference_slots( max_batch_size ) 
+    :   max_batch_size( max_batch_size ), inference_queue( max_batch_size ),
+        free_inference_slots( max_batch_size )
     {
         if (!max_batch_size)
             throw beat_it::Exception( "Max batch size cannot be zero.");
-        inference_worker = std::jthread( &Service::run, this );
+        inference_worker = std::jthread( 
+            &Service::run, this, stop_source.get_token());
     }
 
     virtual ~Service() noexcept
     {
         // Signal the workers to stop.
         stop_source.request_stop();
-        // poison pill to wake up threads waiting for nn evaluation.
-        inference_queue.push( request_type());
-        available_requests.release();
     }
 
     // blocks if max queue size is reached. this slows down production of new
@@ -88,11 +87,16 @@ public:
     // thread-safe.
     void push( request_type const& request )
     {
-        while (!inference_queue.push( request ))
-            // block if queue is full.
-            available_inference_slots.acquire();
-
-        available_requests.release();
+        // try until request is pushed to inference queue (or stop requested).
+        while (!stop_source.stop_requested())
+        {
+            // blocks if no free slot resource is available (decrease)
+            free_inference_slots.acquire();
+            if (inference_queue.push( request ))
+                break;
+            // undo resource acquisition if push fails (increase)
+            free_inference_slots.release();
+        }
     }
 
     Statistics const& batch_size_stats() const noexcept
@@ -101,6 +105,7 @@ public:
     Statistics const& inference_time_stats() const noexcept
     { return inference_time_stats_; }
 
+    // not thread-safe.
     void reset_stats() noexcept
     {
         batch_size_stats_.reset();
@@ -114,37 +119,37 @@ protected:
     virtual void inference( request_type[], size_t batch_size ) = 0; 
 private:
     // not thread-safe.
-    void run()
+    void run( std::stop_token token)
     {
         std::vector< request_type > request_batch( max_batch_size ); 
         size_t batch_size = 0;
 
-        while (!stop_source.stop_requested())
+        while (!token.stop_requested())
         {
             // pop all available requests from the queue, but at most 
             // max_batch_size.
-            if (   batch_size != max_batch_size 
-                && inference_queue.pop( request_batch[batch_size] ))
-            {
-                // signal available slots in inference queue. 
-                available_inference_slots.release();
+            while (   batch_size != max_batch_size 
+                   && inference_queue.pop( request_batch[batch_size] ))
                 ++batch_size;
-            }
-            else if (batch_size)
+
+            if (!batch_size)
+                // gracefully yield if no request is queued.
+                std::this_thread::yield();
+            else
             {
-                // process requests
+                // process requests.
                 // call inference implementation and measure duration.
                 { 
                     TimeStats duration_per_request( 
                         inference_time_stats_, batch_size );
                     inference( request_batch.data(), batch_size ); 
                 }
+                // signal available slots in inference queue. 
+                free_inference_slots.release( batch_size );
+
                 batch_size_stats_.update( batch_size );
                 batch_size = 0;
             }
-            else
-                // blocking wait on empty request queue.
-                available_requests.acquire(); 
         }
     }
 
@@ -154,8 +159,7 @@ private:
     boost::lockfree::queue< request_type > inference_queue;
     Statistics batch_size_stats_;
     Statistics inference_time_stats_;
-    std::counting_semaphore<> available_inference_slots;
-    std::counting_semaphore<> available_requests {0};
+    std::counting_semaphore<> free_inference_slots;
 };
 
 } // inference

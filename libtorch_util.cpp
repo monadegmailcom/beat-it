@@ -127,7 +127,8 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
         sp_config, "dirichlet_epsilon");
     simulations = get_required_value<int32_t>(sp_config, "simulations");
     opening_moves = get_required_value<int32_t>(sp_config, "opening_moves");
-    parallel_games = get_required_value<size_t>(sp_config, "parallel_games");
+    parallel_games = get_value_with_default<size_t>(
+        sp_config, "parallel_games", 1);
     parallel_simulations = get_value_with_default<size_t>(
         sp_config, "parallel_simulations", 10);
     max_batch_size = get_value_with_default<size_t>(

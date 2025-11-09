@@ -6,8 +6,8 @@
 #include "inference.h"
 
 #include <cassert>
+#include <mutex>
 #include <random>
-#include <condition_variable>
 #include <atomic>
 #include <algorithm>
 
@@ -19,14 +19,13 @@ struct Payload
 {
     using node_type = Node< MoveT, StateT, Payload >;
 
-    explicit Payload( node_type* parent ) noexcept : parent( parent ) {}
+    Payload() noexcept = default;
     Payload( Payload const& payload ) noexcept : 
-        parent( payload.parent ), visits( payload.visits.load()), 
-        nn_policy( payload.nn_policy.load()),
+        policies_are_evaluated( payload.policies_are_evaluated.load()),
+        visits( payload.visits.load()), nn_policy( payload.nn_policy.load()),
         nn_value_sum( payload.nn_value_sum.load()) {}
 
-    // for backpropagation we need the parent node, may be null for root.
-    node_type* const parent;
+    std::atomic< bool > policies_are_evaluated { false };
 
     std::atomic< size_t > visits { 0 };
     // policy probabilities of choosing this move from the parent's node
@@ -116,7 +115,7 @@ public:
         inference_service( inference_service ),
         response_queue( inference_service.get_max_batch_size()),
         root(*(new (allocator.allocate< pre_node_type >()) 
-                PreNode( MoveT(), payload_type( nullptr ), game )))
+                pre_node_type( game )))
     {
         if (!game_play.simulations)
             throw beat_it::Exception("Simulations cannot be zero.");
@@ -131,6 +130,9 @@ public:
     virtual ~Player() noexcept
     {
         stop_source.request_stop();
+        // put poison pill.
+        remaining_simulations.release();
+        thread_pool.clear();
     }
 
     // not thread safe.
@@ -171,18 +173,20 @@ private:
         // thread-safe.
         void visit( pre_node_type& node ) override
         { 
+            boost::intrusive::list< node_type > new_children;
             for (MoveT const& move : node.get_game())
             {
                 auto& child = 
                     *(new (player.allocator.allocate< pre_node_type >()) 
                         pre_node_type( 
-                            move, payload_type( &node ), 
-                            node.get_game().apply( move )));
+                            node.get_game().apply( move ), move ));
 
                 // get write access lock.
-                std::scoped_lock _( node.get_mutex());
-                node.get_children().push_front( child );
+                new_children.push_front( child );
             }
+
+            std::scoped_lock _( node.get_mutex());
+            node.get_children().swap( new_children );
         }
         
         Player& player;
@@ -197,6 +201,7 @@ private:
         {    
             // pushing a request to the inference service may block if the
             // request queue is full.
+            
             player.inference_service.push( {
                 .response_queue = &player.response_queue,
                 .node = &node,
@@ -211,12 +216,25 @@ private:
     {
         explicit SelectVisitor( Player& player ) : player( player ) {}
 
+        using base_node_type = Node< MoveT, StateT, payload_type >;
+
         // thread-safe.
-        void visit( pre_node_type& node ) noexcept override
+        void update_selection_stats( base_node_type& node )
         {
-            // multiple threads are allowed to read access, but it blocks if
-            // the node is expanding right now.
-            std::shared_lock _( node.get_mutex());
+            if (node.get_payload().policies_are_evaluated.load(
+                    std::memory_order_relaxed))
+                player.informed_selections.fetch_add( 
+                    1, std::memory_order_relaxed);
+            player.total_selections.fetch_add( 
+                1, std::memory_order_relaxed);
+        }
+
+        // not thread-safe.
+        void select( base_node_type& node )
+        {
+            while (node.get_children().empty())
+                std::this_thread::yield();
+
             selected_node = &*std::ranges::max_element(
                 node.get_children(),
                 [this, 
@@ -229,8 +247,26 @@ private:
                 });
         }
 
+        // thread-safe because fix nodes are expanded already.
+        void visit( fix_node_type& node ) noexcept override
+        {
+            update_selection_stats( node );
+            select( node );
+        }
+
+        // thread-safe.
+        void visit( pre_node_type& node ) noexcept override
+        {
+            update_selection_stats( node );
+
+            // multiple threads are allowed to read access, but it blocks if
+            // the node is expanding right now.
+            std::shared_lock _( node.get_mutex());
+            select( node );
+        }
+
         Player& player;
-        node_type* selected_node = nullptr;
+        base_node_type* selected_node = nullptr;
     };
    
     // thread-safe.
@@ -264,33 +300,38 @@ private:
         }
         else
         {
-            SelectVisitor visitor( *this );
+            SelectVisitor visitor{ *this };
             node.accept( visitor );
 
-            assert( visitor.selected_node );
             simulation( *visitor.selected_node );
         }
+    }
+
+    void process_response_queue()
+    {
+        response_type response;
+        while (response_queue.pop( response ))
+            backpropagation( 
+                *static_cast< node_type* >( response.node ), 
+                response.policies, response.nn_value );
     }
 
     // require: single-threaded access.
     // return move to choose.
     node_type& run_simulations()
     {        
-        // wake up waiting worker threads.
-        remaining_simulations.fetch_add( 
-            game_play.simulations, std::memory_order_relaxed);
-        simulations_cv.notify_all();
+        // wake up waiting worker threads by initializing resource.
+        remaining_simulations.release( game_play.simulations );
+        unfinished_simulations.store( 
+            game_play.simulations, std::memory_order_relaxed );
 
-        // goto sleep until all simulations finished.
-        std::unique_lock lock( simulations_mutex );
-        simulations_cv.wait(
-            lock, stop_source.get_token(), 
-            [this]
-            {
-                return remaining_simulations.load( 
-                    std::memory_order_relaxed) == 0; 
-            });
-
+        // gracefully spin until all simulations finished.
+        while (unfinished_simulations.load( std::memory_order_relaxed) > 0)
+        {
+            process_response_queue(); 
+            std::this_thread::yield();
+        }
+       
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
@@ -355,11 +396,12 @@ private:
         // normalize priors to probabilities.
         p_itr = policy_buffer.begin();
         for (auto& child : node.get_children())
-        { 
-            const float p = *p_itr++ / policy_sum;
             child.get_payload().nn_policy.store( 
-                p, std::memory_order_relaxed ); 
-        }
+                *p_itr++ / policy_sum, 
+                std::memory_order_relaxed ); 
+
+        node.get_payload().policies_are_evaluated.store( 
+            true, std::memory_order_relaxed );
 
         // remove virtual loss.
         node.get_payload().nn_value_sum.fetch_sub( 
@@ -367,7 +409,7 @@ private:
 
         // backpropagate nn value. note the alternating sign of nn_value
         // the player's perspective is changing on the way up to the root node.
-        for (node_type* next = &node; next; next = next->get_payload().parent)
+        for (node_type* next = &node; next; next = next->get_parent())
         { 
             next->get_payload().nn_value_sum.fetch_add(
                 nn_value, std::memory_order_relaxed);
@@ -375,39 +417,22 @@ private:
             nn_value = -nn_value;
         }
 
-        // notify all potential waiter if simulation is completed.
-        if (remaining_simulations.fetch_sub(1, std::memory_order_relaxed) == 1)
-            simulations_cv.notify_all();                   
+        unfinished_simulations.fetch_sub( 1, std::memory_order_relaxed);
     }
 
     // thread-safe.
     void worker( std::stop_token token )
     {
-        while (!token.stop_requested())
+        while (true)
         {
             // first backpropagate nn responses.
-            response_type response;
-            while (response_queue.pop( response ))
-                backpropagation( 
-                    *static_cast< node_type* >( response.node ), 
-                    response.policies, response.nn_value );
+            process_response_queue();
 
-            if (remaining_simulations.load( std::memory_order_relaxed) != 0)
-                // then simulate. 
-                simulation( root );
-            else
-            {
-                // blocking wait if all simulations are finished.
-                // wake up if simulations are pending again.
-                std::unique_lock lock( simulations_mutex );
-                simulations_cv.wait( 
-                    lock, token,
-                    [this]
-                    { 
-                        return remaining_simulations.load( 
-                            std::memory_order_relaxed) != 0; 
-                    });
-            }
+            // then simulate. wait if all simulation resources are spent. 
+            remaining_simulations.acquire();
+            if (token.stop_requested())
+                break;
+            simulation( root );
         }
     }
 
@@ -451,14 +476,15 @@ private:
     size_t move_count = 0;
     std::mt19937 g;
     std::vector< std::jthread > thread_pool;
-    std::atomic< size_t > remaining_simulations {0};
-    std::condition_variable_any simulations_cv;
-    std::mutex simulations_mutex;
+    std::counting_semaphore<> remaining_simulations {0};
+    std::atomic< size_t > unfinished_simulations {0};
     std::stop_source stop_source; 
     inference_service_type& inference_service;
     const float virtual_loss = 1.0; // must be positive
     boost::lockfree::queue< response_type > response_queue;
     std::reference_wrapper< node_type > root;
+    std::atomic< size_t > informed_selections { 0 };
+    std::atomic< size_t > total_selections { 0 };
 };
 
 namespace training {
@@ -483,10 +509,12 @@ public:
     SelfPlay(
         player_type& player, float dirichlet_alpha, float dirichlet_epsilon,
         std::mt19937& g, std::vector< Position< G, P >>& positions,
-        Statistics& root_node_entropy_stat ) noexcept
+        Statistics& root_node_entropy_stat,
+        Statistics& informed_selection_stats) noexcept
     : player( player ), dirichlet_epsilon( dirichlet_epsilon ),
       g( g ), gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ),
-      root_node_entropy_stat( root_node_entropy_stat ) {}
+      root_node_entropy_stat( root_node_entropy_stat ),
+      informed_selection_stats( informed_selection_stats ) {}
 
     Statistics const& get_root_node_entropy() const noexcept 
     { return root_node_entropy_stat; }
@@ -524,11 +552,19 @@ public:
             append_training_data( game );
             // update game.
             game = game.apply( node.get_move());
-
+            
             root_node_entropy_stat.update( shannon_entropy( root ));
 
+            informed_selection_stats.update( 
+                static_cast< float >( player.informed_selections.load( 
+                    std::memory_order_relaxed )) /
+                static_cast< float >( player.total_selections.load( 
+                    std::memory_order_relaxed )));
+            player.informed_selections.store( 0, std::memory_order_relaxed);
+            player.total_selections.store( 0, std::memory_order_relaxed);
+
             player.allocator.reset();
-            player.root = root.copy_tree( player.allocator );
+            player.root = node.copy_tree( player.allocator );
         }
 
         // set target value to game result for all new positions
@@ -593,6 +629,7 @@ private:
     std::gamma_distribution< float > gamma_dist;
     std::vector< Position< G, P >>& positions;
     Statistics& root_node_entropy_stat;
+    Statistics& informed_selection_stats;
 };
 
 } // namespace training

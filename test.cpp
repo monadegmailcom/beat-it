@@ -9,6 +9,7 @@
 #include "alphazero.h"
 #include "libtorch_util.h"
 #include "node.h"
+#include "statistics.h"
 
 #include <source_location>
 #include <boost/json.hpp>
@@ -264,8 +265,7 @@ void ttt_game()
     assert (ranges::contains(moves.begin(), moves.end(), *valid_move ));
     erase( moves, *valid_move );
 
-    auto itr = valid_move++; // try post-increment
-    assert (*itr == ttt::Move( 1 ));
+    assert (*valid_move++ == ttt::Move( 1 ));
     assert (*valid_move == ttt::Move( 2 ));
 
     assert (*game.begin() == ttt::Move( 0));
@@ -510,7 +510,7 @@ void montecarlo_node()
     using Payload = ttt::montecarlo::Payload;
 
     auto* node = new (allocator.allocate< PreNode >()) 
-        PreNode( ttt::no_move, Payload { .next_move_itr = game.begin()}, game );
+        PreNode( game, ttt::no_move, Payload { .next_move_itr = game.begin()} );
     assert (node->get_children().size() == 0);
     assert (node_count( *node) == 1);
 
@@ -518,9 +518,8 @@ void montecarlo_node()
         node->get_children().push_front(
             *(new (allocator.allocate< PreNode >()) 
                 PreNode( 
-                    move, 
-                    Payload { .next_move_itr = game.begin() }, 
-                    game.apply( move ))));
+                    game.apply( move ), move, 
+                    Payload { .next_move_itr = game.begin() } )));
 
     assert (node->get_children().size() == 9);
     assert (node_count( *node) == 10);
@@ -537,13 +536,14 @@ void montecarlo_player()
     player.apply_opponent_move( ttt::Move( 4 ) );
     game = game.apply( ttt::Move( 4 ) );
 
-    Node const& root = player.root_node();
-    assert (root.get_move() == ttt::Move( 4 ));
+    assert (player.root_node().get_move() == ttt::Move( 4 ));
+    #ifdef DEBUG 
     ttt::Move move = player.choose_move();
     vector< ttt::Move > valid_moves( game.begin(), game.end() );
 
     assert (std::find(valid_moves.begin(), valid_moves.end(), move)
         != valid_moves.end());
+    #endif
 }
 
 void montecarlo_ttt_human()
@@ -780,6 +780,7 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
     vector< ttt::alphazero::training::Position > positions;
     PlayerIndex player_index = PlayerIndex::Player1;
     Statistics root_node_entropy_stat;
+    Statistics informed_selection_stat;
     for (; runs_per_thread; --runs_per_thread)
     {
         alphazero::params::Ucb ucb_params
@@ -795,7 +796,7 @@ vector< ttt::alphazero::training::Position > selfplay_worker(
             gameplay_params, seed, allocator, inference_manager );
         alphazero::training::SelfPlay self_play(
             player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
-            root_node_entropy_stat );
+            root_node_entropy_stat, informed_selection_stat );
         self_play.run();
         player_index = toggle(player_index);
     }
@@ -841,47 +842,52 @@ void alphazero_training()
     cout << "total positions: " << total_positions << endl;
 }
 
-vector< uttt::alphazero::training::Position > uttt_selfplay_worker(
+struct WorkerResult
+{
+    vector< uttt::alphazero::training::Position > positions;
+    Statistics root_node_entropy_stats;
+    Statistics informed_selection_stats;
+    Statistics allocator_offset_stats;
+    size_t allocated_blocks;
+};
+
+WorkerResult uttt_selfplay_worker(
     uttt::alphazero::libtorch::InferenceService& inference_service,
     libtorch::Hyperparameters const& hp, size_t parallel_simulations,
-    size_t runs_per_thread, unsigned local_seed )
+    size_t runs_per_thread, size_t simulations, unsigned local_seed, 
+    size_t allocator_block_size )
 {
     auto g = mt19937( local_seed );
-    GenerationalArenaAllocator allocator( 
-        50 * hp.simulations * sizeof( uttt::alphazero::Node ));
-    vector< uttt::alphazero::training::Position > positions;
+    GenerationalArenaAllocator allocator( allocator_block_size );
+    WorkerResult result;
     PlayerIndex player_index = PlayerIndex::Player1;
-    Statistics root_node_entropy_stats;
     for (; runs_per_thread; --runs_per_thread)
     {
-        auto start = std::chrono::steady_clock::now();
         alphazero::params::Ucb ucb_params
             { .c_base = hp.c_base, .c_init = hp.c_init };
         alphazero::params::GamePlay gameplay_params{
-            .simulations = hp.simulations,
+            .simulations = simulations,
             .opening_moves = hp.opening_moves,
             .parallel_simulations = parallel_simulations };
         uttt::alphazero::Player player(
             uttt::Game( player_index, uttt::empty_state ), ucb_params,
             gameplay_params, g(), allocator, inference_service );
         alphazero::training::SelfPlay self_play(
-            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, positions,
-            root_node_entropy_stats );
-
+            player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, 
+            result.positions, result.root_node_entropy_stats, 
+            result.informed_selection_stats );
         self_play.run();
-
-        const std::chrono::duration<float> duration =
-            std::chrono::steady_clock::now() - start;
-        cout << "selfplay run duration for " << this_thread::get_id() << ": "
-             << duration << endl;
-
         player_index = toggle(player_index);
     }
-    
-    cout << "root node entropy stats: " << root_node_entropy_stats
-        << endl;
-
-    return positions;
+   
+    result.allocated_blocks = 
+        allocator.get_fst_arena_allocator().allocated_blocks() + 
+        allocator.get_snd_arena_allocator().allocated_blocks();
+    result.allocator_offset_stats = 
+        allocator.get_fst_arena_allocator().current_offset_stat();
+    result.allocator_offset_stats.join(
+        allocator.get_snd_arena_allocator().current_offset_stat());
+    return result;
 }
 
 void uttt_alphazero_training()
@@ -896,48 +902,72 @@ void uttt_alphazero_training()
     }
 
     torch::Device device = libtorch::get_device();
-    const char* const model_path =
-        "models/test/model_31000.pt";
+    const char* const model_path = "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
-    hp.simulations = 800;
-    // please save
+    size_t simulations = 10; // 800;
     const size_t worker_threads = 1; 
-    const size_t selfplay_threads = 10;
-    const size_t max_batch_size= 320;
+    const size_t selfplay_threads = 1;
+    const size_t max_batch_size = 320;
     uttt::alphazero::libtorch::InferenceService inference_service(
         std::move( model ), device, max_batch_size );
-    vector< future< vector< uttt::alphazero::training::Position >>>
-        thread_pool( worker_threads );
-    const size_t number_of_games = 10; 
+    vector< future< WorkerResult >> thread_pool( worker_threads );
+    const size_t number_of_games = 1; 
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
-    cout << "start " << thread_pool.size() << " worker threads"
-        << " with " << selfplay_threads << " selfplay threads each, "
-        << max_batch_size << " max batch size and "
-        << hp.simulations << " simulations for " << number_of_games << " games"
-        << endl;
+    using pre_node_type = 
+        PreNode< uttt::Move, uttt::State, uttt::alphazero::Payload >;
+    const size_t allocator_block_size = 
+        50 * simulations * sizeof( pre_node_type );
     unsigned local_seed = seed;
+    cout << "worker threads: " << thread_pool.size() << "\n"
+        << "selfplay threads: " << selfplay_threads <<  "\n"
+        << "max batch size: " << max_batch_size <<  "\n"
+        << "simulations: " << simulations << "\n"
+        << "games: " << number_of_games << "\n"
+        << "allocator block size: " << allocator_block_size << "\n"
+        << endl;
+
+    auto start = std::chrono::steady_clock::now();
     for (auto& future : thread_pool)
     {    
         future = async(
             uttt_selfplay_worker, ref(inference_service), hp, selfplay_threads,
-            runs_per_worker_thread, local_seed );
+            runs_per_worker_thread, simulations, local_seed, 
+            allocator_block_size );
         ++local_seed;
     }
-
     cout << "wait for all threads to finish..." << endl;
     size_t total_positions = 0;
+    Statistics root_node_entropy_stats;
+    Statistics informed_selection_stats;
+    Statistics allocator_offset_stats;
+    size_t allocated_blocks = 0;
     for (auto& future : thread_pool)
     {
-        auto positions = future.get();
-        total_positions += positions.size();
+        auto result = future.get();
+        total_positions += result.positions.size();
+        root_node_entropy_stats.join( result.root_node_entropy_stats );
+        informed_selection_stats.join( result.informed_selection_stats );
+        allocator_offset_stats.join( result.allocator_offset_stats );
+        allocated_blocks += result.allocated_blocks;
     }
+    const std::chrono::duration<float> duration =
+        std::chrono::steady_clock::now() - start;
     
     cout << "total positions: " << total_positions << endl
-        << "inference manager queue size stats:\n" 
+        << "inference manager batch size stats:\n" 
         << inference_service.batch_size_stats() << '\n'
         << "inference manager time stats:\n" 
         << inference_service.inference_time_stats() << '\n'
+        << "root node entropy stats:\n" 
+        << root_node_entropy_stats << '\n'
+        << "informed selection stats:\n" 
+        << informed_selection_stats << '\n'
+        << "allocator offset stats:\n" 
+        << allocator_offset_stats << '\n'
+        << "allocated blocks: " << allocated_blocks << '\n'
+        << "selfplay run duration: " << duration << '\n'
         << endl;
+}
 
 /*
 run tests with seed 1392513404
@@ -969,7 +999,6 @@ count = 55964
 everything ok
 obj/test  196,74s user 28,04s system 123% cpu 3:01,46 total
 */
-}
 
 template< typename MoveT, typename StateT >
 class LogMultiMatch : public MultiMatch< MoveT, StateT >
@@ -1177,7 +1206,6 @@ int main()
     {
         cout << "run tests with seed " << seed << endl << endl;
         test::uttt_alphazero_training();
-        cout << "\neverything ok" << endl;
         return 0;
     }
     catch (source_location const& e)

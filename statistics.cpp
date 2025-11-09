@@ -1,8 +1,5 @@
 #include "statistics.h"
 
-#include <stdexcept>
-#include <source_location>
-
 using namespace std;
 
 void Statistics::update( float value ) noexcept
@@ -16,14 +13,12 @@ void Statistics::update( float value ) noexcept
 
 float Statistics::mean() const
 {
-    if (!count_)
-        throw source_location::current();
     return sum / static_cast< float >( count_ );
 }
 
 float Statistics::stddev() const
 {
-    const float mean_ = mean(); // will throw if count_ == 0
+    const float mean_ = mean();
     return std::sqrtf( sum_square / static_cast< float >( count_ ) 
         - mean_ * mean_);
 }
@@ -35,6 +30,15 @@ void Statistics::reset() noexcept
     min_ = INFINITY;
     max_ = -INFINITY;
     count_ = 0;
+}
+
+void Statistics::join( Statistics const& other ) noexcept
+{
+    sum += other.sum;
+    sum_square += other.sum_square;
+    min_ = min_ < other.min_ ? min_ : other.min_;
+    max_ = max_ > other.max_ ? max_ : other.max_;
+    count_ += other.count_;
 }
 
 ostream& operator<<( ostream& os, Statistics const& stats ) // NOSONAR

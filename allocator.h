@@ -1,3 +1,5 @@
+#include "statistics.h"
+
 #include <vector>
 #include <deque>
 #include <atomic>
@@ -13,21 +15,32 @@ public:
     ArenaAllocator( ArenaAllocator const& ) = delete;
     ArenaAllocator& operator=( ArenaAllocator const& ) = delete;
 
+    // thread-safe.
     template< typename T >
     void* allocate( size_t n = 1 ) // NOSONAR
-    {
-        return allocate( n * sizeof( T ), alignof( T ));
-    }
+    { return allocate( n * sizeof( T ), alignof( T )); }
 
+    // thread-safe.
     void* allocate( size_t size, size_t alignment );
+
     void deallocator( void*, size_t ) const { /*do nothing*/ } // NOSONAR
+                                                               
     // not thread safe.
-    void reset();
+    void reset() noexcept; 
+   
+    // not thread safe.
+    size_t allocated_blocks() const noexcept
+    { return blocks.size(); }
+    
+    // not thread safe.
+    Statistics const& current_offset_stat() const noexcept 
+    { return offset_stat; }
 private:
     std::deque< std::unique_ptr< Block >> blocks;
     std::mutex block_mutex;
     std::atomic< Block* > current_block_ptr {nullptr};
     std::atomic< size_t > current_offset {0};
+    Statistics offset_stat;
 };
 
 class GenerationalArenaAllocator
@@ -45,29 +58,14 @@ public:
     }
 
     void reset();
+    
+    ArenaAllocator const& get_fst_arena_allocator() const noexcept
+    { return fst_arena_allocator; }
+    ArenaAllocator const& get_snd_arena_allocator() const noexcept
+    { return snd_arena_allocator; }
 private:
     ArenaAllocator fst_arena_allocator;
     ArenaAllocator snd_arena_allocator;
     ArenaAllocator* current_allocator = &fst_arena_allocator;
     ArenaAllocator* previous_allocator = &snd_arena_allocator;
 };
-
-template< typename T >
-class TypedAllocator
-{
-public:
-    explicit TypedAllocator( size_t objects_per_block ) 
-    : arena_allocator( sizeof( T ) * objects_per_block ) {}
-
-    T* allocate( size_t n = 1 )
-    {
-        void* memory = arena_allocator.allocate( n * sizeof( T ), alignof( T ));
-        return static_cast< T* >( memory );
-    }
-
-    void deallocate( T*, size_t ) noexcept { /*do nothing*/ } // NOSONAR
-    void reset() { arena_allocator.reset(); }                                                            
-private:
-    ArenaAllocator arena_allocator;
-};
-

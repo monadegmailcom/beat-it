@@ -1,4 +1,5 @@
 #include "allocator.h"
+#include <atomic>
 #include <iostream>
 #include <stdexcept>
 #include <source_location>
@@ -23,7 +24,8 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment ) // NOSONAR
     // while loop for retry on concurrent block adding.
     while (true)
     {
-        Block* current_block = current_block_ptr.load(std::memory_order_acquire);
+        Block* current_block = current_block_ptr.load(
+            std::memory_order_acquire);
 
         size_t aligned_offset;
         size_t new_offset;
@@ -45,10 +47,12 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment ) // NOSONAR
             // double check concurrent block adding.
             if (current_block_ptr.load() == current_block)
             {
-                auto new_block = std::make_unique<Block>(current_block->size());
+                auto new_block = 
+                    std::make_unique<Block>(current_block->size());
                 Block* new_block_ptr = new_block.get();
-                blocks.push_back(std::move(new_block));
-                current_block_ptr.store(new_block_ptr, std::memory_order_release);
+                blocks.push_back( std::move( new_block ));
+                current_block_ptr.store(
+                    new_block_ptr, std::memory_order_release);
                 current_offset.store( 0, std::memory_order_relaxed );
             }
         }
@@ -56,9 +60,10 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment ) // NOSONAR
     }
 }
 
-void ArenaAllocator::reset()
+void ArenaAllocator::reset() noexcept
 {
     current_block_ptr.store( blocks.front().get(), std::memory_order_relaxed );
+    offset_stat.update( current_offset.load( std::memory_order_relaxed ));
     current_offset.store( 0, std::memory_order_relaxed );
 }
 

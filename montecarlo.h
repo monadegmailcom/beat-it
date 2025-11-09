@@ -37,8 +37,8 @@ public:
             simulations( simulations ), 
             root( new (allocator.allocate< pre_node_type >()) 
                 PreNode< MoveT, StateT, payload_type >( 
-                    MoveT(), payload_type {.next_move_itr = game.begin()}, 
-                    game )) {}
+                    game, MoveT(), payload_type {.next_move_itr = game.begin()} 
+                )) {}
 
     double uct( payload_type const& payload, size_t parent_visits )
     {
@@ -81,9 +81,8 @@ public:
             const MoveT move = *payload.next_move_itr++;
             auto& child = *(new (allocator.allocate< pre_node_type >()) 
                 pre_node_type( 
-                    move, 
-                    payload_type {.next_move_itr = pre_node.get_game().end()}, 
-                    pre_node.get_game().apply( move )));
+                    pre_node.get_game().apply( move ), move, 
+                    payload_type {.next_move_itr = pre_node.get_game().end()}));
 
             node.get_children().push_front( child );
             return child;

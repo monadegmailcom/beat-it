@@ -1,4 +1,5 @@
 #include "games/ultimate_ttt.h" // Includes alphazero.h etc.
+#include "statistics.h"
 
 using namespace std;
 
@@ -121,7 +122,7 @@ struct Session
             positions.clear();
             auto selfplay = make_unique< selfplay_type >(
                 *player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, 
-                positions, root_node_entropy_stat );
+                positions, root_node_entropy_stat, informed_selection_stat );
             selfplay->run();
 
             // push positions into queue.
@@ -164,6 +165,7 @@ struct Session
     atomic< bool > cleanup_requested = false;
 
     Statistics root_node_entropy_stat;
+    Statistics informed_selection_stat;
 
     state_type initial_state;
     inference_service_type inference_service;

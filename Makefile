@@ -51,7 +51,7 @@ RELEASE=-O3 -DNDEBUG
 
 # Set OPT based on the target
 ifeq ($(MAKECMDGOALS), test)
-    OPT=$(DEBUG)
+    OPT=$(RELEASE)
 endif
 
 # Set OPT for release targets
