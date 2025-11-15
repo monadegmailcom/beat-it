@@ -67,7 +67,10 @@ public:
         std::unique_ptr< torch::jit::script::Module >&& model, 
         torch::Device device, size_t max_batch_size ) 
     : service_type( max_batch_size ), device( device ), 
-      model( std::move( model )) {}
+      model( std::move( model )),
+      cpu_input_tensor( torch::empty(
+        { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
+        torch::kFloat32 )) {}
 
     // threadsafe replacement of model
     void update_model( 
@@ -78,14 +81,20 @@ public:
     }
 private:
     void inference( 
-        service_type::request_type request_batch[], size_t batch_size ) override
+        service_type::request_type request_batch[], 
+        service_type::response_type response_batch[], 
+        size_t batch_size ) override
     {
-        batch_tensors.clear();
-        for (size_t i = 0; i < batch_size; ++i)
-            batch_tensors.push_back( torch::from_blob(
-                const_cast< float* >( request_batch[i].state.data()), // NOSONAR
-                G, torch::kFloat32)); 
-        torch::Tensor input_batch = torch::stack( batch_tensors).to( device);
+        auto input_view = cpu_input_tensor.slice(0, 0, batch_size);
+        float* tensor_data_ptr = input_view.data_ptr<float>();
+        for (size_t i = 0; i < batch_size; ++i) {
+            std::copy_n(
+                request_batch[i].state.data(),
+                G,
+                tensor_data_ptr + i * G
+            );
+        }
+        torch::Tensor input_batch = input_view.to(device);
 
         torch::jit::IValue output_ivalue;
         {
@@ -104,19 +113,18 @@ private:
         for (size_t i = 0; i < batch_size; ++i)
         {
             auto& request = request_batch[i];
-            inference::Response< P > response {
-                .node = request.node,
-                .nn_value = value_batch[i].item< float >()
-            };
+            auto& response = response_batch[i];
+
+            response.node = request.node;
+            response.nn_value = value_batch[i].item< float >();
+            
             std::copy_n(
                 policy_batch[i].data_ptr< float >(), P,
                 response.policies.begin());
-            while (!request.response_queue->push( response ))
-                std::this_thread::yield();
         }
     }
 
-    std::vector< torch::Tensor > batch_tensors;
+    torch::Tensor cpu_input_tensor;
     torch::Device device;
     std::unique_ptr< torch::jit::script::Module > model;
     std::mutex model_update_mutex;

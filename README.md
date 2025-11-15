@@ -11,6 +11,7 @@ ki engine for two player games
   - `pip install -r train/requirements.txt`
   - on mac make the gatekeeper happy
     - xattr -d com.apple.quarantine /Users/wrqpjzc/source/libtorch/lib/*.dylib
+  - regenerate compile_commands.json with bear -- make
 
 ## Requirements on linux (ubuntu 25.04)
 - sudo apt-get install libboost-all-dev

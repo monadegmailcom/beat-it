@@ -26,6 +26,7 @@ template< size_t G, size_t P >
 struct Request 
 {
     boost::lockfree::queue< Response< P >>* response_queue;
+    std::condition_variable* cv;
     void* node;
     std::array< float, G > state;
 };
@@ -80,6 +81,7 @@ public:
     {
         // Signal the workers to stop.
         stop_source.request_stop();
+        inference_worker.join();
     }
 
     // blocks if max queue size is reached. this slows down production of new
@@ -114,14 +116,44 @@ public:
 
     size_t get_max_batch_size() const noexcept{ return max_batch_size; }
 protected:
-    // promise: feed all batched requests into the nn and push results into
-    // response queues. 
-    virtual void inference( request_type[], size_t batch_size ) = 0; 
+    // promise: feed all batched requests into the nn and put results into
+    // response array. 
+    virtual void inference( 
+        request_type[], response_type[], size_t batch_size ) = 0; 
 private:
+    void deliver_responses( //NOSONAR
+        request_type requests[], response_type responses[], size_t batch_size)
+    {
+        std::vector< std::pair< request_type, response_type >> postponed;
+        while (true)
+        {
+            for (size_t i = 0; i < batch_size; ++i)
+            {
+                auto& request = requests[i];
+                auto& response = responses[i];
+                if (request.response_queue->push( response ))
+                    request.cv->notify_one();
+                else
+                    postponed.push_back( { request, response } );
+            }
+            if (postponed.empty())
+                break;
+
+            for (size_t i = 0; i < postponed.size(); ++i)
+            {
+                requests[i] = postponed[i].first;
+                responses[i] = postponed[i].second;
+            } 
+            postponed.clear();
+            std::this_thread::yield();
+        } 
+    }
+
     // not thread-safe.
     void run( std::stop_token token)
     {
         std::vector< request_type > request_batch( max_batch_size ); 
+        std::vector< response_type > response_batch( max_batch_size );
         size_t batch_size = 0;
 
         while (!token.stop_requested())
@@ -130,7 +162,11 @@ private:
             // max_batch_size.
             while (   batch_size != max_batch_size 
                    && inference_queue.pop( request_batch[batch_size] ))
+            {
                 ++batch_size;
+                // signal available slot in inference queue. 
+                free_inference_slots.release();
+            }
 
             if (!batch_size)
                 // gracefully yield if no request is queued.
@@ -142,11 +178,13 @@ private:
                 { 
                     TimeStats duration_per_request( 
                         inference_time_stats_, batch_size );
-                    inference( request_batch.data(), batch_size ); 
+                    inference( 
+                        request_batch.data(), response_batch.data(), 
+                        batch_size ); 
                 }
-                // signal available slots in inference queue. 
-                free_inference_slots.release( batch_size );
 
+                deliver_responses( 
+                    request_batch.data(), response_batch.data(), batch_size ); 
                 batch_size_stats_.update( batch_size );
                 batch_size = 0;
             }

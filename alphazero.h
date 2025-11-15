@@ -130,8 +130,8 @@ public:
     virtual ~Player() noexcept
     {
         stop_source.request_stop();
-        // put poison pill.
-        remaining_simulations.release();
+        // release all potentially waiting workers
+        remaining_simulations.release( thread_pool.size());
         thread_pool.clear();
     }
 
@@ -201,9 +201,9 @@ private:
         {    
             // pushing a request to the inference service may block if the
             // request queue is full.
-            
             player.inference_service.push( {
                 .response_queue = &player.response_queue,
+                .cv = &player.simulations_cond,
                 .node = &node,
                 .state = player.serialize_state( node.get_game())
             });
@@ -229,12 +229,10 @@ private:
                 1, std::memory_order_relaxed);
         }
 
+        // require: child has children.
         // not thread-safe.
         void select( base_node_type& node )
         {
-            while (node.get_children().empty())
-                std::this_thread::yield();
-
             selected_node = &*std::ranges::max_element(
                 node.get_children(),
                 [this, 
@@ -251,6 +249,7 @@ private:
         void visit( fix_node_type& node ) noexcept override
         {
             update_selection_stats( node );
+            // fix nodes have children.
             select( node );
         }
 
@@ -258,6 +257,9 @@ private:
         void visit( pre_node_type& node ) noexcept override
         {
             update_selection_stats( node );
+
+            while (node.get_children().empty())
+                std::this_thread::yield();
 
             // multiple threads are allowed to read access, but it blocks if
             // the node is expanding right now.
@@ -275,8 +277,7 @@ private:
         auto& payload = node.get_payload();
 
         // Atomically update visit count. on first visit expand leaf node.
-        const bool is_leaf_node = 
-            payload.visits.fetch_add( 1, std::memory_order_relaxed) == 0;
+        const bool is_leaf_node = payload.visits.fetch_add( 1 ) == 0;
         // apply virtual loss to avoid entering this path from the 
         // parent's node perspective, so increase nn_value;
         payload.nn_value_sum.fetch_add( 
@@ -320,18 +321,19 @@ private:
     // return move to choose.
     node_type& run_simulations()
     {        
+        unfinished_simulations.store( game_play.simulations );
         // wake up waiting worker threads by initializing resource.
         remaining_simulations.release( game_play.simulations );
-        unfinished_simulations.store( 
-            game_play.simulations, std::memory_order_relaxed );
 
-        // gracefully spin until all simulations finished.
-        while (unfinished_simulations.load( std::memory_order_relaxed) > 0)
+        // wait until all simulations finished.
+        std::unique_lock lock( simulations_mutex );
+        while (unfinished_simulations.load() != 0)
         {
-            process_response_queue(); 
-            std::this_thread::yield();
+            simulations_cond.wait( 
+                lock, [this] { return !response_queue.empty() || unfinished_simulations.load() == 0; }); 
+            process_response_queue();
         }
-       
+        
         if (++move_count <= game_play.opening_moves)
             return choose_opening_move();
         else
@@ -371,7 +373,7 @@ private:
 
         return q + c * p;
     }
-
+    
     // lockfree setting of policies and nn value and backpropagation.
     // require: mode is undecided.
     // thread-safe.
@@ -416,25 +418,20 @@ private:
             // toggle sign
             nn_value = -nn_value;
         }
-
-        unfinished_simulations.fetch_sub( 1, std::memory_order_relaxed);
+        
+        unfinished_simulations.fetch_sub( 1 );
+        simulations_cond.notify_one();
     }
 
     // thread-safe.
     void worker( std::stop_token token )
     {
-        while (true)
+        while (!token.stop_requested())
         {
-            // first backpropagate nn responses.
-            process_response_queue();
-
-            // then simulate. wait if all simulation resources are spent. 
             remaining_simulations.acquire();
-            if (token.stop_requested())
-                break;
             simulation( root );
         }
-    }
+    }    
 
     // require: root node is expanded
     node_type& choose_opening_move()
@@ -478,6 +475,8 @@ private:
     std::vector< std::jthread > thread_pool;
     std::counting_semaphore<> remaining_simulations {0};
     std::atomic< size_t > unfinished_simulations {0};
+    std::mutex simulations_mutex;
+    std::condition_variable simulations_cond;
     std::stop_source stop_source; 
     inference_service_type& inference_service;
     const float virtual_loss = 1.0; // must be positive
@@ -486,9 +485,9 @@ private:
     std::atomic< size_t > informed_selections { 0 };
     std::atomic< size_t > total_selections { 0 };
 };
-
+    
 namespace training {
-
+    
 template< size_t G, size_t P >
 struct Position
 {
@@ -552,7 +551,7 @@ public:
             append_training_data( game );
             // update game.
             game = game.apply( node.get_move());
-            
+           
             root_node_entropy_stat.update( shannon_entropy( root ));
 
             informed_selection_stats.update( 

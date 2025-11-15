@@ -1,56 +1,56 @@
 [
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c allocator.cpp -o obj/allocator.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c allocator.cpp -o obj/allocator.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/allocator.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c alphazero.cpp -o obj/alphazero.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c alphazero.cpp -o obj/alphazero.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/alphazero.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c game.cpp -o obj/game.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c game.cpp -o obj/game.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/game.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c lib_interface.cpp -o obj/lib_interface.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c lib_interface.cpp -o obj/lib_interface.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/lib_interface.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c libtorch_util.cpp -o obj/libtorch_util.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c libtorch_util.cpp -o obj/libtorch_util.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/libtorch_util.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c minimax.cpp -o obj/minimax.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c minimax.cpp -o obj/minimax.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/minimax.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c statistics.cpp -o obj/statistics.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c statistics.cpp -o obj/statistics.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/statistics.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c test.cpp -o obj/test.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c test.cpp -o obj/test.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/test.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/nim.cpp -o obj/games/nim.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/nim.cpp -o obj/games/nim.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/games/nim.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/tic_tac_toe.cpp -o obj/games/tic_tac_toe.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/tic_tac_toe.cpp -o obj/games/tic_tac_toe.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/games/tic_tac_toe.cpp"
     },
     {
-        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/Cellar/boost/1.89.0/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/ultimate_ttt.cpp -o obj/games/ultimate_ttt.o",
+        "command": "/opt/homebrew/opt/llvm/bin/clang++ -std=c++23 -Wall -pedantic -g -O3  -isystem/opt/homebrew/opt/boost/include/ -isystem/Users/monade/source/libtorch/include/ -isystem/Users/monade/source/libtorch/include/torch/csrc/api/include/ -isystem/opt/homebrew/opt/llvm/include  -fPIC -c -MMD -MP -c games/ultimate_ttt.cpp -o obj/games/ultimate_ttt.o",
         "directory": "/Users/monade/source/beat-it",
         "file": "/Users/monade/source/beat-it/games/ultimate_ttt.cpp"
     }

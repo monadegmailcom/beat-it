@@ -12,7 +12,7 @@ ifeq ($(UNAME_S), Darwin)
     LLVM_PATH=/opt/homebrew/opt/llvm
     CC=$(LLVM_PATH)/bin/clang++
     HOMEBREW=/opt/homebrew/Cellar
-    BOOST_PATH=$(HOMEBREW)/boost/1.89.0
+    BOOST_PATH=$(shell brew --prefix boost)
 	BOOST_INCLUDE_PATH=-isystem$(BOOST_PATH)/include/
     LIBTORCH_PATH=/Users/monade/source/libtorch
 	CXX_ABI_FLAGS=
@@ -51,7 +51,7 @@ RELEASE=-O3 -DNDEBUG
 
 # Set OPT based on the target
 ifeq ($(MAKECMDGOALS), test)
-    OPT=$(RELEASE)
+    OPT=$(DEBUG)
 endif
 
 # Set OPT for release targets
@@ -78,6 +78,12 @@ beat-it: $(MAIN_OBJS)
 
 test: $(TEST_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -o $(ODIR)/test $(TEST_OBJS) $(LINK)
+
+test_tsan: $(TEST_OBJS)
+	$(CC) $(UNIVERSAL_FLAGS) -fsanitize=thread -o $(ODIR)/test_tsan $(TEST_OBJS) $(LINK)
+
+test_asan: $(TEST_OBJS)
+	$(CC) $(UNIVERSAL_FLAGS) -fsanitize=address -o $(ODIR)/test_asan $(TEST_OBJS) $(LINK)
 
 shared: $(SHARED_OBJS)
 	$(CC) $(UNIVERSAL_FLAGS) -shared -o $(ODIR)/libalphazero.so $(SHARED_OBJS) $(LINK)

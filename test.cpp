@@ -877,6 +877,7 @@ WorkerResult uttt_selfplay_worker(
             result.positions, result.root_node_entropy_stats, 
             result.informed_selection_stats );
         self_play.run();
+        allocator.reset();
         player_index = toggle(player_index);
     }
    
@@ -904,69 +905,93 @@ void uttt_alphazero_training()
     torch::Device device = libtorch::get_device();
     const char* const model_path = "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
-    size_t simulations = 10; // 800;
-    const size_t worker_threads = 1; 
-    const size_t selfplay_threads = 1;
+    size_t simulations = 10;
+    const size_t worker_threads = 4; 
+    const size_t selfplay_threads = 2;
     const size_t max_batch_size = 320;
     uttt::alphazero::libtorch::InferenceService inference_service(
         std::move( model ), device, max_batch_size );
     vector< future< WorkerResult >> thread_pool( worker_threads );
-    const size_t number_of_games = 1; 
+    const size_t number_of_games = 8; 
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
     using pre_node_type = 
         PreNode< uttt::Move, uttt::State, uttt::alphazero::Payload >;
-    const size_t allocator_block_size = 
-        50 * simulations * sizeof( pre_node_type );
     unsigned local_seed = seed;
-    cout << "worker threads: " << thread_pool.size() << "\n"
-        << "selfplay threads: " << selfplay_threads <<  "\n"
-        << "max batch size: " << max_batch_size <<  "\n"
-        << "simulations: " << simulations << "\n"
-        << "games: " << number_of_games << "\n"
-        << "allocator block size: " << allocator_block_size << "\n"
-        << endl;
-
-    auto start = std::chrono::steady_clock::now();
-    for (auto& future : thread_pool)
-    {    
-        future = async(
-            uttt_selfplay_worker, ref(inference_service), hp, selfplay_threads,
-            runs_per_worker_thread, simulations, local_seed, 
-            allocator_block_size );
-        ++local_seed;
-    }
-    cout << "wait for all threads to finish..." << endl;
-    size_t total_positions = 0;
-    Statistics root_node_entropy_stats;
-    Statistics informed_selection_stats;
-    Statistics allocator_offset_stats;
-    size_t allocated_blocks = 0;
-    for (auto& future : thread_pool)
+    size_t rounds = 7;
+    ostringstream oss;
+    oss << "games;parallelGames;parallelSims;maxBatchSize;batchMean;batchStddef;timeMean;timeStddef;Entr;InfSel;DurPerPos;Sims;Dur\n";
+    for (size_t i = rounds; i; --i)
     {
-        auto result = future.get();
-        total_positions += result.positions.size();
-        root_node_entropy_stats.join( result.root_node_entropy_stats );
-        informed_selection_stats.join( result.informed_selection_stats );
-        allocator_offset_stats.join( result.allocator_offset_stats );
-        allocated_blocks += result.allocated_blocks;
+        const size_t allocator_block_size = 
+            50 * simulations * sizeof( pre_node_type );
+        cout << "worker threads: " << thread_pool.size() << "\n"
+            << "selfplay threads: " << selfplay_threads <<  "\n"
+            << "max batch size: " << max_batch_size <<  "\n"
+            << "simulations: " << simulations << "\n"
+            << "games: " << number_of_games << "\n"
+            << "allocator block size: " << allocator_block_size << "\n"
+            << endl;
+
+        auto start = std::chrono::steady_clock::now();
+        for (auto& future : thread_pool)
+        {    
+            future = async(
+                uttt_selfplay_worker, ref(inference_service), hp, selfplay_threads,
+                runs_per_worker_thread, simulations, local_seed, 
+                allocator_block_size );
+            ++local_seed;
+        }
+        cout << "wait for all threads to finish..." << endl;
+        size_t total_positions = 0;
+        Statistics root_node_entropy_stats;
+        Statistics informed_selection_stats;
+        Statistics allocator_offset_stats;
+        size_t allocated_blocks = 0;
+        for (auto& future : thread_pool)
+        {
+            auto result = future.get();
+            total_positions += result.positions.size();
+            root_node_entropy_stats.join( result.root_node_entropy_stats );
+            informed_selection_stats.join( result.informed_selection_stats );
+            allocator_offset_stats.join( result.allocator_offset_stats );
+            allocated_blocks += result.allocated_blocks;
+        }
+        const std::chrono::duration<float> duration =
+            std::chrono::steady_clock::now() - start;
+        
+        cout << "total positions: " << total_positions << endl
+            << "inference manager batch size stats:\n" 
+            << inference_service.batch_size_stats() << '\n'
+            << "inference manager time stats:\n" 
+            << inference_service.inference_time_stats() << '\n'
+            << "root node entropy stats:\n" 
+            << root_node_entropy_stats << '\n'
+            << "informed selection stats:\n" 
+            << informed_selection_stats << '\n'
+            << "allocator offset stats:\n" 
+            << allocator_offset_stats << '\n'
+            << "allocated blocks: " << allocated_blocks << '\n'
+            << "selfplay run duration: " << duration << '\n'
+            << endl;
+        
+        oss << number_of_games << ";" 
+            << thread_pool.size() << ";" 
+            << selfplay_threads << ";" 
+            << max_batch_size << ";" 
+            << inference_service.batch_size_stats().mean() << ";" 
+            << inference_service.batch_size_stats().stddev() << ";" 
+            << inference_service.inference_time_stats().mean() << ";" 
+            << inference_service.inference_time_stats().stddev() << ";" 
+            << root_node_entropy_stats.mean() << ";" 
+            << informed_selection_stats.mean() << ";" 
+            << static_cast< float >( duration.count()) / total_positions << ";" 
+            << simulations << ";" 
+            << duration << endl;
+
+        simulations *= 2;
+        inference_service.reset_stats();
     }
-    const std::chrono::duration<float> duration =
-        std::chrono::steady_clock::now() - start;
-    
-    cout << "total positions: " << total_positions << endl
-        << "inference manager batch size stats:\n" 
-        << inference_service.batch_size_stats() << '\n'
-        << "inference manager time stats:\n" 
-        << inference_service.inference_time_stats() << '\n'
-        << "root node entropy stats:\n" 
-        << root_node_entropy_stats << '\n'
-        << "informed selection stats:\n" 
-        << informed_selection_stats << '\n'
-        << "allocator offset stats:\n" 
-        << allocator_offset_stats << '\n'
-        << "allocated blocks: " << allocated_blocks << '\n'
-        << "selfplay run duration: " << duration << '\n'
-        << endl;
+    cout << oss.str() << endl;
 }
 
 /*
