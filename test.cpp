@@ -906,9 +906,9 @@ void uttt_alphazero_training()
     const char* const model_path = "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
     size_t simulations = 10; // 80;
-    const size_t worker_threads = 4; 
-    const size_t selfplay_threads = 2;
-    const size_t max_batch_size = 320;
+    const size_t worker_threads = 8; 
+    const size_t selfplay_threads = 1;
+    const size_t max_batch_size = 64; //320;
     uttt::alphazero::libtorch::InferenceService inference_service(
         std::move( model ), device, max_batch_size );
     vector< future< WorkerResult >> thread_pool( worker_threads );

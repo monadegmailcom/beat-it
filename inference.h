@@ -169,6 +169,7 @@ private:
             }
 
             if (!batch_size)
+                // this spinning condition should be rare.
                 // gracefully yield if no request is queued.
                 std::this_thread::yield();
             else

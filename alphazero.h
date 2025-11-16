@@ -288,6 +288,9 @@ private:
             const float value = game_result_2_score(
                 node.get_game_result(), node.get_current_player_index());
             backpropagation( node, {}, value ); 
+            // notify waiting thread because this update does not go through
+            // nn evaluation.
+            simulations_cond.notify_one();
         }
         else if (is_leaf_node)
         {
@@ -326,11 +329,27 @@ private:
         remaining_simulations.release( game_play.simulations );
 
         // wait until all simulations finished.
+        // note: wait with timeout because under rare conditions wait can 
+        // block forever. dead-lock scenario:
+        // - no remaining simulations
+        // - all simulation workers block in acquire
+        // - inference service calculates some requests
+        // - response queue is empty and no unfinished simulations
+        // - cv wait condition is met but not entered blocking wait yet
+        // - inference service pushes last responses and the cv notify is lost
+        // - enter blocking cv wait
+        // - cv will never be notified
         std::unique_lock lock( simulations_mutex );
         while (unfinished_simulations.load() != 0)
         {
-            simulations_cond.wait( 
-                lock, [this] { return !response_queue.empty() || unfinished_simulations.load() == 0; }); 
+            simulations_cond.wait_for( 
+                lock, 
+                std::chrono::milliseconds( 1000 ),
+                [this] 
+                { 
+                    return    !response_queue.empty() 
+                           || unfinished_simulations.load() == 0; 
+                }); 
             process_response_queue();
         }
         
@@ -420,7 +439,6 @@ private:
         }
         
         unfinished_simulations.fetch_sub( 1 );
-        simulations_cond.notify_one();
     }
 
     // thread-safe.

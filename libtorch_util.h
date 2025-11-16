@@ -69,19 +69,25 @@ public:
     : service_type( max_batch_size ), device( device ), 
       model( std::move( model ))
     {
-        auto options = torch::TensorOptions().dtype(torch::kFloat32);
+        auto cpu_options = torch::TensorOptions().dtype(torch::kFloat32);
         if (device.type() == torch::kCUDA) {
-            options = options.pinned_memory(true);
+            cpu_options = cpu_options.pinned_memory(true);
         }
         cpu_input_tensor = torch::empty(
             { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
-            options);
+            cpu_options);
+        
+        auto gpu_options = torch::TensorOptions().device(device).dtype(torch::kFloat32);
+        gpu_input_tensor = torch::empty(
+            { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
+            gpu_options);
+
         cpu_value_tensor = torch::empty(
             { static_cast<long>(max_batch_size), 1 },
-            options);
+            cpu_options);
         cpu_policy_tensor = torch::empty(
             { static_cast<long>(max_batch_size), static_cast<long>(P) },
-            options);
+            cpu_options);
     }
 
     // threadsafe replacement of model
@@ -97,6 +103,13 @@ private:
         service_type::response_type response_batch[], 
         size_t batch_size ) override
     {
+        // Lock the module while running inference to prevent it from being
+        // replaced by an update call from another thread mid-operation.
+        std::scoped_lock _( model_update_mutex );
+
+        // copy data to cpu tensor.
+        // note: gemini suggests to first copy data to cpu tensor and then move 
+        // it to gpu tensor. it is not entirely clear to my, why.
         auto cpu_input_view = cpu_input_tensor.narrow(0, 0, batch_size);
         float* tensor_data_ptr = cpu_input_view.template data_ptr<float>();
         for (size_t i = 0; i < batch_size; ++i) {
@@ -111,16 +124,17 @@ private:
         torch::Tensor cpu_policy_view;
 
         {
-            // Lock the module while running inference to prevent it from being
-            // replaced by an update call from another thread mid-operation.
-            std::scoped_lock _( model_update_mutex);
+            auto gpu_input_view = gpu_input_tensor.narrow(0, 0, batch_size);
+            // copy data to gpu asynchronously.
+            gpu_input_view.copy_(cpu_input_view, true);
 
-            auto gpu_input = cpu_input_view.to(device, true);
-            // no model training, seems to have affect on the memory handling,
-            // if not set, crashes with mps gpu 
+            // set mode to no model training, seems to have affect on the 
+            // memory handling. if not set, crashes with mps gpu.
             c10::InferenceMode guard;
-            torch::jit::IValue output_ivalue = model->forward({gpu_input});
+            // the actual inference step.
+            torch::jit::IValue output_ivalue = model->forward({gpu_input_view});
 
+            // copy data back to cpu.
             auto output_tuple = output_ivalue.toTuple();
             
             auto gpu_value_batch = output_tuple->elements()[0].toTensor();
@@ -130,12 +144,14 @@ private:
             cpu_policy_view = cpu_policy_tensor.narrow(0, 0, batch_size);
             cpu_value_view.copy_(gpu_value_batch, true);
             cpu_policy_view.copy_(gpu_policy_batch, true);
+            // synchronize memory operations.
             if (device.type() == torch::kMPS)
                 torch::mps::synchronize();
             else if (device.type() == torch::kCUDA)
                 torch::cuda::synchronize();
         }
 
+        // copy data from cpu tensor to response structures.
         for (size_t i = 0; i < batch_size; ++i)
         {
             auto& request = request_batch[i];
@@ -153,6 +169,7 @@ private:
     torch::Device device;
     std::unique_ptr< torch::jit::script::Module > model;
     torch::Tensor cpu_input_tensor;
+    torch::Tensor gpu_input_tensor;
     torch::Tensor cpu_value_tensor;
     torch::Tensor cpu_policy_tensor;
     std::mutex model_update_mutex;
