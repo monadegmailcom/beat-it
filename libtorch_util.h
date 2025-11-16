@@ -67,10 +67,22 @@ public:
         std::unique_ptr< torch::jit::script::Module >&& model, 
         torch::Device device, size_t max_batch_size ) 
     : service_type( max_batch_size ), device( device ), 
-      model( std::move( model )),
-      cpu_input_tensor( torch::empty(
-        { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
-        torch::kFloat32 )) {}
+      model( std::move( model ))
+    {
+        auto options = torch::TensorOptions().dtype(torch::kFloat32);
+        if (device.type() == torch::kCUDA) {
+            options = options.pinned_memory(true);
+        }
+        cpu_input_tensor = torch::empty(
+            { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
+            options);
+        cpu_value_tensor = torch::empty(
+            { static_cast<long>(max_batch_size), 1 },
+            options);
+        cpu_policy_tensor = torch::empty(
+            { static_cast<long>(max_batch_size), static_cast<long>(P) },
+            options);
+    }
 
     // threadsafe replacement of model
     void update_model( 
@@ -85,8 +97,8 @@ private:
         service_type::response_type response_batch[], 
         size_t batch_size ) override
     {
-        auto input_view = cpu_input_tensor.slice(0, 0, batch_size);
-        float* tensor_data_ptr = input_view.data_ptr<float>();
+        auto cpu_input_view = cpu_input_tensor.narrow(0, 0, batch_size);
+        float* tensor_data_ptr = cpu_input_view.template data_ptr<float>();
         for (size_t i = 0; i < batch_size; ++i) {
             std::copy_n(
                 request_batch[i].state.data(),
@@ -94,39 +106,55 @@ private:
                 tensor_data_ptr + i * G
             );
         }
-        torch::Tensor input_batch = input_view.to(device);
+        
+        torch::Tensor cpu_value_view; 
+        torch::Tensor cpu_policy_view;
 
-        torch::jit::IValue output_ivalue;
         {
             // Lock the module while running inference to prevent it from being
             // replaced by an update call from another thread mid-operation.
             std::scoped_lock _( model_update_mutex);
-            output_ivalue = model->forward({input_batch});
+
+            auto gpu_input = cpu_input_view.to(device, true);
+            // no model training, seems to have affect on the memory handling,
+            // if not set, crashes with mps gpu 
+            c10::InferenceMode guard;
+            torch::jit::IValue output_ivalue = model->forward({gpu_input});
+
+            auto output_tuple = output_ivalue.toTuple();
+            
+            auto gpu_value_batch = output_tuple->elements()[0].toTensor();
+            auto gpu_policy_batch = output_tuple->elements()[1].toTensor();
+
+            cpu_value_view = cpu_value_tensor.narrow(0, 0, batch_size);
+            cpu_policy_view = cpu_policy_tensor.narrow(0, 0, batch_size);
+            cpu_value_view.copy_(gpu_value_batch, true);
+            cpu_policy_view.copy_(gpu_policy_batch, true);
+            if (device.type() == torch::kMPS)
+                torch::mps::synchronize();
+            else if (device.type() == torch::kCUDA)
+                torch::cuda::synchronize();
         }
 
-        auto output_tuple = output_ivalue.toTuple();
-        torch::Tensor value_batch = 
-            output_tuple->elements()[0].toTensor().to( torch::kCPU);
-        torch::Tensor policy_batch = 
-            output_tuple->elements()[1].toTensor().to( torch::kCPU);
-    
         for (size_t i = 0; i < batch_size; ++i)
         {
             auto& request = request_batch[i];
             auto& response = response_batch[i];
 
             response.node = request.node;
-            response.nn_value = value_batch[i].item< float >();
+            response.nn_value = cpu_value_view[i].template item< float >();
             
             std::copy_n(
-                policy_batch[i].data_ptr< float >(), P,
+                cpu_policy_view[i].template data_ptr< float >(), P,
                 response.policies.begin());
         }
     }
 
-    torch::Tensor cpu_input_tensor;
     torch::Device device;
     std::unique_ptr< torch::jit::script::Module > model;
+    torch::Tensor cpu_input_tensor;
+    torch::Tensor cpu_value_tensor;
+    torch::Tensor cpu_policy_tensor;
     std::mutex model_update_mutex;
 };
 

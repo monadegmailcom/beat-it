@@ -905,7 +905,7 @@ void uttt_alphazero_training()
     torch::Device device = libtorch::get_device();
     const char* const model_path = "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
-    size_t simulations = 10;
+    size_t simulations = 10; // 80;
     const size_t worker_threads = 4; 
     const size_t selfplay_threads = 2;
     const size_t max_batch_size = 320;
@@ -989,7 +989,6 @@ void uttt_alphazero_training()
             << duration << endl;
 
         simulations *= 2;
-        inference_service.reset_stats();
     }
     cout << oss.str() << endl;
 }
