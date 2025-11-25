@@ -33,14 +33,13 @@ public:
     { return blocks.size(); }
     
     // not thread safe.
-    Statistics const& current_offset_stat() const noexcept 
-    { return offset_stat; }
+    size_t get_current_offset() const noexcept 
+    { return current_offset; }
 private:
     std::deque< std::unique_ptr< Block >> blocks;
     std::mutex block_mutex;
     std::atomic< Block* > current_block_ptr {nullptr};
     std::atomic< size_t > current_offset {0};
-    Statistics offset_stat;
 };
 
 class GenerationalArenaAllocator
@@ -57,6 +56,8 @@ public:
         return current_allocator->allocate< T >( n );
     }
 
+    size_t allocated_size() const noexcept;
+
     void reset();
     
     ArenaAllocator const& get_fst_arena_allocator() const noexcept
@@ -64,6 +65,7 @@ public:
     ArenaAllocator const& get_snd_arena_allocator() const noexcept
     { return snd_arena_allocator; }
 private:
+    const size_t block_size;
     ArenaAllocator fst_arena_allocator;
     ArenaAllocator snd_arena_allocator;
     ArenaAllocator* current_allocator = &fst_arena_allocator;

@@ -31,26 +31,6 @@ struct Request
     std::array< float, G > state;
 };
 
-struct TimeStats // NOSONAR
-{
-    TimeStats( Statistics& stats, size_t divisor ) 
-    : stats( stats ), divisor( divisor ) {}
-
-    ~TimeStats()
-    {
-        const auto duration =
-            std::chrono::duration<float, std::micro>(
-                std::chrono::steady_clock::now() - start
-            ) / divisor;
-        stats.update( static_cast<size_t>(duration.count()));
-    }
-
-    std::chrono::steady_clock::time_point start = 
-        std::chrono::steady_clock::now();
-    Statistics& stats;
-    size_t divisor;
-};
-
 /* prefer bandwidth over latency with a 2-step pipeline: 
    1. queue requests waiting for nn evaluation. usually involves gpu processing.
       one dedicated worker for inference queue processing.
@@ -99,19 +79,6 @@ public:
             // undo resource acquisition if push fails (increase)
             free_inference_slots.release();
         }
-    }
-
-    Statistics const& batch_size_stats() const noexcept
-    { return batch_size_stats_; }
-
-    Statistics const& inference_time_stats() const noexcept
-    { return inference_time_stats_; }
-
-    // not thread-safe.
-    void reset_stats() noexcept
-    {
-        batch_size_stats_.reset();
-        inference_time_stats_.reset();
     }
 
     size_t get_max_batch_size() const noexcept{ return max_batch_size; }
@@ -174,19 +141,12 @@ private:
                 std::this_thread::yield();
             else
             {
-                // process requests.
-                // call inference implementation and measure duration.
-                { 
-                    TimeStats duration_per_request( 
-                        inference_time_stats_, batch_size );
-                    inference( 
-                        request_batch.data(), response_batch.data(), 
-                        batch_size ); 
-                }
+                // process requests, call inference implementation.
+                inference( 
+                    request_batch.data(), response_batch.data(), batch_size ); 
 
                 deliver_responses( 
                     request_batch.data(), response_batch.data(), batch_size ); 
-                batch_size_stats_.update( batch_size );
                 batch_size = 0;
             }
         }
@@ -196,8 +156,6 @@ private:
     std::jthread inference_worker;
     std::stop_source stop_source; 
     boost::lockfree::queue< request_type > inference_queue;
-    Statistics batch_size_stats_;
-    Statistics inference_time_stats_;
     std::counting_semaphore<> free_inference_slots;
 };
 

@@ -12,6 +12,21 @@ struct DataPointers {
     int32_t* player_indices = nullptr; // 1 int32_t
 };
 
+struct CppStats {
+    float min;
+    float max;
+    float mean;
+    float stddev;
+};
+
+void statistic_to_cpp_stat( Statistics const& stat, CppStats& cpp)
+{
+    cpp.min = stat.min();
+    cpp.max = stat.max();
+    cpp.mean = stat.mean();
+    cpp.stddev = stat.stddev();
+}
+
 // The Session struct encapsulates all state for a single training run.
 // This avoids global variables and allows for multiple independent sessions.
 template< typename PlayerT >
@@ -38,17 +53,26 @@ struct Session
         std::unique_ptr< torch::jit::script::Module >&& model,
         libtorch::Hyperparameters const& hp )
     : queue( hp.max_batch_size ), hp( hp ), initial_state( initial_state ),
+      thread_pool( hp.parallel_games ), 
       inference_service( 
-        std::move( model ), libtorch::get_device(), hp.max_batch_size)
+        std::move( model ), libtorch::get_device(), hp.max_batch_size )
     {
-        thread_pool.resize( hp.parallel_games );
+        allocators.reserve( hp.parallel_games );
+        for (size_t i = 0; i < hp.parallel_games; ++i)
+            allocators.push_back( make_unique< allocator_type >(
+                hp.nodes_per_block * sizeof( node_type )));
+
         cout << "start " << thread_pool.size()
             << " parallel games" << endl;
+        size_t i = 0;
         for (auto& future : thread_pool) 
-            future = async( &Session::worker, this );
+            future = async( 
+                &Session::worker, this, std::ref( *allocators[i++] ));
     } 
 
-    void set_model( libtorch::DataBuffer model_buffer )
+    void set_model( 
+        libtorch::DataBuffer model_buffer, CppStats& inference_batch_size, 
+        CppStats& inference_time )
     {
         if (cleanup_requested)
             return;
@@ -56,7 +80,13 @@ struct Session
         torch::Device device = libtorch::get_device();
         auto model = libtorch::load_model( model_buffer, device );
 
-        inference_service.update_model( std::move( model ));
+        Statistics batch_size_stat;
+        Statistics inference_time_stat;
+
+        inference_service.update_model( 
+            std::move( model ), batch_size_stat, inference_time_stat );
+        statistic_to_cpp_stat( batch_size_stat, inference_batch_size );
+        statistic_to_cpp_stat( inference_time_stat, inference_time );
     }
 
     void fetch_selfplay_data(
@@ -94,14 +124,13 @@ struct Session
         queue_cv.notify_all();
     }
 
-    void worker()
+    void worker(allocator_type& allocator )
     {
         // use some tls resources
         mt19937 g { random_device{}() }; //NOSONAR
 
         // thread local memory allocator and position buffer avoid 
         // synchronization delays
-        allocator_type allocator( hp.nodes_per_block * sizeof( node_type ));
         vector< position_type > positions;
 
         // start with player 1, toggle for each self play run
@@ -115,19 +144,22 @@ struct Session
                 .opening_moves = hp.opening_moves,
                 .parallel_simulations = hp.parallel_simulations };
 
-            auto player = make_unique< player_type >(
+            player_type player(
                 game_type( player_index, initial_state ), ucb_params, 
                 gameplay_params, g(), allocator, inference_service );
 
             positions.clear();
-            auto selfplay = make_unique< selfplay_type >(
-                *player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, 
+            selfplay_type selfplay(
+                player, hp.dirichlet_alpha, hp.dirichlet_epsilon, g, 
                 positions, root_node_entropy_stat, informed_selection_stat );
-            selfplay->run();
+            selfplay.run();
+            {
+                lock_guard lock( allocator_mutex );
+                allocator_stat.update( allocator.allocated_size()); 
+            }
 
-            // push positions into queue.
+            // push positions into queue. block if queue is full.
             for (auto const& pos : positions)
-                // enter blocking wait if queue is full.
                 while (!queue.push( pos ))
                 {
                     unique_lock lock( queue_mutex );
@@ -155,27 +187,22 @@ struct Session
     }
 
     boost::lockfree::queue< position_type > queue;
+    libtorch::Hyperparameters hp;
+    state_type initial_state;
     mutex queue_mutex;
     condition_variable queue_cv;
 
     vector< future< void >> thread_pool;
-
-    libtorch::Hyperparameters hp;
+    vector< unique_ptr< allocator_type >> allocators;
 
     atomic< bool > cleanup_requested = false;
 
     Statistics root_node_entropy_stat;
     Statistics informed_selection_stat;
+    Statistics allocator_stat;
+    mutex allocator_mutex;
 
-    state_type initial_state;
     inference_service_type inference_service;
-};
-
-struct CppStats {
-    float min;
-    float max;
-    float mean;
-    float stddev;
 };
 
 enum class GameType : int32_t
@@ -196,25 +223,6 @@ void destroy_session( SessionT* session )
         if (future.valid()) 
             future.wait();
     delete session; // NOSONAR
-}
-
-template< typename SessionT >
-void get_inference_queue_stats(
-    SessionT* ses, CppStats& inference_batch_size, CppStats& inference_time)
-{
-    auto const& batch_size_stats = 
-        ses->inference_service.batch_size_stats();
-    inference_batch_size = {
-        batch_size_stats.min(), batch_size_stats.max(), 
-        batch_size_stats.mean(), batch_size_stats.stddev()};
-
-    auto const& inference_time_stats = 
-        ses->inference_service.inference_time_stats();
-    inference_time = {
-        inference_time_stats.min(), inference_time_stats.max(), 
-        inference_time_stats.mean(), inference_time_stats.stddev()};
-
-    ses->inference_service.reset_stats();
 }
 
 // Use C-style linkage to prevent C++ name mangling, making it callable from
@@ -276,17 +284,26 @@ uint32_t measure_selfplay_throughput(
 
 void set_model(
     void* session, GameType game_type, const char* model_data, 
-    uint32_t model_data_len )
+    uint32_t model_data_len, CppStats& inference_batch_size,
+    CppStats& inference_time, CppStats& allocator_size )
 {
     if (game_type == GameType::TTT)
     {
         auto ttt_session = static_cast<ttt_session_type*>( session );
-        ttt_session->set_model( { model_data, model_data_len });
+        ttt_session->set_model( 
+            { model_data, model_data_len },
+            inference_batch_size, inference_time );
+        scoped_lock _( ttt_session->allocator_mutex );
+        statistic_to_cpp_stat( ttt_session->allocator_stat, allocator_size );
     }
     else if (game_type == GameType::UTTT)
     {
         auto uttt_session = static_cast<uttt_session_type*>( session );
-        uttt_session->set_model( { model_data, model_data_len });
+        uttt_session->set_model( 
+            { model_data, model_data_len },
+            inference_batch_size, inference_time );
+        scoped_lock _( uttt_session->allocator_mutex );
+        statistic_to_cpp_stat( uttt_session->allocator_stat, allocator_size );
     }
 }
 
@@ -308,24 +325,6 @@ void fetch_selfplay_data(
     {
         auto ses = static_cast<uttt_session_type*>( session );
         ses->fetch_selfplay_data( data_pointers_out, number_of_positions ); 
-    }
-}
-
-void get_inference_queue_stats(
-    void* session, GameType game_type, CppStats& inference_batch_size,
-    CppStats& inference_time)
-{
-    if (game_type == GameType::TTT)
-    {
-        get_inference_queue_stats( 
-            static_cast<ttt_session_type*>( session ),
-            inference_batch_size, inference_time );
-    }
-    else if (game_type == GameType::UTTT)
-    {
-        get_inference_queue_stats( 
-            static_cast<uttt_session_type*>( session ),
-            inference_batch_size, inference_time );
     }
 }
 

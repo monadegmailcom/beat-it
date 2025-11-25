@@ -1,8 +1,6 @@
 #include "allocator.h"
 #include <atomic>
-#include <iostream>
 #include <stdexcept>
-#include <source_location>
 
 using namespace std; // NOSONAR
 
@@ -63,11 +61,11 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment ) // NOSONAR
 void ArenaAllocator::reset() noexcept
 {
     current_block_ptr.store( blocks.front().get(), std::memory_order_relaxed );
-    offset_stat.update( current_offset.load( std::memory_order_relaxed ));
     current_offset.store( 0, std::memory_order_relaxed );
 }
 
 GenerationalArenaAllocator::GenerationalArenaAllocator( size_t block_size ) :
+    block_size( block_size ),
     fst_arena_allocator( block_size ),
     snd_arena_allocator( block_size ) {}
 
@@ -76,3 +74,12 @@ void GenerationalArenaAllocator::reset()
     std::swap( current_allocator, previous_allocator ); 
     current_allocator->reset();
 }
+
+size_t GenerationalArenaAllocator::allocated_size() const noexcept
+{ 
+    const size_t blocks = fst_arena_allocator.allocated_blocks() + 
+        snd_arena_allocator.allocated_blocks(); 
+    const size_t offset = fst_arena_allocator.get_current_offset() + 
+        snd_arena_allocator.get_current_offset();
+    return blocks * block_size + offset;
+} 

@@ -77,7 +77,8 @@ public:
             { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
             cpu_options);
         
-        auto gpu_options = torch::TensorOptions().device(device).dtype(torch::kFloat32);
+        auto gpu_options = torch::TensorOptions().device(device).dtype(
+            torch::kFloat32);
         gpu_input_tensor = torch::empty(
             { static_cast<long>(max_batch_size), static_cast<long>(G) }, 
             gpu_options);
@@ -92,10 +93,27 @@ public:
 
     // threadsafe replacement of model
     void update_model( 
-        std::unique_ptr< torch::jit::script::Module >&& new_model )
+        std::unique_ptr< torch::jit::script::Module >&& new_model,
+        Statistics& batch_size_stats, Statistics& inference_time_stats )
     {
         std::scoped_lock _( model_update_mutex );
         model = std::move( new_model );
+        batch_size_stats_ = batch_size_stats;
+        inference_time_stats_ = inference_time_stats;
+        reset_stats();
+    }
+
+    Statistics const& batch_size_stats() const noexcept
+    { return batch_size_stats_; }
+
+    Statistics const& inference_time_stats() const noexcept
+    { return inference_time_stats_; }
+
+    // not thread-safe.
+    void reset_stats() noexcept
+    {
+        batch_size_stats_.reset();
+        inference_time_stats_.reset();
     }
 private:
     void inference( 
@@ -106,6 +124,9 @@ private:
         // Lock the module while running inference to prevent it from being
         // replaced by an update call from another thread mid-operation.
         std::scoped_lock _( model_update_mutex );
+
+        std::chrono::steady_clock::time_point start = 
+            std::chrono::steady_clock::now();
 
         // copy data to cpu tensor.
         // note: gemini suggests to first copy data to cpu tensor and then move 
@@ -151,6 +172,14 @@ private:
                 torch::cuda::synchronize();
         }
 
+        const auto duration =
+            std::chrono::duration<float, std::micro>(
+                std::chrono::steady_clock::now() - start
+            ) / batch_size;
+        
+        inference_time_stats_.update(static_cast<size_t>(duration.count()));
+        batch_size_stats_.update( batch_size );
+
         // copy data from cpu tensor to response structures.
         for (size_t i = 0; i < batch_size; ++i)
         {
@@ -173,6 +202,8 @@ private:
     torch::Tensor cpu_value_tensor;
     torch::Tensor cpu_policy_tensor;
     std::mutex model_update_mutex;
+    Statistics batch_size_stats_;
+    Statistics inference_time_stats_;
 };
 
 } // namespace libtorch

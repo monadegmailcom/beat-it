@@ -847,7 +847,7 @@ struct WorkerResult
     vector< uttt::alphazero::training::Position > positions;
     Statistics root_node_entropy_stats;
     Statistics informed_selection_stats;
-    Statistics allocator_offset_stats;
+    size_t allocator_offset;
     size_t allocated_blocks;
 };
 
@@ -884,10 +884,9 @@ WorkerResult uttt_selfplay_worker(
     result.allocated_blocks = 
         allocator.get_fst_arena_allocator().allocated_blocks() + 
         allocator.get_snd_arena_allocator().allocated_blocks();
-    result.allocator_offset_stats = 
-        allocator.get_fst_arena_allocator().current_offset_stat();
-    result.allocator_offset_stats.join(
-        allocator.get_snd_arena_allocator().current_offset_stat());
+    result.allocator_offset = 
+        allocator.get_fst_arena_allocator().get_current_offset() +
+        allocator.get_snd_arena_allocator().get_current_offset();
     return result;
 }
 
@@ -945,7 +944,7 @@ void uttt_alphazero_training()
         size_t total_positions = 0;
         Statistics root_node_entropy_stats;
         Statistics informed_selection_stats;
-        Statistics allocator_offset_stats;
+        size_t allocator_offset = 0;
         size_t allocated_blocks = 0;
         for (auto& future : thread_pool)
         {
@@ -953,7 +952,7 @@ void uttt_alphazero_training()
             total_positions += result.positions.size();
             root_node_entropy_stats.join( result.root_node_entropy_stats );
             informed_selection_stats.join( result.informed_selection_stats );
-            allocator_offset_stats.join( result.allocator_offset_stats );
+            allocator_offset += result.allocator_offset;
             allocated_blocks += result.allocated_blocks;
         }
         const std::chrono::duration<float> duration =
@@ -968,8 +967,8 @@ void uttt_alphazero_training()
             << root_node_entropy_stats << '\n'
             << "informed selection stats:\n" 
             << informed_selection_stats << '\n'
-            << "allocator offset stats:\n" 
-            << allocator_offset_stats << '\n'
+            << "allocator offset:\n" 
+            << allocator_offset << '\n'
             << "allocated blocks: " << allocated_blocks << '\n'
             << "selfplay run duration: " << duration << '\n'
             << endl;
