@@ -9,9 +9,15 @@ import collections
 import subprocess
 from typing import TypedDict
 import threading
+from enum import IntEnum
 
 train_buffer_metadata_file = 'train_buffer_metadata.json'
 validation_buffer_metadata_file = 'validation_buffer_metadata.json'
+
+
+class GameType(IntEnum):
+    TTT = 1
+    UTTT = 2
 
 
 class DataPointers(ctypes.Structure):
@@ -33,6 +39,34 @@ class CppStats(ctypes.Structure):
     ]
 
 
+class Hyperparameters(ctypes.Structure):
+    """Mirrors the Hyperparameters struct in C++ for data transfer."""
+    _fields_ = [
+        ("c_base", ctypes.c_float),
+        ("c_init", ctypes.c_float),
+        ("dirichlet_alpha", ctypes.c_float),
+        ("dirichlet_epsilon", ctypes.c_float),
+        ("simulations", ctypes.c_size_t),
+        ("opening_moves", ctypes.c_size_t),
+        ("parallel_games", ctypes.c_size_t),
+        ("parallel_simulations", ctypes.c_size_t),
+        ("max_batch_size", ctypes.c_size_t),
+        ("nodes_per_block", ctypes.c_size_t),
+    ]
+
+    def __init__(self, config):
+        self.c_base = config['c_base']
+        self.c_init = config['c_init']
+        self.dirichlet_alpha = config['dirichlet_alpha']
+        self.dirichlet_epsilon = config['dirichlet_epsilon']
+        self.simulations = config['simulations']
+        self.opening_moves = config['opening_moves']
+        self.parallel_games = config['parallel_games']
+        self.parallel_simulations = config['parallel_simulations']
+        self.max_batch_size = config['max_batch_size']
+        self.nodes_per_block = config['nodes_per_block']
+
+
 class TrainingHyperparameters(TypedDict):
     """A TypedDict to enforce the structure of training hyperparameters."""
     learning_rate: float
@@ -51,21 +85,23 @@ class TrainingHyperparameters(TypedDict):
     lr_schedule_gamma: float
 
 
-def set_model(
-        session_handle, set_model_func, model_data: bytes,
-        model_data_len: int, metadata_json_bytes: bytes):
+def set_model(session_handle, set_model_func, game_type: GameType,
+              model_data: bytes):
     """Generic function to set a model in the C++ library."""
-    result: int = set_model_func(
-        session_handle, model_data, model_data_len, metadata_json_bytes,
-        len(metadata_json_bytes))
-    if result < 0:
-        raise RuntimeError(
-            f"C++ set_model function returned an error code: {result}")
+    inference_batch_size = CppStats()
+    inference_time = CppStats()
+    allocator_size = CppStats()
+    set_model_func(
+        session_handle, game_type, model_data, len(model_data),
+        ctypes.byref(inference_batch_size),
+        ctypes.byref(inference_time),
+        ctypes.byref(allocator_size))
+    return inference_batch_size, inference_time, allocator_size
 
 
 def fetch_selfplay_data_from_cpp(
-        session_handle, fetch_data_func, number_of_positions: int,
-        g_size: int, p_size: int):
+        session_handle, fetch_data_func, game_type: GameType,
+        number_of_positions: int, g_size: int, p_size: int):
     """
     Generic function to fetch self-play data from the C++ library. Handles
     memory allocation and data transfer.
@@ -88,12 +124,9 @@ def fetch_selfplay_data_from_cpp(
     data_pointers.player_indices = player_indices.ctypes.data_as(
         ctypes.POINTER(ctypes.c_int32))
 
-    queue_size = fetch_data_func(
-        session_handle, data_pointers, number_of_positions)
-
-    if queue_size < 0:
-        raise RuntimeError(f"C++ fetch function returned an error code: \
-            {queue_size}")
+    fetch_data_func(
+        session_handle, game_type, ctypes.byref(data_pointers), 
+        number_of_positions)
 
     result = {
         "game_states": game_states,
@@ -101,7 +134,7 @@ def fetch_selfplay_data_from_cpp(
         "value_targets": value_targets,
         "player_indices": player_indices
     }
-    return result, queue_size
+    return result
 
 
 def get_git_revision_hash() -> str:
@@ -199,17 +232,27 @@ class MetricLogger:
         self.writer = writer
         self.metrics = collections.defaultdict(float)
         self.counts = collections.defaultdict(int)
+        self.inference_batch_size_stats = CppStats()
+        self.inference_time_stats = CppStats()
+        self.allocator_size_stats = CppStats()
 
     def update(self, **kwargs):
         """Update metrics for the current step."""
         for key, value in kwargs.items():
-            self.metrics[key] += value
-            self.counts[key] += 1
+            if isinstance(value, CppStats):
+                if key == 'inference_batch_size':
+                    self.inference_batch_size_stats = value
+                elif key == 'inference_time':
+                    self.inference_time_stats = value
+                elif key == 'allocator_size':
+                    self.allocator_size_stats = value
+            else:
+                self.metrics[key] += value
+                self.counts[key] += 1
 
     def log_and_reset(
             self, step: int, total_steps: int, replay_buffer_len: int,
-            queue_size: int, lr: float, session_handle: ctypes.c_void_p,
-            alphazero_lib: ctypes.CDLL):
+            lr: float):
         """Averages metrics, logs to console and TensorBoard, then resets."""
         if self.counts['step_time_ms'] == 0:
             return  # Avoid division by zero if no steps were logged
@@ -233,33 +276,24 @@ class MetricLogger:
             'Performance/SelfPlay_Fetch_Time_ms', avg_selfplay_time_ms, step)
         self.writer.add_scalar(
             'Buffer/ReplayBuffer_Size', replay_buffer_len, step)
-        self.writer.add_scalar('Buffer/SelfPlay_Queue_Size', queue_size, step)
         self.writer.add_scalar('Hyperparameters/Learning_Rate', lr, step)
 
-        # Log C++ inference stats
-        try:
-            c_get_stats = alphazero_lib.get_inference_queue_stats
-            c_get_stats.restype = CppStats
-            c_get_stats.argtypes = [ctypes.c_void_p]
-            queue_stats = c_get_stats(session_handle)
-
-            # Use add_scalars to plot min, max, and mean on one graph
+        # Log C++ stats
+        for stats, name in [
+            (self.inference_batch_size_stats, 'Inference_Batch_Size'),
+            (self.inference_time_stats, 'Inference_Time_us'),
+            (self.allocator_size_stats, 'Allocator_SizeBytes')
+        ]:
             self.writer.add_scalars(
-                'Performance/Inference_Batch_Size',
+                f'Performance/{name}',
                 {
-                    'min': queue_stats.min,
-                    'max': queue_stats.max,
-                    'mean': queue_stats.mean,
-                    'minus_one_stddev': queue_stats.mean -
-                    queue_stats.stddev,
-                    'plus_one_stddev': queue_stats.mean +
-                    queue_stats.stddev
+                    'min': stats.min,
+                    'max': stats.max,
+                    'mean': stats.mean,
+                    'minus_one_stddev': stats.mean - stats.stddev,
+                    'plus_one_stddev': stats.mean + stats.stddev
                 },
                 step)
-        except Exception as e:
-            print(
-                f"Warning: Failed to get and log C++ inference stats "
-                f"at step {step}: {e}")
 
         # Log to console
         print(

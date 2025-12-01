@@ -14,7 +14,7 @@ import argparse
 from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
-    DataPointers, split_and_add_data,
+    DataPointers, split_and_add_data, GameType, CppStats,
     train_buffer_metadata_file
 )
 
@@ -34,6 +34,14 @@ if __name__ == '__main__':
     parser.add_argument('--game', type=str,
                         help='The game to train on (e.g., "ttt", "uttt").')
     args = parser.parse_args()
+    
+    # Map string game name to GameType enum
+    try:
+        game_type = GameType[args.game.upper()]
+    except KeyError:
+        print(f"Error: Invalid game type '{args.game}'. Available types: {[e.name for e in GameType]}")
+        exit(1)
+
     session_handle = None
 
     lib_path = os.path.join('obj', 'libalphazero.so')
@@ -274,19 +282,19 @@ if __name__ == '__main__':
             raise RuntimeError("Failed to create C++ session.")
 
         # --- Initial Model Setup ---
-        c_set_model_func = getattr(
-            alphazero_lib, game_module.set_model_func_name)
+        c_set_model_func = alphazero_lib.set_model
         c_set_model_func.restype = ctypes.c_int
         c_set_model_func.argtypes = [
-            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32,
-            ctypes.c_char_p, ctypes.c_int32
+            ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_uint32,
+            ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
+            ctypes.POINTER(CppStats)
         ]
 
-        c_fetch_data_func = getattr(
-            alphazero_lib, game_module.fetch_data_func_name)
-        c_fetch_data_func.restype = ctypes.c_int
+        c_fetch_data_func = alphazero_lib.fetch_selfplay_data
+        c_fetch_data_func.restype = None
         c_fetch_data_func.argtypes = [
-            ctypes.c_void_p, ctypes.POINTER(DataPointers), ctypes.c_uint32
+            ctypes.c_void_p, ctypes.c_int32, ctypes.POINTER(DataPointers),
+            ctypes.c_uint32
         ]
 
         model_bytes, metadata_json = create_inference_model_bundle(
@@ -298,8 +306,7 @@ if __name__ == '__main__':
             training_hyperparams=training_hyperparams
         )
         set_model(
-            session_handle, c_set_model_func, model_bytes, len(model_bytes),
-            metadata_json.encode('utf-8'))
+            session_handle, c_set_model_func, game_type, model_bytes)
 
         # --- Print Final Configuration ---
         # Combine all configs into one dictionary for printing to ensure all
@@ -341,9 +348,9 @@ if __name__ == '__main__':
             fetch_start_time = time.time()
             # This call blocks until the C++ workers have produced enough
             #  games.
-            new_data, queue_size = fetch_selfplay_data_from_cpp(
-                session_handle, c_fetch_data_func, num_positions_to_fetch,
-                G_SIZE, P_SIZE)
+            new_data = fetch_selfplay_data_from_cpp(
+                session_handle, c_fetch_data_func, game_type,
+                num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
 
             if new_data:
@@ -402,7 +409,7 @@ if __name__ == '__main__':
                     writer.add_histogram(f'Weights/{name}', param.data, step)
                 logger.log_and_reset(
                     step, training_hyperparams['total_training_steps'],
-                    len(replay_buffer), queue_size,
+                    len(replay_buffer),
                     optimizer.param_groups[0]['lr'],
                     session_handle,
                     alphazero_lib)
@@ -453,9 +460,7 @@ if __name__ == '__main__':
                     training_hyperparams=training_hyperparams
                 )
                 set_model(
-                    session_handle, c_set_model_func, model_bytes,
-                    len(model_bytes),
-                    metadata_json.encode('utf-8'))
+                    session_handle, c_set_model_func, game_type, model_bytes)
 
             # Periodically save a checkpoint
             if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
