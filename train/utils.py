@@ -276,6 +276,7 @@ class MetricLogger:
             'Performance/SelfPlay_Fetch_Time_ms', avg_selfplay_time_ms, step)
         self.writer.add_scalar(
             'Buffer/ReplayBuffer_Size', replay_buffer_len, step)
+
         self.writer.add_scalar('Hyperparameters/Learning_Rate', lr, step)
 
         # Log C++ stats

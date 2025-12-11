@@ -410,9 +410,7 @@ if __name__ == '__main__':
                 logger.log_and_reset(
                     step, training_hyperparams['total_training_steps'],
                     len(replay_buffer),
-                    optimizer.param_groups[0]['lr'],
-                    session_handle,
-                    alphazero_lib)
+                    optimizer.param_groups[0]['lr'])
 
             # --- Periodic Validation Step ---
             if (step + 1) % training_hyperparams['validation_freq_steps'] == 0:
