@@ -70,8 +70,9 @@ ki engine for two player games
 
 -  **Build and run the training:**
     ```bash
-    make shared && python -m train.main --game uttt
+    ./build.sh && python -m train.main --game uttt
     ```
+    *(Note: The build script handles CMake configuration and compilation. If you prefer manual steps, see `build.sh` content.)*
 -  **Monitor with TensorBoard (in a separate terminal inside the virtual environment):**
     ```bash
     tensorboard --logdir=runs

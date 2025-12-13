@@ -44,7 +44,14 @@ if __name__ == '__main__':
 
     session_handle = None
 
-    lib_path = os.path.join('obj', 'libalphazero.so')
+    possible_paths = [
+        os.path.join('build', 'libalphazero.dylib'),
+        os.path.join('build', 'libalphazero.so'),
+        os.path.join('obj', 'libalphazero.so'),
+    ]
+    lib_path = next((p for p in possible_paths if os.path.exists(p)), None)
+    if lib_path is None:
+        raise FileNotFoundError(f"Could not find libalphazero shared library. Checked: {possible_paths}")
     alphazero_lib = ctypes.CDLL(lib_path)
     print(f"Successfully loaded shared library from: {lib_path}")
     writer = None  # Define writer in the outer scope
