@@ -15,7 +15,7 @@ from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
     DataPointers, split_and_add_data, GameType, CppStats,
-    train_buffer_metadata_file
+    train_buffer_metadata_file, Hyperparameters
 )
 
 scheduler_state_file = 'scheduler_state.pt'
@@ -23,6 +23,8 @@ optimizer_state_file = 'optimizer_state.pt'
 metadata_file = 'metadata.json'
 train_buffer_data_file = 'train_buffer_data.npz'
 validation_buffer_data_file = 'validation_buffer_data.npz'
+
+
 
 # 2. Training Setup
 if __name__ == '__main__':
@@ -47,7 +49,6 @@ if __name__ == '__main__':
     possible_paths = [
         os.path.join('build', 'libalphazero.dylib'),
         os.path.join('build', 'libalphazero.so'),
-        os.path.join('obj', 'libalphazero.so'),
     ]
     lib_path = next((p for p in possible_paths if os.path.exists(p)), None)
     if lib_path is None:
@@ -153,13 +154,11 @@ if __name__ == '__main__':
                     print("No validation replay buffer found in checkpoint. "
                           "Starting with an empty one.")
 
-                # Load metadata and configs
+                # Load metadata
                 metadata = json.loads(extra_files_to_load['metadata.json'])
-                old_game_config = metadata.get('game_config', {})
-                new_game_config = game_config
 
                 # Create a new model instance with the current configuration.
-                model = game_module.create_model(new_game_config).to(device)
+                model = game_module.create_model(game_config).to(device)
                 old_state_dict = old_model_scripted.state_dict()
                 new_state_dict = model.state_dict()
 
@@ -278,30 +277,20 @@ if __name__ == '__main__':
         # Log the model graph
         writer.add_graph(model, torch.randn(1, G_SIZE).to(device))
 
-        # --- C++ Session and Initial Model Setup ---
-        print("Creating C++ session and setting initial model...")
-
-        # Prepare C++ function handles
-        alphazero_lib.create_session.restype = ctypes.c_void_p
-        alphazero_lib.destroy_session.argtypes = [ctypes.c_void_p]
-        session_handle = alphazero_lib.create_session()
-        if not session_handle:
-            raise RuntimeError("Failed to create C++ session.")
-
-        # --- Initial Model Setup ---
-        c_set_model_func = alphazero_lib.set_model
-        c_set_model_func.restype = ctypes.c_int
-        c_set_model_func.argtypes = [
-            ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_uint32,
-            ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
-            ctypes.POINTER(CppStats)
-        ]
 
         c_fetch_data_func = alphazero_lib.fetch_selfplay_data
         c_fetch_data_func.restype = None
         c_fetch_data_func.argtypes = [
             ctypes.c_void_p, ctypes.c_int32, ctypes.POINTER(DataPointers),
             ctypes.c_uint32
+        ]
+
+        c_set_model_func = alphazero_lib.set_model
+        c_set_model_func.restype = None
+        c_set_model_func.argtypes = [
+            ctypes.c_void_p, ctypes.c_int32, ctypes.c_char_p, ctypes.c_uint32,
+            ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
+            ctypes.POINTER(CppStats)
         ]
 
         model_bytes, metadata_json = create_inference_model_bundle(
@@ -312,8 +301,36 @@ if __name__ == '__main__':
             self_play_config=self_play_config,
             training_hyperparams=training_hyperparams
         )
-        set_model(
-            session_handle, c_set_model_func, game_type, model_bytes)
+
+        # Populate Hyperparameters struct
+        hp = Hyperparameters(self_play_config)
+
+        print("Creating C++ session...")
+        # Prepare C++ function handles
+        alphazero_lib.create_session.restype = ctypes.c_void_p
+        # GameType (int), model_data (char*), model_len (uint32), hp (POINTER)
+        alphazero_lib.create_session.argtypes = [
+            ctypes.c_int32, ctypes.c_char_p, ctypes.c_uint32, ctypes.POINTER(Hyperparameters)
+        ]
+        alphazero_lib.destroy_session.argtypes = [ctypes.c_int32, ctypes.c_void_p]
+
+        # Call create_session
+        session_handle = alphazero_lib.create_session(
+            ctypes.c_int32(game_type.value),
+            model_bytes,
+            len(model_bytes),
+            ctypes.byref(hp)
+        )
+        if not session_handle:
+            raise RuntimeError("Failed to create C++ session.")
+
+        # Destroy session requires/takes game_type in the updated API?
+        # Checking lib_interface.cpp: 
+        # void destroy_session( GameType game_type, void* session)
+        # Yes.
+
+        # Note: We don't need to call set_model immediately anymore because create_session does it.
+        # But we DO need to keep c_set_model_func for later updates.
 
         # --- Print Final Configuration ---
         # Combine all configs into one dictionary for printing to ensure all
@@ -334,7 +351,6 @@ if __name__ == '__main__':
         # 1. Fetch a small batch of new data to keep the buffer fresh.
         num_positions_to_fetch = max(
             1,
-
             int(training_hyperparams['batch_size']
                 / training_hyperparams['target_replay_ratio']))
 
@@ -519,5 +535,5 @@ if __name__ == '__main__':
         # --- C++ Resource Cleanup ---
         if session_handle:
             print("\nCleaning up C++ session...")
-            alphazero_lib.destroy_session(session_handle)
+            alphazero_lib.destroy_session(ctypes.c_int32(game_type.value), session_handle)
             print("C++ session cleanup complete.")

@@ -32,8 +32,8 @@ class ResidualBlock(nn.Module):
 class AlphaZeroCNN(nn.Module):
     def __init__(
             self, board_size, num_actions, input_channels, num_res_blocks,
-            res_block_channels, fc_hidden_size, policy_head_channels=2,
-            value_head_channels=1):
+            res_block_channels, fc_hidden_size, policy_head_channels,
+            value_head_channels):
         """
         A configurable ResNet-based architecture inspired by AlphaZero.
 

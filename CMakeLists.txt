@@ -1,4 +1,10 @@
 cmake_minimum_required(VERSION 3.16)
+
+# Suppress warning about FindBoost module removal in newer CMake versions
+if(POLICY CMP0167)
+    cmake_policy(SET CMP0167 NEW)
+endif()
+
 project(beat-it LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 23)

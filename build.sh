@@ -15,10 +15,20 @@ if [[ "$(uname)" == "Darwin" ]]; then
     fi
 fi
 
-# LibTorch Path (adjust if needed)
-LIBTORCH_PATH="/Users/monade/source/libtorch"
+# Determine the LibTorch path from the current Python environment (venv)
+# This ensures binary compatibility between the C++ extension and the Python runtime.
+if [ -d ".venv" ]; then
+    echo "Using LibTorch from .venv..."
+    LIBTORCH_PATH=$(source .venv/bin/activate && python -c "import torch; import os; print(os.path.dirname(torch.__file__))")
+else
+    # Fallback or error if venv not found. For this user, we expect venv.
+    echo "Error: .venv not found! Please compile from within the project root with the venv present."
+    exit 1
+fi
+export CMAKE_PREFIX_PATH="$LIBTORCH_PATH"
+echo "CMAKE_PREFIX_PATH set to: $CMAKE_PREFIX_PATH"
 
 mkdir -p build
 cd build
-cmake -DCMAKE_PREFIX_PATH="$LIBTORCH_PATH" ..
+cmake ..
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)

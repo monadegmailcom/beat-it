@@ -55,16 +55,20 @@ class Hyperparameters(ctypes.Structure):
     ]
 
     def __init__(self, config):
-        self.c_base = config['c_base']
-        self.c_init = config['c_init']
-        self.dirichlet_alpha = config['dirichlet_alpha']
-        self.dirichlet_epsilon = config['dirichlet_epsilon']
-        self.simulations = config['simulations']
-        self.opening_moves = config['opening_moves']
-        self.parallel_games = config['parallel_games']
-        self.parallel_simulations = config['parallel_simulations']
-        self.max_batch_size = config['max_batch_size']
-        self.nodes_per_block = config['nodes_per_block']
+        self.c_base = config.get('c_base', 19652.0)
+        self.c_init = config.get('c_init', 1.25)
+        self.dirichlet_alpha = config.get('dirichlet_alpha', 0.3)
+        self.dirichlet_epsilon = config.get('dirichlet_epsilon', 0.25)
+        self.simulations = config.get('simulations', 800)
+        self.opening_moves = config.get('opening_moves', 30)
+        self.parallel_games = config.get('parallel_games', 1)
+        self.parallel_simulations = config.get('parallel_simulations', 4)
+        self.max_batch_size = config.get('max_batch_size', 1024)
+        
+        # Default nodes_per_block logic from C++
+        default_nodes_per_block = 50 * self.simulations
+        self.nodes_per_block = config.get(
+            'nodes_per_block', default_nodes_per_block)
 
 
 class TrainingHyperparameters(TypedDict):

@@ -1,3 +1,16 @@
+# next steps
+- fix training setup
+  - configuration file working?
+  - loading and saving models working?
+  - checkpoints working?
+  - tensorboard working?
+- fix additional statistics for tensorboard
+- add arena games old model vs new model
+- setup docker container
+- starting training on kaggle
+- training on tristans machine?
+- add gpu + powersupply to linux server
+
 # beat-it
 ki engine for two player games
 

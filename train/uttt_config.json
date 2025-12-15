@@ -26,9 +26,9 @@
         "lr_schedule_gamma": 0.1
     },
     "self_play_config": {
-        "threads": 3,
-        "selfplay_threads": 20,
-        "min_batch_size": 1,
+        "parallel_games": 8,
+        "parallel_simulations": 1,
+        "max_batch_size": 64,
         "c_base": 19652.0,
         "c_init": 1.25,
         "dirichlet_alpha": 0.3,
