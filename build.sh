@@ -28,7 +28,12 @@ fi
 export CMAKE_PREFIX_PATH="$LIBTORCH_PATH"
 echo "CMAKE_PREFIX_PATH set to: $CMAKE_PREFIX_PATH"
 
+
+# Set build type (default to Release if not provided)
+BUILD_TYPE=${1:-Release}
+echo "Build Type: $BUILD_TYPE"
+
 mkdir -p build
 cd build
-cmake ..
+cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE ..
 make -j$(nproc 2>/dev/null || sysctl -n hw.ncpu)
