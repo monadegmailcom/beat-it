@@ -129,8 +129,8 @@ private:
 
     {
       auto gpu_input_view = gpu_input_tensor.narrow(0, 0, batch_size);
-      // copy data to gpu synchronously.
-      gpu_input_view.copy_(cpu_input_view, false);
+      // copy data to gpu asynchronously.
+      gpu_input_view.copy_(cpu_input_view, true);
 
       // set mode to no model training, seems to have affect on the
       // memory handling. if not set, crashes with mps gpu.
@@ -146,8 +146,8 @@ private:
 
       cpu_value_view = cpu_value_tensor.narrow(0, 0, batch_size);
       cpu_policy_view = cpu_policy_tensor.narrow(0, 0, batch_size);
-      cpu_value_view.copy_(gpu_value_batch, false);
-      cpu_policy_view.copy_(gpu_policy_batch, false);
+      cpu_value_view.copy_(gpu_value_batch, true);
+      cpu_policy_view.copy_(gpu_policy_batch, true);
     }
 
     const auto duration = std::chrono::duration<float, std::micro>(
