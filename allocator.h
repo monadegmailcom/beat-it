@@ -1,5 +1,3 @@
-#include "statistics.h"
-
 #include <vector>
 #include <deque>
 #include <atomic>

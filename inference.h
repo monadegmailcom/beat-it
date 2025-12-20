@@ -1,6 +1,5 @@
 #pragma once
 
-#include "statistics.h"
 #include "exception.h"
 
 #include <boost/lockfree/queue.hpp>

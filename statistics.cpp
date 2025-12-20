@@ -11,16 +11,13 @@ void Statistics::update( float value ) noexcept
     max_ = max_ > value ? max_ : value;
 }
 
-float Statistics::mean() const
-{
-    return sum / static_cast< float >( count_ );
-}
+float Statistics::mean() const { return sum / static_cast< float >( count_ ); }
 
 float Statistics::stddev() const
 {
     const float mean_ = mean();
-    return std::sqrtf( sum_square / static_cast< float >( count_ ) 
-        - mean_ * mean_);
+    return std::sqrtf( sum_square / static_cast< float >( count_ ) -
+                       mean_ * mean_ );
 }
 
 void Statistics::reset() noexcept
@@ -32,7 +29,7 @@ void Statistics::reset() noexcept
     count_ = 0;
 }
 
-void Statistics::join( Statistics const& other ) noexcept
+void Statistics::join( Statistics const &other ) noexcept
 {
     sum += other.sum;
     sum_square += other.sum_square;
@@ -41,11 +38,10 @@ void Statistics::join( Statistics const& other ) noexcept
     count_ += other.count_;
 }
 
-ostream& operator<<( ostream& os, Statistics const& stats ) // NOSONAR
+ostream &operator<<( ostream &os, Statistics const &stats ) // NOSONAR
 {
-    os
-        << "mean = " << stats.mean() << ", stddev = " << stats.stddev() 
-        << ", min = " << stats.min() << ", max = " << stats.max()
-        << ", count = " << stats.count() << '\n';
+    os << "mean = " << stats.mean() << ", stddev = " << stats.stddev()
+       << ", min = " << stats.min() << ", max = " << stats.max()
+       << ", count = " << stats.count() << '\n';
     return os;
 }

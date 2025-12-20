@@ -5,10 +5,12 @@
 
 class Statistics
 {
-public:
+  public:
     void update( float value ) noexcept;
     void update( size_t value ) noexcept
-    { update( static_cast< float >( value )); }
+    {
+        update( static_cast< float >( value ) );
+    }
     // require: at least one update
     float mean() const;
     // require: at least one update
@@ -17,9 +19,10 @@ public:
     float max() const noexcept { return max_; }
     size_t count() const noexcept { return count_; }
     void reset() noexcept;
-    void join( Statistics const& ) noexcept;
-private:
-    friend std::ostream& operator<<( std::ostream&, Statistics const& );
+    void join( Statistics const & ) noexcept;
+
+  private:
+    friend std::ostream &operator<<( std::ostream &, Statistics const & );
 
     float sum = 0.0f;
     float sum_square = 0.0f;
@@ -28,4 +31,4 @@ private:
     size_t count_ = 0;
 };
 
-std::ostream& operator<<( std::ostream& os, Statistics const& );
+std::ostream &operator<<( std::ostream &os, Statistics const & );

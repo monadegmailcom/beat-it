@@ -1,0 +1,9 @@
+BasedOnStyle: LLVM
+IndentWidth: 4
+BreakBeforeBraces: Allman
+SpacesInParentheses: true
+SpacesInAngles: Always
+SpaceInEmptyParentheses: false
+ColumnLimit: 80
+ReflowComments: true
+SortIncludes: true
