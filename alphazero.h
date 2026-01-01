@@ -1,10 +1,10 @@
 #pragma once
 
-#include "statistics.h"
 #include "exception.h"
 #include "inference.h"
 #include "node.h"
 #include "player.h"
+#include "statistics.h"
 
 #include <algorithm>
 #include <atomic>
@@ -23,7 +23,8 @@ template < typename MoveT, typename StateT > struct Payload
     Payload() noexcept = default;
     Payload( Payload const &payload ) noexcept
         : policies_are_evaluated( payload.policies_are_evaluated.load() ),
-          visits( payload.visits.load() ), nn_policy( payload.nn_policy.load() ),
+          visits( payload.visits.load() ),
+          nn_policy( payload.nn_policy.load() ),
           nn_value_sum( payload.nn_value_sum.load() )
     {
     }
@@ -66,17 +67,20 @@ float shannon_entropy( Node< MoveT, StateT, PayloadT > const &node )
 {
     size_t visit_sum = 0;
     for ( auto const &child : node.get_children() )
-        visit_sum += child.get_payload().visits.load( std::memory_order_relaxed );
+        visit_sum +=
+            child.get_payload().visits.load( std::memory_order_relaxed );
     if ( !visit_sum )
         return 0.0f;
 
     float entropy = 0;
     for ( auto const &child : node.get_children() )
     {
-        const size_t visits = child.get_payload().visits.load( std::memory_order_relaxed );
+        const size_t visits =
+            child.get_payload().visits.load( std::memory_order_relaxed );
         if ( !visits )
             continue;
-        const float p = static_cast< float >( visits ) / static_cast< float >( visit_sum );
+        const float p =
+            static_cast< float >( visits ) / static_cast< float >( visit_sum );
         entropy -= p * std::logf( p );
     }
     return entropy;
@@ -105,13 +109,17 @@ class Player : public ::Player< MoveT >
     static constexpr std::size_t game_size = G;
     static constexpr std::size_t policy_size = P;
 
-    Player( game_type game, params::Ucb const &ucb, params::GamePlay const &game_play,
+    Player( game_type game, params::Ucb const &ucb,
+            params::GamePlay const &game_play,
             unsigned seed, // make the play deterministic with seed
-            allocator_type &allocator, inference_service_type &inference_service )
-        : allocator( allocator ), ucb_params( ucb ), game_play( game_play ), g( seed ),
-          thread_pool( game_play.parallel_simulations ), inference_service( inference_service ),
+            allocator_type &allocator,
+            inference_service_type &inference_service )
+        : allocator( allocator ), ucb_params( ucb ), game_play( game_play ),
+          g( seed ), thread_pool( game_play.parallel_simulations ),
+          inference_service( inference_service ),
           response_queue( inference_service.get_max_batch_size() ),
-          root( *( new( allocator.allocate< pre_node_type >() ) pre_node_type( game ) ) )
+          root( *( new ( allocator.allocate< pre_node_type >() )
+                       pre_node_type( game ) ) )
     {
         if ( !game_play.simulations )
             throw beat_it::Exception( "Simulations cannot be zero." );
@@ -119,7 +127,8 @@ class Player : public ::Player< MoveT >
             throw beat_it::Exception( "Parallel simulations cannot be zero." );
 
         for ( auto &thread : thread_pool )
-            thread = std::jthread( &Player::worker, this, stop_source.get_token() );
+            thread =
+                std::jthread( &Player::worker, this, stop_source.get_token() );
     }
 
     virtual ~Player() noexcept
@@ -127,7 +136,8 @@ class Player : public ::Player< MoveT >
         stop_source.request_stop();
         // release all potentially waiting workers
         remaining_simulations.release( thread_pool.size() );
-        thread_pool.clear();
+        for ( auto &thread : thread_pool )
+            thread.join();
     }
 
     // not thread safe.
@@ -145,8 +155,9 @@ class Player : public ::Player< MoveT >
     void apply_opponent_move( MoveT const &move ) override
     {
         auto &children = root.get().get_children();
-        auto new_root_itr = std::ranges::find_if( children, [move]( auto const &node )
-                                                  { return node.get_move() == move; } );
+        auto new_root_itr =
+            std::ranges::find_if( children, [move]( auto const &node )
+                                  { return node.get_move() == move; } );
 
         allocator.reset();
         if ( new_root_itr != children.end() )
@@ -158,8 +169,9 @@ class Player : public ::Player< MoveT >
         auto *pre_node = dynamic_cast< pre_node_type * >( &root.get() );
         if ( pre_node )
         {
-            root = *( new ( allocator.allocate< pre_node_type >() )
-                          pre_node_type( pre_node->get_game().apply( move ), move ) );
+            root = *(
+                new ( allocator.allocate< pre_node_type >() )
+                    pre_node_type( pre_node->get_game().apply( move ), move ) );
             return;
         }
 
@@ -169,7 +181,8 @@ class Player : public ::Player< MoveT >
   protected:
     // promise: return index of move in policy_vector
     virtual size_t move_to_policy_index( MoveT const & ) const = 0;
-    virtual std::array< float, G > serialize_state( game_type const & ) const = 0;
+    virtual std::array< float, G >
+    serialize_state( game_type const & ) const = 0;
 
   private:
     friend class training::SelfPlay< MoveT, StateT, G, P >;
@@ -184,8 +197,9 @@ class Player : public ::Player< MoveT >
             boost::intrusive::list< node_type > new_children;
             for ( MoveT const &move : node.get_game() )
             {
-                auto &child = *( new ( player.allocator.allocate< pre_node_type >() )
-                                     pre_node_type( node.get_game().apply( move ), move ) );
+                auto &child = *(
+                    new ( player.allocator.allocate< pre_node_type >() )
+                        pre_node_type( node.get_game().apply( move ), move ) );
 
                 // get write access lock.
                 new_children.push_front( child );
@@ -207,10 +221,11 @@ class Player : public ::Player< MoveT >
         {
             // pushing a request to the inference service may block if the
             // request queue is full.
-            player.inference_service.push( { .response_queue = &player.response_queue,
-                                             .cv = &player.simulations_cond,
-                                             .node = &node,
-                                             .state = player.serialize_state( node.get_game() ) } );
+            player.inference_service.push(
+                { .response_queue = &player.response_queue,
+                  .cv = &player.simulations_cond,
+                  .node = &node,
+                  .state = player.serialize_state( node.get_game() ) } );
         }
 
         Player &player;
@@ -225,8 +240,10 @@ class Player : public ::Player< MoveT >
         // thread-safe.
         void update_selection_stats( base_node_type &node )
         {
-            if ( node.get_payload().policies_are_evaluated.load( std::memory_order_relaxed ) )
-                player.informed_selections.fetch_add( 1, std::memory_order_relaxed );
+            if ( node.get_payload().policies_are_evaluated.load(
+                     std::memory_order_relaxed ) )
+                player.informed_selections.fetch_add(
+                    1, std::memory_order_relaxed );
             player.total_selections.fetch_add( 1, std::memory_order_relaxed );
         }
 
@@ -236,8 +253,9 @@ class Player : public ::Player< MoveT >
         {
             selected_node = &*std::ranges::max_element(
                 node.get_children(),
-                [this, parent_visits = node.get_payload().visits.load( std::memory_order_relaxed )](
-                    auto const &a, auto const &b )
+                [this, parent_visits = node.get_payload().visits.load(
+                           std::memory_order_relaxed )]( auto const &a,
+                                                         auto const &b )
                 {
                     return player.ucb( a.get_payload(), parent_visits ) <
                            player.ucb( b.get_payload(), parent_visits );
@@ -279,12 +297,13 @@ class Player : public ::Player< MoveT >
         const bool is_leaf_node = payload.visits.fetch_add( 1 ) == 0;
         // apply virtual loss to avoid entering this path from the
         // parent's node perspective, so increase nn_value;
-        payload.nn_value_sum.fetch_add( virtual_loss, std::memory_order_relaxed );
+        payload.nn_value_sum.fetch_add( virtual_loss,
+                                        std::memory_order_relaxed );
 
         if ( node.get_game_result() != GameResult::Undecided )
         {
-            const float value =
-                game_result_2_score( node.get_game_result(), node.get_current_player_index() );
+            const float value = game_result_2_score(
+                node.get_game_result(), node.get_current_player_index() );
             backpropagation( node, {}, value );
             // notify waiting thread because this update does not go through
             // nn evaluation.
@@ -313,8 +332,8 @@ class Player : public ::Player< MoveT >
     {
         response_type response;
         while ( response_queue.pop( response ) )
-            backpropagation( *static_cast< node_type * >( response.node ), response.policies,
-                             response.nn_value );
+            backpropagation( *static_cast< node_type * >( response.node ),
+                             response.policies, response.nn_value );
     }
 
     // require: single-threaded access.
@@ -341,7 +360,11 @@ class Player : public ::Player< MoveT >
         {
             simulations_cond.wait_for(
                 lock, std::chrono::milliseconds( 1000 ),
-                [this] { return !response_queue.empty() || unfinished_simulations.load() == 0; } );
+                [this]
+                {
+                    return !response_queue.empty() ||
+                           unfinished_simulations.load() == 0;
+                } );
             process_response_queue();
         }
 
@@ -353,8 +376,10 @@ class Player : public ::Player< MoveT >
                 root.get().get_children(),
                 []( auto const &a, auto const &b )
                 {
-                    return a.get_payload().visits.load( std::memory_order_relaxed ) <
-                           b.get_payload().visits.load( std::memory_order_relaxed );
+                    return a.get_payload().visits.load(
+                               std::memory_order_relaxed ) <
+                           b.get_payload().visits.load(
+                               std::memory_order_relaxed );
                 } );
     }
 
@@ -362,10 +387,13 @@ class Player : public ::Player< MoveT >
     // thread-safe.
     float ucb( payload_type const &payload, size_t parent_visits )
     {
-        const size_t child_visits = payload.visits.load( std::memory_order_relaxed );
-        const float child_value_sum = payload.nn_value_sum.load( std::memory_order_relaxed );
+        const size_t child_visits =
+            payload.visits.load( std::memory_order_relaxed );
+        const float child_value_sum =
+            payload.nn_value_sum.load( std::memory_order_relaxed );
 
-        float c = static_cast< float >( parent_visits ) + ucb_params.c_base + 1.0f;
+        float c =
+            static_cast< float >( parent_visits ) + ucb_params.c_base + 1.0f;
         c /= ucb_params.c_base;
         c = std::logf( c ) + ucb_params.c_init;
         c *= std::sqrtf( static_cast< float >( parent_visits ) );
@@ -383,7 +411,9 @@ class Player : public ::Player< MoveT >
     // lockfree setting of policies and nn value and backpropagation.
     // require: mode is undecided.
     // thread-safe.
-    void backpropagation( node_type &node, std::array< float, P > const &policies, float nn_value )
+    void backpropagation( node_type &node,
+                          std::array< float, P > const &policies,
+                          float nn_value )
     {
         // convert logits of legal moves to probabilities with softmax
         // and save in children. the policies are guaranteed to be set only
@@ -393,7 +423,8 @@ class Player : public ::Player< MoveT >
         auto p_itr = policy_buffer.begin();
         for ( node_type &child : node.get_children() )
         {
-            const float p = std::expf( policies[move_to_policy_index( child.get_move() )] );
+            const float p =
+                std::expf( policies[move_to_policy_index( child.get_move() )] );
             *p_itr++ = p;
             policy_sum += p;
         }
@@ -401,18 +432,22 @@ class Player : public ::Player< MoveT >
         // normalize priors to probabilities.
         p_itr = policy_buffer.begin();
         for ( auto &child : node.get_children() )
-            child.get_payload().nn_policy.store( *p_itr++ / policy_sum, std::memory_order_relaxed );
+            child.get_payload().nn_policy.store( *p_itr++ / policy_sum,
+                                                 std::memory_order_relaxed );
 
-        node.get_payload().policies_are_evaluated.store( true, std::memory_order_relaxed );
+        node.get_payload().policies_are_evaluated.store(
+            true, std::memory_order_relaxed );
 
         // remove virtual loss.
-        node.get_payload().nn_value_sum.fetch_sub( virtual_loss, std::memory_order_relaxed );
+        node.get_payload().nn_value_sum.fetch_sub( virtual_loss,
+                                                   std::memory_order_relaxed );
 
         // backpropagate nn value. note the alternating sign of nn_value
         // the player's perspective is changing on the way up to the root node.
         for ( node_type *next = &node; next; next = next->get_parent() )
         {
-            next->get_payload().nn_value_sum.fetch_add( nn_value, std::memory_order_relaxed );
+            next->get_payload().nn_value_sum.fetch_add(
+                nn_value, std::memory_order_relaxed );
             // toggle sign
             nn_value = -nn_value;
         }
@@ -423,9 +458,11 @@ class Player : public ::Player< MoveT >
     // thread-safe.
     void worker( std::stop_token token )
     {
-        while ( !token.stop_requested() )
+        while ( true )
         {
             remaining_simulations.acquire();
+            if ( token.stop_requested() )
+                break;
             simulation( root );
         }
     }
@@ -439,11 +476,13 @@ class Player : public ::Player< MoveT >
         // so we are more versatile in the opening
         size_t total_visits = 0;
         for ( auto const &child : children )
-            total_visits += child.get_payload().visits.load( std::memory_order_relaxed );
+            total_visits +=
+                child.get_payload().visits.load( std::memory_order_relaxed );
 
         if ( !total_visits )
         {
-            std::uniform_int_distribution< size_t > dist( 0, std::size( children ) - 1 );
+            std::uniform_int_distribution< size_t > dist(
+                0, std::size( children ) - 1 );
             return *std::next( children.begin(), dist( g ) );
         }
 
@@ -452,7 +491,8 @@ class Player : public ::Player< MoveT >
         size_t child_visits = 0;
         for ( auto itr = children.begin(); itr != children.end(); ++itr )
         {
-            child_visits = itr->get_payload().visits.load( std::memory_order_relaxed );
+            child_visits =
+                itr->get_payload().visits.load( std::memory_order_relaxed );
             if ( r < child_visits )
                 return *itr;
             r -= child_visits;
@@ -498,8 +538,10 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
     using expand_visitor_type = player_type::ExpandVisitor;
     using pre_node_type = player_type::pre_node_type;
 
-    SelfPlay( player_type &player, float dirichlet_alpha, float dirichlet_epsilon, std::mt19937 &g,
-              std::vector< Position< G, P > > &positions, Statistics &root_node_entropy_stat,
+    SelfPlay( player_type &player, float dirichlet_alpha,
+              float dirichlet_epsilon, std::mt19937 &g,
+              std::vector< Position< G, P > > &positions,
+              Statistics &root_node_entropy_stat,
               Statistics &informed_selection_stats ) noexcept
         : player( player ), dirichlet_epsilon( dirichlet_epsilon ), g( g ),
           gamma_dist( dirichlet_alpha, 1.0f ), positions( positions ),
@@ -508,7 +550,10 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
     {
     }
 
-    Statistics const &get_root_node_entropy() const noexcept { return root_node_entropy_stat; }
+    Statistics const &get_root_node_entropy() const noexcept
+    {
+        return root_node_entropy_stat;
+    }
 
     void run()
     {
@@ -546,9 +591,10 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
             root_node_entropy_stat.update( shannon_entropy( root ) );
 
             informed_selection_stats.update(
-                static_cast< float >(
-                    player.informed_selections.load( std::memory_order_relaxed ) ) /
-                static_cast< float >( player.total_selections.load( std::memory_order_relaxed ) ) );
+                static_cast< float >( player.informed_selections.load(
+                    std::memory_order_relaxed ) ) /
+                static_cast< float >( player.total_selections.load(
+                    std::memory_order_relaxed ) ) );
             player.informed_selections.store( 0, std::memory_order_relaxed );
             player.total_selections.store( 0, std::memory_order_relaxed );
 
@@ -557,8 +603,10 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
         }
 
         // set target value to game result for all new positions
-        for ( auto itr = positions.begin() + prev_size; itr != positions.end(); ++itr )
-            itr->target_value = game_result_2_score( game_result, itr->current_player );
+        for ( auto itr = positions.begin() + prev_size; itr != positions.end();
+              ++itr )
+            itr->target_value =
+                game_result_2_score( game_result, itr->current_player );
     }
 
   private:
@@ -570,10 +618,12 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
         // add noise for root node
         for ( auto &child : root.get_children() )
         {
-            float policy = child.get_payload().nn_policy.load( std::memory_order_relaxed );
+            float policy =
+                child.get_payload().nn_policy.load( std::memory_order_relaxed );
             policy *= 1.0f - dirichlet_epsilon;
             policy += gamma_dist( g ) * dirichlet_epsilon;
-            child.get_payload().nn_policy.store( policy, std::memory_order_relaxed );
+            child.get_payload().nn_policy.store( policy,
+                                                 std::memory_order_relaxed );
         }
     }
 
@@ -590,7 +640,8 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
         position.game_state = player.serialize_state( game );
 
         // root visits should be the children's visits sum.
-        const size_t sum_visits = payload.visits.load( std::memory_order_relaxed );
+        const size_t sum_visits =
+            payload.visits.load( std::memory_order_relaxed );
 
         // Initialize all policies to zero.
         position.target_policy.fill( 0.0f );
@@ -600,10 +651,11 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
         if ( sum_visits > 0 )
             for ( auto const &child : root.get_children() )
             {
-                const size_t policy_index = player.move_to_policy_index( child.get_move() );
+                const size_t policy_index =
+                    player.move_to_policy_index( child.get_move() );
                 position.target_policy[policy_index] =
-                    static_cast< float >(
-                        child.get_payload().visits.load( std::memory_order_relaxed ) ) /
+                    static_cast< float >( child.get_payload().visits.load(
+                        std::memory_order_relaxed ) ) /
                     sum_visits;
             }
     }

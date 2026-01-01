@@ -23,10 +23,16 @@ torch::Device get_device()
         return torch::kCPU;
 }
 
+std::mutex& get_mps_mutex()
+{
+    static std::mutex mutex;
+    return mutex;
+}
+
 // Helper function to safely get a value from a JSON object.
 // Throws a descriptive error if the key is not found.
 template < typename T >
-T get_required_value( const boost::json::object &obj, string const &key )
+T get_required_value( const boost::json::object& obj, string const& key )
 {
     if ( !obj.contains( key ) )
         throw invalid_argument(
@@ -35,8 +41,8 @@ T get_required_value( const boost::json::object &obj, string const &key )
 }
 
 template < typename T >
-T get_value_with_default( const boost::json::object &obj, string const &key,
-                          T const &default_value )
+T get_value_with_default( const boost::json::object& obj, string const& key,
+                          T const& default_value )
 {
     if ( !obj.contains( key ) )
         return default_value;
@@ -44,7 +50,7 @@ T get_value_with_default( const boost::json::object &obj, string const &key,
 }
 
 pair< unique_ptr< torch::jit::script::Module >, Hyperparameters >
-load_model( const char *model_path, torch::Device device )
+load_model( const char* model_path, torch::Device device )
 {
     // Read the entire model file into a string buffer.
     ifstream model_file( model_path, ios::binary );
@@ -62,7 +68,7 @@ load_model( const char *model_path, torch::Device device )
     // parent directory name.
     string command = "unzip -p " + string( model_path ) +
                      " '*/extra/metadata.json' 2>/dev/null";
-    FILE *pipe = popen( command.c_str(), "r" );
+    FILE* pipe = popen( command.c_str(), "r" );
     if ( !pipe )
         throw system_error( errno, system_category(),
                             "popen() for unzip failed" );
@@ -112,14 +118,14 @@ unique_ptr< torch::jit::script::Module > load_model( DataBuffer model_buffer,
     return model;
 }
 
-Hyperparameters::Hyperparameters( string const &metadata_json )
+Hyperparameters::Hyperparameters( string const& metadata_json )
 {
     boost::json::value metadata = boost::json::parse( metadata_json );
     if ( !metadata.is_object() ||
          !metadata.as_object().contains( "self_play_config" ) )
         throw std::invalid_argument(
             "Model metadata is missing or incomplete." );
-    const auto &sp_config = metadata.at( "self_play_config" ).as_object();
+    const auto& sp_config = metadata.at( "self_play_config" ).as_object();
 
     c_base = get_required_value< float >( sp_config, "c_base" );
     c_init = get_required_value< float >( sp_config, "c_init" );

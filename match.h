@@ -1,3 +1,4 @@
+#include "allocator.h" // Needed for GenerationalArenaAllocator
 #include "player.h"
 
 #include <atomic>
@@ -46,18 +47,24 @@ template < typename MoveT, typename StateT > class Match
                          MoveT const & ) { /* do nothing on default */ };
 };
 
+
 template < typename MoveT, typename StateT >
 class MultiMatch : public ::Match< MoveT, StateT >
 {
   public:
+    using AllocatorFactory =
+        std::function< std::unique_ptr< GenerationalArenaAllocator >() >;
+
     // we need a new player each round, so we use factories
     MultiMatch( Game< MoveT, StateT > const &game,
                 PlayerFactory< MoveT, StateT > fst_player_factory,
-                PlayerFactory< MoveT, StateT > snd_player_factory, int rounds,
+                PlayerFactory< MoveT, StateT > snd_player_factory,
+                AllocatorFactory allocator_factory, int rounds,
                 size_t number_of_threads, unsigned seed )
         : rounds( rounds ), g( seed ), game( game ),
           fst_player_factory( fst_player_factory ),
           snd_player_factory( snd_player_factory ),
+          allocator_factory( allocator_factory ),
           number_of_threads( number_of_threads )
     {
     }
@@ -71,6 +78,7 @@ class MultiMatch : public ::Match< MoveT, StateT >
             thread.join();
     }
 
+    // ... getters (kept as is) ...
     size_t get_draws() const
     {
         std::lock_guard< std::mutex > lock( mutex );
@@ -98,12 +106,8 @@ class MultiMatch : public ::Match< MoveT, StateT >
     }
 
   private:
-    // A helper struct to bundle a player's factory with their thread-local
-    // stats. This simplifies swapping player roles and accumulating results.
     struct PlayerRecord
     {
-        // Use std::reference_wrapper to get reference semantics (non-nullable)
-        // while still being swappable.
         std::reference_wrapper< PlayerFactory< MoveT, StateT > > factory;
         std::reference_wrapper< size_t > wins;
         std::reference_wrapper< std::chrono::microseconds > duration;
@@ -111,6 +115,9 @@ class MultiMatch : public ::Match< MoveT, StateT >
 
     void worker()
     {
+        auto allocator1 = allocator_factory();
+        auto allocator2 = allocator_factory();
+
         size_t tls_draws = 0;
         size_t tls_fst_player_wins = 0;
         size_t tls_snd_player_wins = 0;
@@ -122,7 +129,6 @@ class MultiMatch : public ::Match< MoveT, StateT >
         PlayerRecord player2_record = { snd_player_factory, tls_snd_player_wins,
                                         tls_snd_player_duration };
 
-        // The starting player index also alternates each round.
         PlayerIndex current_starter_index = game.current_player_index();
 
         while ( rounds.fetch_sub( 1, std::memory_order_relaxed ) > 0 )
@@ -131,10 +137,10 @@ class MultiMatch : public ::Match< MoveT, StateT >
                                               game.get_state() );
 
             const unsigned round_seed = g();
-            std::unique_ptr< Player< MoveT > > player1(
-                player1_record.factory( round_game, round_seed ) );
-            std::unique_ptr< Player< MoveT > > player2(
-                player2_record.factory( round_game, round_seed ) );
+            std::unique_ptr< Player< MoveT > > player1( player1_record.factory(
+                round_game, round_seed, allocator1.get() ) );
+            std::unique_ptr< Player< MoveT > > player2( player2_record.factory(
+                round_game, round_seed, allocator2.get() ) );
 
             const GameResult game_result =
                 this->play( round_game, *player1, player1_record.duration,
@@ -146,16 +152,14 @@ class MultiMatch : public ::Match< MoveT, StateT >
                       ( current_starter_index == PlayerIndex::Player1
                             ? GameResult::Player1Win
                             : GameResult::Player2Win ) )
-                ++player1_record.wins; // The first player for this round won.
+                ++player1_record.wins;
             else
-                ++player2_record.wins; // The second player for this round won.
+                ++player2_record.wins;
 
-            // Swap the roles for the next round.
             std::swap( player1_record, player2_record );
             current_starter_index = toggle( current_starter_index );
         }
 
-        // accumulate results thread safe
         std::lock_guard< std::mutex > lock( mutex );
 
         draws += tls_draws;
@@ -166,7 +170,6 @@ class MultiMatch : public ::Match< MoveT, StateT >
     }
 
     mutable std::mutex mutex;
-    // has to be a signed type because we test for positivity
     std::atomic< int > rounds;
     std::mt19937 g;
     size_t draws = 0;
@@ -178,5 +181,6 @@ class MultiMatch : public ::Match< MoveT, StateT >
     Game< MoveT, StateT > const &game;
     PlayerFactory< MoveT, StateT > fst_player_factory;
     PlayerFactory< MoveT, StateT > snd_player_factory;
+    AllocatorFactory allocator_factory;
     size_t number_of_threads;
 };

@@ -39,6 +39,15 @@ class CppStats(ctypes.Structure):
     ]
 
 
+class EvaluationResult(ctypes.Structure):
+    """Mirrors the EvaluationResult struct in C++."""
+    _fields_ = [
+        ("wins_p1", ctypes.c_size_t),
+        ("wins_p2", ctypes.c_size_t),
+        ("draws", ctypes.c_size_t),
+    ]
+
+
 class Hyperparameters(ctypes.Structure):
     """Mirrors the Hyperparameters struct in C++ for data transfer."""
     _fields_ = [
@@ -87,6 +96,7 @@ class TrainingHyperparameters(TypedDict):
     validation_freq_steps: int
     lr_schedule_milestones: list[int]
     lr_schedule_gamma: float
+    evaluation_games: int  # Added for evaluation match config
 
 
 def set_model(session_handle, set_model_func, game_type: GameType,
@@ -128,17 +138,85 @@ def fetch_selfplay_data_from_cpp(
     data_pointers.player_indices = player_indices.ctypes.data_as(
         ctypes.POINTER(ctypes.c_int32))
 
+    inference_batch_size = CppStats()
+    inference_time = CppStats()
+    allocator_size = CppStats()
+
     fetch_data_func(
         session_handle, game_type, ctypes.byref(data_pointers), 
-        number_of_positions)
+        number_of_positions, 
+        ctypes.byref(inference_batch_size), 
+        ctypes.byref(inference_time), 
+        ctypes.byref(allocator_size))
 
-    result = {
+    data = {
         "game_states": game_states,
         "policy_targets": policy_targets,
         "value_targets": value_targets,
         "player_indices": player_indices
     }
+    stats = {
+        "inference_batch_size": inference_batch_size,
+        "inference_time": inference_time,
+        "allocator_size": allocator_size
+    }
+    return data, stats
+
+
+def evaluate_models(session_handle, evaluate_func, game_type: GameType,
+                    model1_bytes: bytes, model2_bytes: bytes,
+                    hp: Hyperparameters, rounds: int, save_path: str,
+                    run_name: str, step: int):
+    """
+    Evaluates two models against each other.
+    """
+    save_path_bytes = save_path.encode('utf-8')
+    run_name_bytes = run_name.encode('utf-8')
+    
+    # Define result type
+    evaluate_func.restype = EvaluationResult
+    evaluate_func.argtypes = [
+         ctypes.c_int32, 
+         ctypes.c_char_p, ctypes.c_uint32,
+         ctypes.c_char_p, ctypes.c_uint32,
+         ctypes.POINTER(Hyperparameters),
+         ctypes.c_int32,
+         ctypes.c_char_p,
+         ctypes.c_char_p,
+         ctypes.c_int32
+    ]
+    
+    result = evaluate_func(
+        game_type.value,
+        model1_bytes, len(model1_bytes),
+        model2_bytes, len(model2_bytes),
+        ctypes.byref(hp),
+        rounds,
+        save_path_bytes,
+        run_name_bytes,
+        step
+    )
+    
     return result
+
+
+def pause_session(session_handle, alphazero_lib, game_type):
+    if not session_handle:
+        return
+    func = alphazero_lib.pause_session
+    func.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+    func.restype = None
+    func(session_handle, game_type.value)
+
+
+def resume_session(session_handle, alphazero_lib, game_type):
+    if not session_handle:
+        return
+    func = alphazero_lib.resume_session
+    func.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+    func.restype = None
+    func(session_handle, game_type.value)
+
 
 
 def get_git_revision_hash() -> str:
@@ -239,6 +317,29 @@ class MetricLogger:
         self.inference_batch_size_stats = CppStats()
         self.inference_time_stats = CppStats()
         self.allocator_size_stats = CppStats()
+        
+        # Setup custom scalars layout to group min/max/mean into single charts 
+        # without creating separate "Runs"
+        layout = {
+            "Performance": {
+                "Inference Batch Size": ["Multiline", [
+                    "Performance/Inference_Batch_Size/min",
+                    "Performance/Inference_Batch_Size/max",
+                    "Performance/Inference_Batch_Size/mean",
+                ]],
+                "Inference Time (us)": ["Multiline", [
+                    "Performance/Inference_Time_us/min",
+                    "Performance/Inference_Time_us/max",
+                    "Performance/Inference_Time_us/mean",
+                ]],
+                "Allocator Size (Bytes)": ["Multiline", [
+                    "Performance/Allocator_SizeBytes/min",
+                    "Performance/Allocator_SizeBytes/max",
+                    "Performance/Allocator_SizeBytes/mean",
+                ]],
+            }
+        }
+        self.writer.add_custom_scalars(layout)
 
     def update(self, **kwargs):
         """Update metrics for the current step."""
@@ -283,22 +384,16 @@ class MetricLogger:
 
         self.writer.add_scalar('Hyperparameters/Learning_Rate', lr, step)
 
-        # Log C++ stats
+        # Log C++ stats using add_scalar to keep them in the main run
         for stats, name in [
             (self.inference_batch_size_stats, 'Inference_Batch_Size'),
             (self.inference_time_stats, 'Inference_Time_us'),
             (self.allocator_size_stats, 'Allocator_SizeBytes')
         ]:
-            self.writer.add_scalars(
-                f'Performance/{name}',
-                {
-                    'min': stats.min,
-                    'max': stats.max,
-                    'mean': stats.mean,
-                    'minus_one_stddev': stats.mean - stats.stddev,
-                    'plus_one_stddev': stats.mean + stats.stddev
-                },
-                step)
+            self.writer.add_scalar(f'Performance/{name}/min', stats.min, step)
+            self.writer.add_scalar(f'Performance/{name}/max', stats.max, step)
+            self.writer.add_scalar(f'Performance/{name}/mean', stats.mean, step)
+            self.writer.add_scalar(f'Performance/{name}/stddev', stats.stddev, step)
 
         # Log to console
         print(

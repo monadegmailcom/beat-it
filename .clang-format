@@ -7,3 +7,4 @@ SpaceInEmptyParentheses: false
 ColumnLimit: 80
 ReflowComments: true
 SortIncludes: true
+PointerAlignment: Left

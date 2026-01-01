@@ -15,10 +15,13 @@ template < typename MoveT > class Player
     // require: game is not finished and has at least one valid move
     virtual MoveT choose_move() = 0;
     // require: move is a valid move
-    virtual void apply_opponent_move( MoveT const & ) = 0;
+    virtual void apply_opponent_move( MoveT const& ) = 0;
 };
+
+class GenerationalArenaAllocator;
 
 // for match
 template < typename MoveT, typename StateT >
 using PlayerFactory = std::function< std::unique_ptr< Player< MoveT > >(
-    Game< MoveT, StateT > const &, unsigned seed ) >;
+    Game< MoveT, StateT > const&, unsigned seed,
+    GenerationalArenaAllocator* ) >;

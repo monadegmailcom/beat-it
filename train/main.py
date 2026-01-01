@@ -11,11 +11,13 @@ import importlib
 from typing import cast
 from torch.utils.tensorboard import SummaryWriter
 import argparse
+import shutil
 from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
     DataPointers, split_and_add_data, GameType, CppStats,
-    train_buffer_metadata_file, Hyperparameters
+    train_buffer_metadata_file, Hyperparameters, evaluate_models,
+    pause_session, resume_session
 )
 
 scheduler_state_file = 'scheduler_state.pt'
@@ -27,6 +29,9 @@ validation_buffer_data_file = 'validation_buffer_data.npz'
 
 
 # 2. Training Setup
+
+
+
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(
         description="AlphaZero Training")
@@ -282,7 +287,9 @@ if __name__ == '__main__':
         c_fetch_data_func.restype = None
         c_fetch_data_func.argtypes = [
             ctypes.c_void_p, ctypes.c_int32, ctypes.POINTER(DataPointers),
-            ctypes.c_uint32
+            ctypes.c_uint32,
+            ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
+            ctypes.POINTER(CppStats)
         ]
 
         c_set_model_func = alphazero_lib.set_model
@@ -301,6 +308,9 @@ if __name__ == '__main__':
             self_play_config=self_play_config,
             training_hyperparams=training_hyperparams
         )
+
+        c_evaluate_func = alphazero_lib.evaluate_models
+        # restype/argtypes are set inside evaluate_models wrapper
 
         # Populate Hyperparameters struct
         hp = Hyperparameters(self_play_config)
@@ -348,6 +358,35 @@ if __name__ == '__main__':
         loss = None  # Initialize loss to a default value
         step = start_step
 
+        previous_checkpoint_bytes = None
+        # If we just loaded a model, strictly speaking it's the "current" one.
+        # But for the first checkpoint we create, we can compare against this loaded one if we had its bytes.
+        # However, we don't easily have its bytes unless we re-serialized it. 
+        # For simplicity, we start 'previous' as None, so the first match happens at the SECOND checkpoint.
+        # OR: we can generate bytes for the initial model now.
+        previous_checkpoint_path = None
+        if args.resume_from and os.path.exists(args.resume_from):
+             previous_checkpoint_path = args.resume_from
+        else:
+             # Save initial random model as 'checkpoint_prev.pt' so the first evaluation has a baseline
+             initial_prev_path = os.path.join(checkpoint_dir, "checkpoint_prev.pt")
+             print(f"Saving initial random model to {initial_prev_path} for first evaluation...")
+             save_checkpoint(
+                model,
+                optimizer,
+                scheduler,
+                step=step,
+                current_loss=torch.tensor(0.0), # Dummy loss
+                game_config=game_config,
+                self_play_config=self_play_config,
+                training_hyperparams=training_hyperparams,
+                path=initial_prev_path,
+                train_buffer=None,
+                validation_buffer=None
+             )
+             previous_checkpoint_path = initial_prev_path
+
+
         # 1. Fetch a small batch of new data to keep the buffer fresh.
         num_positions_to_fetch = max(
             1,
@@ -371,7 +410,7 @@ if __name__ == '__main__':
             fetch_start_time = time.time()
             # This call blocks until the C++ workers have produced enough
             #  games.
-            new_data = fetch_selfplay_data_from_cpp(
+            new_data, stats = fetch_selfplay_data_from_cpp(
                 session_handle, c_fetch_data_func, game_type,
                 num_positions_to_fetch, G_SIZE, P_SIZE)
             fetch_duration = time.time() - fetch_start_time
@@ -411,7 +450,6 @@ if __name__ == '__main__':
             loss_value = value_loss_fn(
                 pred_values.squeeze(-1), batch_target_values)
             loss = loss_policy + loss_value
-
             loss.backward()
             optimizer.step()
             scheduler.step()  # Update the learning rate
@@ -422,7 +460,10 @@ if __name__ == '__main__':
                 loss_policy=loss_policy.item(),
                 loss_value=loss_value.item(),
                 step_time_ms=duration * 1000,
-                selfplay_time_ms=fetch_duration * 1000
+                selfplay_time_ms=fetch_duration * 1000,
+                inference_batch_size=stats['inference_batch_size'],
+                inference_time=stats['inference_time'],
+                allocator_size=stats['allocator_size']
             )
 
             if (step + 1) % training_hyperparams['log_freq_steps'] == 0:
@@ -485,6 +526,13 @@ if __name__ == '__main__':
 
             # Periodically save a checkpoint
             if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
+                # Rotate checkpoints to allow evaluation against previous version
+                prev_checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_prev.pt")
+                if os.path.exists(checkpoint_path):
+                    shutil.copy2(checkpoint_path, prev_checkpoint_path)
+                    previous_checkpoint_path = prev_checkpoint_path
+                    print(f"Backed up previous checkpoint to {prev_checkpoint_path}")
+                
                 print(f"\nSaving checkpoint at step {step+1} to "
                       f"{checkpoint_path}...")
                 save_checkpoint(
@@ -500,6 +548,140 @@ if __name__ == '__main__':
                     train_buffer=replay_buffer,
                     validation_buffer=validation_buffer
                 )
+
+                # --- Evaluation Match ---
+                print(f"Running evaluation match at step {step+1}...")
+                
+                # Use paths for evaluation
+                current_model_path = checkpoint_path
+                
+                if previous_checkpoint_path and os.path.exists(previous_checkpoint_path):
+                    # Pause self-play to free up GPU resources
+                    print("Pausing self-play for evaluation...")
+                    pause_session(session_handle, alphazero_lib, game_type)
+                    
+                    # Release training resources from GPU
+                    print("Releasing model/optimizer from GPU...")
+                    model.cpu()
+                    # We can't easily move optimizer state to CPU and back without full reload or manual iteration.
+                    # Since we just saved a checkpoint, it's safest and easiest to just reload everything after.
+                    del optimizer
+                    del scheduler
+                    torch.mps.empty_cache()
+                    
+                    eval_games_dir = os.path.join(log_dir, "games")
+                    os.makedirs(eval_games_dir, exist_ok=True)
+                    eval_log_path = os.path.join(eval_games_dir, f"eval_step_{step+1}.jsonl")
+                    num_eval_games = training_hyperparams.get('evaluation_games', 100)
+
+                    # Pass paths to the models
+                    current_model_path = checkpoint_path
+                    
+                    print(f"Starting evaluation (in-process) vs {os.path.basename(previous_checkpoint_path)}...")
+                    
+                    # Read models as bytes for the in-process call
+                    with open(current_model_path, 'rb') as f:
+                        current_model_bytes = f.read()
+                    with open(previous_checkpoint_path, 'rb') as f:
+                        prev_model_bytes = f.read()
+                        
+                    # Reconstruct Hyperparameters struct
+                    hp_struct = Hyperparameters(self_play_config)
+                    
+                    try:
+                        eval_start = time.time()
+                        eval_result = evaluate_models(
+                            None, # No session handle needed for eval
+                            c_evaluate_func,
+                            game_type,
+                            current_model_bytes,
+                            prev_model_bytes,
+                            hp_struct,
+                            num_eval_games,
+                            eval_log_path,
+                            os.path.basename(log_dir),
+                            step+1
+                        )
+                        eval_duration = time.time() - eval_start
+                        print(f"Evaluation took {eval_duration:.2f}s")
+                        
+                        total_games = eval_result.wins_p1 + eval_result.wins_p2 + eval_result.draws
+                        if total_games > 0:
+                            win_rate_p1 = eval_result.wins_p1 / total_games
+                            win_rate_p2 = eval_result.wins_p2 / total_games
+                            draw_rate = eval_result.draws / total_games
+                            print(f"Evaluation Result (Current vs Previous):")
+                            print(f"  Current Wins: {eval_result.wins_p1} ({win_rate_p1:.1%})")
+                            print(f"  Previous Wins: {eval_result.wins_p2} ({win_rate_p2:.1%})")
+                            print(f"  Draws:        {eval_result.draws} ({draw_rate:.1%})")
+                            
+                            if writer:
+                                writer.add_scalar('Evaluation/WinRates/Current', win_rate_p1, step+1)
+                                writer.add_scalar('Evaluation/WinRates/Previous', win_rate_p2, step+1)
+                                writer.add_scalar('Evaluation/WinRates/Draw', draw_rate, step+1)
+                        else:
+                            print("Evaluation finished with 0 games.")
+                            
+                    except Exception as e:
+                        print(f"Evaluation failed: {e}")
+
+                    # Restore Training State from Checkpoint
+                    print("Restoring training state from checkpoint...")
+                    checkpoint = torch.jit.load(checkpoint_path) 
+                    # Note: We need the Python model, not the JIT model.
+                    # We saved the Python model state in the 'optimizer_state.pt' etc logic? 
+                    # Wait, save_checkpoint saves JIT model with extra files.
+                    # It DOES NOT save the python source code/architecture pickling in a way we can just 'load'.
+                    # We have the 'model' object instance still (just CPU moved).
+                    # We should just load state dict if possible?
+                    # Actually, we moved 'model' to CPU. It's still valid. We just need to move it back.
+                    # But optimizer was deleted. We need to reload optimizer state.
+                    
+                    # Move model back
+                    model.to(device)
+                    model.train()
+                    
+                    # Re-instantiate optimizer/scheduler
+                    optimizer = optim.Adam(
+                        model.parameters(),
+                        lr=training_hyperparams['learning_rate'],
+                        weight_decay=training_hyperparams['weight_decay'])
+                    
+                    scheduler = optim.lr_scheduler.MultiStepLR(
+                        optimizer,
+                        milestones=training_hyperparams['lr_schedule_milestones'],
+                        gamma=training_hyperparams['lr_schedule_gamma'])
+
+                    # Load states from the saved checkpoint extra files
+                    # We saved optimizer_state.pt in extra_files.
+                    # To load it, we load the JIT model and access extra files.
+                    # We can reused the 'checkpoint' loaded above? No, torch.jit.load loads ScriptModule.
+                    # extra_files map needs to be passed to load.
+                    
+                    extra_files = {
+                        'optimizer_state.pt': '', 
+                        'scheduler_state.pt': ''
+                    }
+                    torch.jit.load(checkpoint_path, _extra_files=extra_files)
+                    
+                    # extra_files values are already bytes, so directly wrap in BytesIO
+                    optimizer.load_state_dict(torch.load(io.BytesIO(extra_files['optimizer_state.pt']))) 
+                    
+                    scheduler.load_state_dict(torch.load(io.BytesIO(extra_files['scheduler_state.pt'])))
+                    
+                    print("Training state restored.")
+                    
+                    print("Resuming self-play...")
+                    resume_session(session_handle, alphazero_lib, game_type)
+                else:
+                    if previous_checkpoint_path:
+                         print(f"Previous checkpoint path {previous_checkpoint_path} not found. Skipping eval.")
+                    else:
+                         print("No previous checkpoint to evaluate against yet.")
+
+                # Update previous path for next time
+                previous_checkpoint_path = checkpoint_path
+
 
             step += 1
 

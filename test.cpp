@@ -30,8 +30,8 @@ template <>
 struct GameState< char, GameResult >
     : public GameStateBase< GameState< char, GameResult >, char, GameResult >
 {
-    static void next_valid_move( optional< char > &move, PlayerIndex,
-                                 GameResult const & )
+    static void next_valid_move( optional< char >& move, PlayerIndex,
+                                 GameResult const& )
     {
         if ( move.has_value() )
             move = 'a';
@@ -41,13 +41,12 @@ struct GameState< char, GameResult >
             move.reset();
     }
 
-    static GameResult apply( char const &, PlayerIndex,
-                             GameResult const &state )
+    static GameResult apply( char const&, PlayerIndex, GameResult const& state )
     {
         return state;
     }
 
-    static GameResult result( PlayerIndex, GameResult const &state )
+    static GameResult result( PlayerIndex, GameResult const& state )
     {
         return state;
     }
@@ -89,7 +88,7 @@ void eval_won_game()
     mt19937 g;
     vector< char > move_stack;
     minimax::ScoreFunction< char, GameResult > score =
-        []( Game< char, GameResult > const & ) { return 0.0; };
+        []( Game< char, GameResult > const& ) { return 0.0; };
     size_t calls = 0;
     if ( minimax::eval< char >(
              TestGame( PlayerIndex::Player2, GameResult::Player2Win ), score, 0,
@@ -107,7 +106,7 @@ void eval_drawn_game()
     mt19937 g;
     vector< char > move_stack;
 
-    minimax::ScoreFunction< char, GameResult > score = []( TestGame const & )
+    minimax::ScoreFunction< char, GameResult > score = []( TestGame const& )
     { return 0.0; };
     size_t calls = 0;
     if ( minimax::eval< char >(
@@ -122,7 +121,7 @@ void eval_undecided_game()
 
     TestGame undecided_game( PlayerIndex::Player2, GameResult::Undecided );
 
-    minimax::ScoreFunction< char, GameResult > score = []( TestGame const & )
+    minimax::ScoreFunction< char, GameResult > score = []( TestGame const& )
     { return 42.0; };
     mt19937 g;
     vector< char > move_stack;
@@ -136,7 +135,7 @@ struct TestNimPlayer : public Player< nim::Move >
 {
     nim::Move choose_move() override { return next_move; }
 
-    void apply_opponent_move( nim::Move const & ) override
+    void apply_opponent_move( nim::Move const& ) override
     {
         // do nothing
     }
@@ -205,19 +204,22 @@ void nim_match()
     nim::Game< HEAPS > game( PlayerIndex::Player1, { 1, 2, 3, 4, 5 } );
 
     PlayerFactory< nim::Move, nim::State< HEAPS > > factory1 =
-        []( nim::Game< HEAPS > const &game, unsigned seed )
+        []( nim::Game< HEAPS > const& game, unsigned seed,
+            GenerationalArenaAllocator* )
     {
         return std::make_unique< nim::minimax::Player< HEAPS > >( game, 2,
                                                                   seed );
     };
     PlayerFactory< nim::Move, nim::State< HEAPS > > factory2 =
-        []( nim::Game< HEAPS > const &game, unsigned seed )
+        []( nim::Game< HEAPS > const& game, unsigned seed,
+            GenerationalArenaAllocator* )
     {
         return std::make_unique< nim::minimax::Player< HEAPS > >( game, 3,
                                                                   seed );
     };
 
-    MultiMatch match( game, factory1, factory2, 100, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, 100, 1, seed );
 
     match.run();
 
@@ -294,22 +296,22 @@ void ttt_game()
 
 struct TicTacToeMatch : public Match< ttt::Move, ttt::State >
 {
-    explicit TicTacToeMatch( Player< ttt::Move > const &player )
+    explicit TicTacToeMatch( Player< ttt::Move > const& player )
         : player( player )
     {
     }
 
-    Player< ttt::Move > const &player;
+    Player< ttt::Move > const& player;
 
-    void report( ttt::Game const &game, ttt::Move const &move ) override
+    void report( ttt::Game const& game, ttt::Move const& move ) override
     {
         cout << "player " << game.current_player_index() << " (" << (int)move
              << ")\n"
              << "resulting board:\n"
              << game << '\n';
-        if ( auto p = dynamic_cast< const ttt::minimax::Player * >( &player ) )
+        if ( auto p = dynamic_cast< const ttt::minimax::Player* >( &player ) )
             cout << "score: " << p->score( game ) << endl;
-        else if ( auto mp = dynamic_cast< const ttt::montecarlo::Player * >(
+        else if ( auto mp = dynamic_cast< const ttt::montecarlo::Player* >(
                       &player ) )
             cout << "point ratio: " << mp->root_node().get_payload().visits
                  << endl;
@@ -359,12 +361,13 @@ void tic_tac_toe_match()
     ttt::Game game( Player1, ttt::empty_state );
 
     PlayerFactory< ttt::Move, ttt::State > factory1 =
-        []( ttt::Game const &game, unsigned seed )
+        []( ttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< ttt::minimax::Player >( game, 0, seed ); };
     PlayerFactory< ttt::Move, ttt::State > factory2 =
-        []( ttt::Game const &game, unsigned seed )
+        []( ttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< ttt::minimax::Player >( game, 5, seed ); };
-    MultiMatch match( game, factory1, factory2, 100, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, 100, 1, seed );
     match.run();
 
     if ( verbose )
@@ -379,14 +382,14 @@ void tic_tac_toe_match()
 struct UltimateTicTacToeMatch : public Match< uttt::Move, uttt::State >
 {
     explicit UltimateTicTacToeMatch(
-        uttt::minimax::Player const &minimax_player )
+        uttt::minimax::Player const& minimax_player )
         : minimax_player( minimax_player )
     {
     }
 
-    uttt::minimax::Player const &minimax_player;
+    uttt::minimax::Player const& minimax_player;
 
-    void report( uttt::Game const &game, uttt::Move const &move ) override
+    void report( uttt::Game const& game, uttt::Move const& move ) override
     {
         cout << "player " << game.current_player_index() << " ("
              << (int)move.big_move << "," << (int)move.small_move << ")\n"
@@ -478,12 +481,13 @@ void uttt_match()
     uttt::Game game( Player1, uttt::empty_state );
 
     PlayerFactory< uttt::Move, uttt::State > factory1 =
-        []( uttt::Game const &game, unsigned seed )
+        []( uttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< uttt::minimax::Player >( game, 9.0, 1, seed ); };
     PlayerFactory< uttt::Move, uttt::State > factory2 =
-        []( uttt::Game const &game, unsigned seed )
+        []( uttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< uttt::minimax::Player >( game, 9.0, 4, seed ); };
-    MultiMatch match( game, factory1, factory2, 100, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, 100, 1, seed );
     match.run();
 
     if ( verbose )
@@ -508,12 +512,12 @@ void montecarlo_node()
 
     using Payload = ttt::montecarlo::Payload;
 
-    auto *node = new ( allocator.allocate< PreNode >() )
+    auto* node = new ( allocator.allocate< PreNode >() )
         PreNode( game, ttt::no_move, Payload{ .next_move_itr = game.begin() } );
     assert( node->get_children().size() == 0 );
     assert( node_count( *node ) == 1 );
 
-    for ( auto const &move : game )
+    for ( auto const& move : game )
         node->get_children().push_front(
             *( new ( allocator.allocate< PreNode >() )
                    PreNode( game.apply( move ), move,
@@ -593,18 +597,21 @@ void montecarlo_ttt_match()
     const double exploration = 0.4;
     const size_t rounds = 100;
     ttt::PlayerFactory factory1 =
-        [&allocator, exploration]( ttt::Game const &game, unsigned seed )
+        [&allocator, exploration]( ttt::Game const& game, unsigned seed,
+                                   GenerationalArenaAllocator* )
     {
         return make_unique< ttt::montecarlo::Player >( game, exploration, 100,
                                                        seed, allocator );
     };
     ttt::PlayerFactory factory2 =
-        [&allocator, exploration]( ttt::Game const &game, unsigned seed )
+        [&allocator, exploration]( ttt::Game const& game, unsigned seed,
+                                   GenerationalArenaAllocator* )
     {
         return make_unique< ttt::montecarlo::Player >( game, exploration, 500,
                                                        seed, allocator );
     };
-    MultiMatch match( game, factory1, factory2, rounds, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, rounds, 1, seed );
     match.run();
 
     if ( verbose )
@@ -634,14 +641,17 @@ void montecarlo_minimax_ttt_match()
     const double exploration = 0.4;
     const size_t rounds = 100;
     ttt::PlayerFactory factory1 =
-        [&allocator, exploration]( ttt::Game const &game, unsigned seed )
+        [&allocator, exploration]( ttt::Game const& game, unsigned seed,
+                                   GenerationalArenaAllocator* )
     {
         return make_unique< ttt::montecarlo::Player >( game, exploration, 400,
                                                        seed, allocator );
     };
-    ttt::PlayerFactory factory2 = []( ttt::Game const &game, unsigned seed )
+    ttt::PlayerFactory factory2 =
+        []( ttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< ttt::minimax::Player >( game, 2, seed ); };
-    MultiMatch match( game, factory1, factory2, rounds, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, rounds, 1, seed );
     match.run();
 
     if ( verbose )
@@ -674,19 +684,22 @@ void montecarlo_minimax_uttt_match()
     const double factor = 9.0;
 
     const size_t rounds = 10;
-    uttt::PlayerFactory factory1 = [exploration, &allocator, simulations](
-                                       uttt::Game const &game, unsigned seed )
+    uttt::PlayerFactory factory1 =
+        [exploration, &allocator, simulations](
+            uttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     {
         return make_unique< uttt::montecarlo::Player >(
             game, exploration, simulations, seed, allocator );
     };
     uttt::PlayerFactory factory2 =
-        [factor, depth]( uttt::Game const &game, unsigned seed )
+        [factor, depth]( uttt::Game const& game, unsigned seed,
+                         GenerationalArenaAllocator* )
     {
         return make_unique< uttt::minimax::Player >( game, factor, depth,
                                                      seed );
     };
-    MultiMatch match( game, factory1, factory2, rounds, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, rounds, 1, seed );
     match.run();
 
     if ( verbose )
@@ -733,19 +746,22 @@ void uttt_match_mm_vs_tree_mm()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    uttt::PlayerFactory factory1 =
-        [&fst_depth]( uttt::Game const &game, unsigned seed )
+    uttt::PlayerFactory factory1 = [&fst_depth]( uttt::Game const& game,
+                                                 unsigned seed,
+                                                 GenerationalArenaAllocator* )
     {
         return make_unique< uttt::minimax::Player >( game, 9.0, fst_depth,
                                                      seed );
     };
     uttt::PlayerFactory factory2 =
-        [snd_depth, &allocator]( uttt::Game const &game, unsigned seed )
+        [snd_depth, &allocator]( uttt::Game const& game, unsigned seed,
+                                 GenerationalArenaAllocator* )
     {
         return make_unique< uttt::minimax::tree::Player >( game, 9.0, snd_depth,
                                                            seed, allocator );
     };
-    MultiMatch match( game, factory1, factory2, 100, 1, seed );
+    MultiMatch match(
+        game, factory1, factory2, [] { return nullptr; }, 100, 1, seed );
     match.run();
 
     if ( verbose )
@@ -776,8 +792,8 @@ void uttt_match_mm_vs_tree_mm()
 }
 
 vector< ttt::alphazero::training::Position >
-selfplay_worker( ttt::alphazero::libtorch::InferenceService &inference_manager,
-                 libtorch::Hyperparameters const &hp, size_t runs_per_thread,
+selfplay_worker( ttt::alphazero::libtorch::InferenceService& inference_manager,
+                 libtorch::Hyperparameters const& hp, size_t runs_per_thread,
                  size_t parallel_simulations )
 {
     auto g = mt19937( random_device{}() );
@@ -822,7 +838,7 @@ void alphazero_training()
 
     torch::Device device = libtorch::get_device();
     // Adjust if needed
-    const char *const model_path =
+    const char* const model_path =
         "runs/models/ttt_alphazero_experiment_6/final_model.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t parallel_simulations = 10;
@@ -832,13 +848,13 @@ void alphazero_training()
     vector< future< vector< ttt::alphazero::training::Position > > >
         thread_pool( 8 );
     cout << "start " << thread_pool.size() << " worker threads" << endl;
-    for ( auto &future : thread_pool )
+    for ( auto& future : thread_pool )
         future = async( selfplay_worker, ref( inference_service ), hp, 500,
                         parallel_simulations );
 
     cout << "wait for all threads to finish..." << endl;
     size_t total_positions = 0;
-    for ( auto &future : thread_pool )
+    for ( auto& future : thread_pool )
     {
         auto positions = future.get();
         total_positions += positions.size();
@@ -856,8 +872,8 @@ struct WorkerResult
 };
 
 WorkerResult uttt_selfplay_worker(
-    uttt::alphazero::libtorch::InferenceService &inference_service,
-    libtorch::Hyperparameters const &hp, size_t parallel_simulations,
+    uttt::alphazero::libtorch::InferenceService& inference_service,
+    libtorch::Hyperparameters const& hp, size_t parallel_simulations,
     size_t runs_per_thread, size_t simulations, unsigned local_seed,
     size_t allocator_block_size )
 {
@@ -906,7 +922,7 @@ void uttt_alphazero_training()
     }
 
     torch::Device device = libtorch::get_device();
-    const char *const model_path = "models/test/model_31000.pt";
+    const char* const model_path = "models/test/model_31000.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
     size_t simulations = 10; // 80;
     const size_t worker_threads = 1;
@@ -938,7 +954,7 @@ void uttt_alphazero_training()
              << endl;
 
         auto start = std::chrono::steady_clock::now();
-        for ( auto &future : thread_pool )
+        for ( auto& future : thread_pool )
         {
             future = async( uttt_selfplay_worker, ref( inference_service ), hp,
                             selfplay_threads, runs_per_worker_thread,
@@ -951,7 +967,7 @@ void uttt_alphazero_training()
         Statistics informed_selection_stats;
         size_t allocator_offset = 0;
         size_t allocated_blocks = 0;
-        for ( auto &future : thread_pool )
+        for ( auto& future : thread_pool )
         {
             auto result = future.get();
             total_positions += result.positions.size();
@@ -1029,13 +1045,15 @@ template < typename MoveT, typename StateT >
 class LogMultiMatch : public MultiMatch< MoveT, StateT >
 {
   public:
-    LogMultiMatch( Game< MoveT, StateT > const &game,
+    LogMultiMatch( Game< MoveT, StateT > const& game,
                    PlayerFactory< MoveT, StateT > fst_player_factory,
                    PlayerFactory< MoveT, StateT > snd_player_factory,
+                   typename MultiMatch< MoveT, StateT >::AllocatorFactory
+                       allocator_factory,
                    int rounds, size_t number_of_threads, unsigned seed )
         : MultiMatch< MoveT, StateT >( game, fst_player_factory,
-                                       snd_player_factory, rounds,
-                                       number_of_threads, seed )
+                                       snd_player_factory, allocator_factory,
+                                       rounds, number_of_threads, seed )
     {
     }
 
@@ -1043,9 +1061,9 @@ class LogMultiMatch : public MultiMatch< MoveT, StateT >
     map< thread::id, vector< pair< PlayerIndex, MoveT > > > games;
     mutex games_mutex;
     mutex cout_mutex;
-    void report( Game< MoveT, StateT > const &game, MoveT const &move ) override
+    void report( Game< MoveT, StateT > const& game, MoveT const& move ) override
     {
-        vector< pair< PlayerIndex, MoveT > > *moves = nullptr;
+        vector< pair< PlayerIndex, MoveT > >* moves = nullptr;
         {
             // only get/insert of new thread id has to be synchronized
             scoped_lock lock( games_mutex );
@@ -1058,7 +1076,7 @@ class LogMultiMatch : public MultiMatch< MoveT, StateT >
             {
                 // print game moves and result to console
                 scoped_lock lock( cout_mutex );
-                for ( auto const &[player_index, m] : *moves )
+                for ( auto const& [player_index, m] : *moves )
                     // toggle the player index because it's the opponent's move
                     cout << uttt::PlayerIndexDispatch( toggle( player_index ) )
                          << ":" << uttt::MoveDispatch( m ) << ", " << flush;
@@ -1084,7 +1102,7 @@ void uttt_alphazero_nn_vs_minimax()
     }
 
     torch::Device device = libtorch::get_device();
-    const char *const model_path = "models/test/checkpoint.pt";
+    const char* const model_path = "models/test/checkpoint.pt";
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
@@ -1092,12 +1110,10 @@ void uttt_alphazero_nn_vs_minimax()
         std::move( model ), device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
-    GenerationalArenaAllocator allocator( 50 * hp.simulations *
-                                          sizeof( uttt::alphazero::Node ) );
-
     const size_t rounds = 20;
-    uttt::PlayerFactory factory1 = [&hp, &allocator, &inference_service](
-                                       uttt::Game const &game, unsigned seed )
+    uttt::PlayerFactory factory1 =
+        [&hp, &inference_service]( uttt::Game const& game, unsigned seed,
+                                   GenerationalArenaAllocator* allocator )
     {
         const size_t simulations = 800;
         const size_t parallel_simulations = 8;
@@ -1108,12 +1124,21 @@ void uttt_alphazero_nn_vs_minimax()
             .opening_moves = hp.opening_moves,
             .parallel_simulations = parallel_simulations };
         return make_unique< uttt::alphazero::Player >(
-            game, ucb_params, gameplay_params, seed, allocator,
+            game, ucb_params, gameplay_params, seed, *allocator,
             inference_service );
     };
-    uttt::PlayerFactory factory2 = []( uttt::Game const &game, unsigned seed )
+    uttt::PlayerFactory factory2 =
+        []( uttt::Game const& game, unsigned seed, GenerationalArenaAllocator* )
     { return make_unique< uttt::minimax::Player >( game, 9.0, 3, seed ); };
-    LogMultiMatch match( game, factory1, factory2, rounds, threads, seed );
+
+    auto allocator_factory = [hp]()
+    {
+        return make_unique< GenerationalArenaAllocator >(
+            50 * hp.simulations * sizeof( uttt::alphazero::Node ) );
+    };
+
+    LogMultiMatch match( game, factory1, factory2, allocator_factory, rounds,
+                         threads, seed );
     match.run();
 
     if ( verbose )
@@ -1154,8 +1179,8 @@ void uttt_alphazero_nn_vs_alphazero()
     }
 
     torch::Device device = libtorch::get_device();
-    const char *const model_path = "models/test/model_31000.pt";
-    const char *const model_path2 = "models/test/checkpoint.pt";
+    const char* const model_path = "models/test/model_31000.pt";
+    const char* const model_path2 = "models/test/checkpoint.pt";
     cout << "load models for player1 " << model_path << " and player2"
          << model_path2 << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
@@ -1168,40 +1193,45 @@ void uttt_alphazero_nn_vs_alphazero()
 
     uttt::Game game( Player1, uttt::empty_state );
 
-    const size_t rounds = 100;
+    const size_t rounds = 10; // 100;
     const size_t parallel_simulations = 10;
     uttt::PlayerFactory factory1 =
-        [&hp, &inference_service]( uttt::Game const &game, unsigned seed )
+        [&hp, &inference_service]( uttt::Game const& game, unsigned seed,
+                                   GenerationalArenaAllocator* allocator )
     {
-        static thread_local GenerationalArenaAllocator allocator(
-            50 * hp.simulations * sizeof( uttt::alphazero::Node ) );
         alphazero::params::Ucb ucb_params{ .c_base = hp.c_base,
                                            .c_init = hp.c_init };
         alphazero::params::GamePlay gameplay_params{
-            .simulations = 400,
+            .simulations = 800,
             .opening_moves = hp.opening_moves,
             .parallel_simulations = parallel_simulations };
         return make_unique< uttt::alphazero::Player >(
-            game, ucb_params, gameplay_params, seed, allocator,
+            game, ucb_params, gameplay_params, seed, *allocator,
             inference_service );
     };
     uttt::PlayerFactory factory2 =
-        [&hp2, &inference_service2]( uttt::Game const &game, unsigned seed )
+        [&hp2, &inference_service2]( uttt::Game const& game, unsigned seed,
+                                     GenerationalArenaAllocator* allocator )
     {
-        static thread_local GenerationalArenaAllocator allocator(
-            50 * hp2.simulations * sizeof( uttt::alphazero::Node ) );
         alphazero::params::Ucb ucb_params{ .c_base = hp2.c_base,
                                            .c_init = hp2.c_init };
         alphazero::params::GamePlay gameplay_params{
-            .simulations = 400,
+            .simulations = 800,
             .opening_moves = hp2.opening_moves,
             .parallel_simulations = parallel_simulations };
         return make_unique< uttt::alphazero::Player >(
-            game, ucb_params, gameplay_params, seed, allocator,
+            game, ucb_params, gameplay_params, seed, *allocator,
             inference_service2 );
     };
 
-    LogMultiMatch match( game, factory1, factory2, rounds, threads, seed );
+    auto allocator_factory = [hp]()
+    {
+        return make_unique< GenerationalArenaAllocator >(
+            50 * hp.simulations * sizeof( uttt::alphazero::Node ) );
+    };
+
+    LogMultiMatch match( game, factory1, factory2, allocator_factory, rounds,
+                         threads, seed );
     match.run();
 
     if ( verbose )
@@ -1241,13 +1271,13 @@ int main()
         //        test::uttt_alphazero_training();
         return 0;
     }
-    catch ( source_location const &e )
+    catch ( source_location const& e )
     {
         cout << "exception caught: " << e.file_name() << ": "
              << e.function_name() << ": " << e.line() << endl;
     }
 
-    catch ( exception const &e )
+    catch ( exception const& e )
     {
         cout << "exception caught: " << e.what() << endl;
     }

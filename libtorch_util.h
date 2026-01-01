@@ -9,17 +9,23 @@
 #include <boost/json.hpp>
 
 #include <mutex>
+#include <torch/cuda.h>
+#ifdef __APPLE__
+#include <torch/mps.h>
+#endif
 
 namespace libtorch
 {
 
 struct DataBuffer
 {
-    const char *data;
+    const char* data;
     uint32_t len;
 };
 
 torch::Device get_device();
+// global mutex for mps device synchronization
+std::mutex& get_mps_mutex();
 
 struct Hyperparameters
 {
@@ -27,7 +33,7 @@ struct Hyperparameters
     // require: metadata_json has to contain a self_play_config sub-object
     //          with the variables below, otherwise it will throw
     // promise: json is parsed and assigned to the variables below
-    explicit Hyperparameters( std::string const &metadata_json );
+    explicit Hyperparameters( std::string const& metadata_json );
 
     float c_base = 0.0f;
     float c_init = 0.0f;
@@ -43,7 +49,7 @@ struct Hyperparameters
 
 // promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters >
-load_model( const char *model_path, torch::Device );
+load_model( const char* model_path, torch::Device );
 // promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters >
 load_model( DataBuffer model_buffer, DataBuffer metadata_buffer,
@@ -57,7 +63,7 @@ class InferenceService : public inference::Service< G, P >
 {
   public:
     using service_type = inference::Service< G, P >;
-    InferenceService( std::unique_ptr< torch::jit::script::Module > &&model,
+    InferenceService( std::unique_ptr< torch::jit::script::Module >&& model,
                       torch::Device device, size_t max_batch_size )
         : service_type( max_batch_size ), device( device ),
           model( std::move( model ) )
@@ -84,11 +90,25 @@ class InferenceService : public inference::Service< G, P >
             cpu_options );
     }
 
+    ~InferenceService()
+    {
+        if ( device.type() == torch::kCUDA )
+        {
+            torch::cuda::synchronize();
+        }
+        else if ( device.type() == torch::kMPS )
+        {
+#ifdef __APPLE__
+            torch::mps::synchronize();
+#endif
+        }
+    }
+
     // threadsafe replacement of model
     void
-    update_model( std::unique_ptr< torch::jit::script::Module > &&new_model,
-                  Statistics &batch_size_stats,
-                  Statistics &inference_time_stats )
+    update_model( std::unique_ptr< torch::jit::script::Module >&& new_model,
+                  Statistics& batch_size_stats,
+                  Statistics& inference_time_stats )
     {
         std::scoped_lock _( model_update_mutex );
         model = std::move( new_model );
@@ -97,13 +117,15 @@ class InferenceService : public inference::Service< G, P >
         reset_stats();
     }
 
-    Statistics const &batch_size_stats() const noexcept
+    Statistics const& batch_size_stats() const noexcept
     {
+        std::scoped_lock _( model_update_mutex );
         return batch_size_stats_;
     }
 
-    Statistics const &inference_time_stats() const noexcept
+    Statistics const& inference_time_stats() const noexcept
     {
+        std::scoped_lock _( model_update_mutex );
         return inference_time_stats_;
     }
 
@@ -123,6 +145,12 @@ class InferenceService : public inference::Service< G, P >
         // replaced by an update call from another thread mid-operation.
         std::scoped_lock _( model_update_mutex );
 
+        // serialize inference on mps device to prevent metal command buffer
+        // commit errors.
+        std::unique_lock< std::mutex > mps_lock;
+        if ( device.type() == torch::kMPS )
+            mps_lock = std::unique_lock< std::mutex >( get_mps_mutex() );
+
         std::chrono::steady_clock::time_point start =
             std::chrono::steady_clock::now();
 
@@ -130,7 +158,7 @@ class InferenceService : public inference::Service< G, P >
         // note: gemini suggests to first copy data to cpu tensor and then move
         // it to gpu tensor. it is not entirely clear to my, why.
         auto cpu_input_view = cpu_input_tensor.narrow( 0, 0, batch_size );
-        float *tensor_data_ptr = cpu_input_view.template data_ptr< float >();
+        float* tensor_data_ptr = cpu_input_view.template data_ptr< float >();
         for ( size_t i = 0; i < batch_size; ++i )
         {
             std::copy_n( request_batch[i].state.data(), G,
@@ -175,8 +203,8 @@ class InferenceService : public inference::Service< G, P >
         // copy data from cpu tensor to response structures.
         for ( size_t i = 0; i < batch_size; ++i )
         {
-            auto &request = request_batch[i];
-            auto &response = response_batch[i];
+            auto& request = request_batch[i];
+            auto& response = response_batch[i];
 
             response.node = request.node;
             response.nn_value = cpu_value_view[i].template item< float >();
