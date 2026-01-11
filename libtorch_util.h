@@ -125,7 +125,6 @@ class InferenceService : public inference::Service< G, P >
 
     Statistics const& inference_time_stats() const noexcept
     {
-        std::scoped_lock _( model_update_mutex );
         return inference_time_stats_;
     }
 
@@ -220,7 +219,7 @@ class InferenceService : public inference::Service< G, P >
     torch::Tensor gpu_input_tensor;
     torch::Tensor cpu_value_tensor;
     torch::Tensor cpu_policy_tensor;
-    std::mutex model_update_mutex;
+    mutable std::mutex model_update_mutex;
     Statistics batch_size_stats_;
     Statistics inference_time_stats_;
 };
