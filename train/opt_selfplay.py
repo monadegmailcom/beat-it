@@ -5,94 +5,94 @@ import time
 import json
 import torch
 import optuna
-from typing import Callable
+from typing import Callable, cast
+import importlib
 
+from .utils import (
+    GameType, create_inference_model_bundle, Hyperparameters,
+    TrainingHyperparameters
+)
 
-number_of_selfplay_workers = "number_of_selfplay_workers"
-number_of_threads_per_selfplay_worker = "number_of_threads_per_selfplay_worker"
-max_number_of_threads_per_selfplay_worker = \
-    "max_number_of_threads_per_selfplay_worker"
-min_batch_size = "min_batch_size"
-
-# --- Ctypes Definitions ---
-# These must match the structs in lib_interface.cpp
-
-class OptimizerParams(ctypes.Structure):
-    _fields_ = [
-        (number_of_selfplay_workers, ctypes.c_uint32),
-        (number_of_threads_per_selfplay_worker, ctypes.c_uint32),
-        (max_number_of_threads_per_selfplay_worker, ctypes.c_uint32),
-        (min_batch_size, ctypes.c_uint32),
-    ]
-
-
-class FixParams(ctypes.Structure):
-    _fields_ = [
-        ("simulations_per_move", ctypes.c_uint32),
-        ("number_of_games", ctypes.c_uint32),
-    ]
-
-
-# Define the function signature for the C measurement function. This creates a
-# type alias for clarity. Using typing.Callable is the standard, idiomatic
-# way to hint function-like objects for mypy and other type checkers.
-MeasureFuncType = Callable[
-    [ctypes.c_void_p, ctypes.POINTER(FixParams),  # type: ignore
-     ctypes.POINTER(OptimizerParams)],  # type: ignore
-    int  # The C uint32_t will be returned as a Python int
-]
-
-
-def objective(
-        trial: optuna.Trial, session_handle: ctypes.c_void_p,  # type: ignore
-        initial_params: dict, fix_params: FixParams,
-        c_measure_func: MeasureFuncType) -> float:
+def measure_throughput(
+        alphazero_lib: ctypes.CDLL,
+        game_type: GameType,
+        model_bytes: bytes,
+        hp: Hyperparameters,
+        number_of_positions: int) -> float:
     """
-    The objective function for Optuna to optimize.
-
-    It suggests hyperparameter values, calls the C++ measurement function,
-    and returns the throughput (number of positions generated per second).
+    Measures throughput by calling the C++ measure_selfplay_throughput function.
+    Returns positions per second.
     """
-    # --- Suggest Hyperparameters ---
-    # N: Number of parallel self-play workers (threads)
-    # P: Number of internal threads per worker (for MCTS)
-    # T: Minimum batch size for the neural network inference
-    n_workers = trial.suggest_int(
-        number_of_selfplay_workers,
-        1,
-        5)
-    p_threads_per_worker = trial.suggest_int(
-        number_of_threads_per_selfplay_worker,
-        10,
-        20)
-    t_min_batch_size = trial.suggest_int(
-        min_batch_size,
-        1,
-        10)
-
-    # --- Prepare Parameters for C++ Call ---
-    # These are the parameters we are optimizing
-    opt_params = OptimizerParams(
-        n_workers, p_threads_per_worker, t_min_batch_size)
-
-    # --- Run Measurement ---
-    print(
-        f"  Trial {trial.number}: Testing N={n_workers}, "
-        f"P={p_threads_per_worker}, T={t_min_batch_size}...")
+    
+    # Define C func signature
+    c_measure_func = alphazero_lib.measure_selfplay_throughput
+    c_measure_func.restype = ctypes.c_uint32
+    c_measure_func.argtypes = [
+        ctypes.c_int32,          # GameType
+        ctypes.c_char_p,         # model_data
+        ctypes.c_uint32,         # model_data_len
+        ctypes.POINTER(Hyperparameters), # hp
+        ctypes.c_uint32          # number_of_positions
+    ]
 
     start_time = time.time()
     total_positions = c_measure_func(
-        session_handle, ctypes.byref(fix_params), ctypes.byref(opt_params))
+        game_type.value,
+        model_bytes,
+        len(model_bytes),
+        ctypes.byref(hp),
+        number_of_positions
+    )
     duration = time.time() - start_time
 
     if duration > 0:
-        positions_per_second = total_positions / duration
+        return total_positions / duration
     else:
-        positions_per_second = 0.0
+        return 0.0
 
-    print(f"  ... Generated {total_positions} positions in {duration:.2f}s. "
-          f"Throughput: {positions_per_second:.2f} pos/s")
-    return positions_per_second
+
+def objective(
+        trial: optuna.Trial,
+        alphazero_lib: ctypes.CDLL,
+        game_type: GameType,
+        model_bytes: bytes,
+        base_hp_config: dict,
+        mode: str,
+        number_of_positions: int) -> float:
+    """
+    Optuna objective function.
+    """
+    # Create a copy of config to modify
+    config = base_hp_config.copy()
+
+    # --- Suggest Hyperparameters based on Mode ---
+    
+    # Common parameter: batch size
+    # We can probably search in powers of 2 or typical gpu sizes
+    max_batch_size = trial.suggest_int('max_batch_size', 16, 4096, log=True)
+    config['max_batch_size'] = max_batch_size
+
+    if mode == "train":
+        parallel_games = trial.suggest_int('parallel_games', 1, 256, log=True)
+        config['parallel_games'] = parallel_games
+        config['parallel_simulations'] = 1
+    elif mode == "match":
+        parallel_simulations = trial.suggest_int('parallel_simulations', 1, 64)
+        config['parallel_simulations'] = parallel_simulations
+        config['parallel_games'] = 1
+    
+    hp = Hyperparameters(config)
+
+    print(f"  Trial {trial.number}: Mode={mode}, "
+          f"PG={hp.parallel_games}, PS={hp.parallel_simulations}, "
+          f"BS={hp.max_batch_size}...")
+
+    throughput = measure_throughput(
+        alphazero_lib, game_type, model_bytes, hp, number_of_positions
+    )
+
+    print(f"  ... Throughput: {throughput:.2f} pos/s")
+    return throughput
 
 
 if __name__ == '__main__':
@@ -100,126 +100,100 @@ if __name__ == '__main__':
         description="Hyperparameter optimization for self-play throughput.")
     parser.add_argument(
         '--model_path', type=str, required=True,
-        help='Path to a model checkpoint (.pt file) to use for inference.')
+        help='Path to a model checkpoint (.pt file).')
     parser.add_argument(
-        '--n_trials', type=int, default=100,
+        '--game', type=str, required=True,
+        help='The game to train on (e.g., "ttt", "uttt").')
+    parser.add_argument(
+        '--mode', type=str, required=True, choices=['train', 'match'],
+        help='Optimization mode: "train" or "match".')
+    parser.add_argument(
+        '--n_trials', type=int, default=50,
         help='Number of optimization trials to run.')
     parser.add_argument(
-        '--simulations_per_move', type=int, default=100,
-        help='Number of MCTS simulations per move for each game in a trial.')
+        '--number_of_positions', type=int, default=1000,
+        help='Number of positions to generate per trial.')
     parser.add_argument(
-        '--number_of_games', type=int, default=20,
-        help='Number of games to play per trial to measure throughput.')
-    parser.add_argument(
-        '--study_name', type=str, default="selfplay_throughput_opt",
-        help='Name for the Optuna study, used for organizing runs.')
+        '--study_name', type=str, default=None,
+        help='Name for the Optuna study.')
+    
     args = parser.parse_args()
 
-    session_handle: ctypes.c_void_p
+    # --- Load Library ---
+    possible_paths = [
+        os.path.join('build', 'libalphazero.dylib'),
+        os.path.join('build', 'libalphazero.so'),
+        os.path.join('obj', 'libalphazero.so'),
+    ]
+    lib_path = next((p for p in possible_paths if os.path.exists(p)), None)
+    if lib_path is None:
+        raise FileNotFoundError(f"Could not find libalphazero shared library. Checked: {possible_paths}")
+    alphazero_lib = ctypes.CDLL(lib_path)
+
+    # --- Game Type ---
     try:
-        # --- C++ Library and Session Setup ---
-        possible_paths = [
-            os.path.join('build', 'libalphazero.dylib'),
-            os.path.join('build', 'libalphazero.so'),
-            os.path.join('obj', 'libalphazero.so'),
-        ]
-        lib_path = next((p for p in possible_paths if os.path.exists(p)), None)
-        if lib_path is None:
-            raise FileNotFoundError(f"Could not find libalphazero shared library. Checked: {possible_paths}")
-        alphazero_lib = ctypes.CDLL(lib_path)
+        game_type = GameType[args.game.upper()]
+    except KeyError:
+        print(f"Error: Invalid game type '{args.game}'. Available: {[e.name for e in GameType]}")
+        exit(1)
 
-        alphazero_lib.create_session.restype = ctypes.c_void_p
-        alphazero_lib.destroy_session.argtypes = [ctypes.c_void_p]
-        session_handle = alphazero_lib.create_session()
-        if not session_handle:
-            raise RuntimeError("Failed to create C++ session.")
+    # --- Load Model & Config ---
+    print(f"Loading model from: {args.model_path}")
+    
+    # We need to load configurations to pass base settings (like c_base, etc.)
+    # that we aren't optimizing but need to exist.
+    try:
+        config_path = os.path.join(
+            os.path.dirname(__file__), f"{args.game}_config.json")
+        with open(config_path, 'r') as f:
+            full_config = json.load(f)
+        self_play_config = full_config.get('self_play_config', {})
+        game_config = full_config.get('game_config', {})
+        training_hyperparams = full_config.get('training_hyperparams', {})
+    except Exception as e:
+        print(f"Warning: Could not load config file for {args.game}: {e}")
+        self_play_config = {}
+        game_config = {}
+        training_hyperparams = {}
 
-        # --- Load Model and Modify Metadata ---
-        print(f"Loading model from: {args.model_path}")
+    # Load model to create the bundle (we need model_bytes)
+    # We use cpu to load initial model for bundling
+    device = torch.device("cpu")
+    try:
+        game_module = importlib.import_module(f".{args.game}", package=__package__)
         with open(args.model_path, 'rb') as f:
             model_bytes = f.read()
 
-        # Extract metadata without starting background workers.
-        # We load the metadata, set 'threads' to 0, and then pass this
-        # modified metadata to set_model. This prevents the normal self-play
-        # workers from starting and interfering with our measurements.
-        extra_files = {'metadata.json': b''}
-        torch.jit.load(
-            args.model_path, map_location='cpu', _extra_files=extra_files)
-        metadata = json.loads(extra_files['metadata.json'])
-
-        # do not start workers
-        metadata['self_play_config']['threads'] = 0
-        modified_metadata_json = json.dumps(metadata).encode('utf-8')
-
-        # --- Initialize C++ Session with the Model ---
-        c_set_model_func = alphazero_lib.set_uttt_model
-        c_set_model_func.restype = ctypes.c_int
-        c_set_model_func.argtypes = [
-            ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int32,
-            ctypes.c_char_p, ctypes.c_int32
-        ]
-
-        result = c_set_model_func(
-            session_handle, model_bytes, len(model_bytes),
-            modified_metadata_json, len(modified_metadata_json))
-        if result < 0:
-            raise RuntimeError("Failed to set model in C++ session.")
-        print("C++ session initialized successfully.")
-
-        # --- Setup Measurement Function ---
-        c_measure_func = alphazero_lib.measure_uttt_selfplay_throughput
-        c_measure_func.restype = ctypes.c_uint32
-        c_measure_func.argtypes = [
-            ctypes.c_void_p,
-            ctypes.POINTER(FixParams),
-            ctypes.POINTER(OptimizerParams)
-        ]
-
-        # --- Run Optuna Study ---
-        study = optuna.create_study(
-            storage="sqlite:///db.sqlite3",  # Specify the storage URL here.
-            study_name=args.study_name,
-            direction="maximize")
-
-        # Enqueue a trial with a known good starting point. Optuna will run
-        # this trial first before starting its own search.
-        cpu_count = os.cpu_count() or 1
-        initial_params = {
-            number_of_selfplay_workers: max(1, int(cpu_count / 2)),
-            number_of_threads_per_selfplay_worker: int(cpu_count),
-            max_number_of_threads_per_selfplay_worker: int(cpu_count * 8),
-            min_batch_size: max(1, int(cpu_count / 2))
-        }
-        print(f"Enqueuing initial trial with parameters: {initial_params}")
-        study.enqueue_trial(initial_params)
-
-        # Create the fixed parameters object from the command-line arguments
-        fix_params = FixParams(
-            simulations_per_move=args.simulations_per_move,
-            number_of_games=args.number_of_games)
-
-        study.optimize(
-            lambda trial: objective(
-                trial, session_handle, initial_params, fix_params,
-                c_measure_func),
-            n_trials=args.n_trials)
-
-        # --- Print Results ---
-        print("\nOptimization finished.")
-        print(f"  Number of trials: {len(study.trials)}")
-        best_trial = study.best_trial
-        print("  Best trial:")
-        print(
-            f"    Value (Throughput): {best_trial.value:.2f} positions/sec")
-        print("    Params: ")
-        for key, value in best_trial.params.items():
-            print(f"      {key}: {value}")
-
     except Exception as e:
-        print(f"\nAn error occurred: {e}")
-    finally:
-        if session_handle:
-            print("\nCleaning up C++ session...")
-            alphazero_lib.destroy_session(session_handle)
-            print("C++ session cleanup complete.")
+        print(f"Error preparing model: {e}")
+        exit(1)
+
+    # --- Run Optuna ---
+    if args.study_name is None:
+        args.study_name = f"selfplay_{args.mode}_{int(time.time())}"
+
+    study = optuna.create_study(
+        storage="sqlite:///db.sqlite3",
+        study_name=args.study_name,
+        direction="maximize",
+        load_if_exists=True
+    )
+
+    print(f"Starting optimization for mode: {args.mode}")
+    print(f"Study name: {args.study_name}")
+    print(f"Positions per trial: {args.number_of_positions}")
+
+    study.optimize(
+        lambda trial: objective(
+            trial, alphazero_lib, game_type, model_bytes, 
+            self_play_config, args.mode, args.number_of_positions
+        ),
+        n_trials=args.n_trials
+    )
+
+    print("\nOptimization finished.")
+    print("Best trial:")
+    print(f"  Value: {study.best_value:.2f} pos/s")
+    print("  Params:")
+    for k, v in study.best_params.items():
+        print(f"    {k}: {v}")

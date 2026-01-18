@@ -13,3 +13,4 @@ gdb-entitlement.xml
 .mypy_cache/
 train/__pycache__
 .cache
+db.sqlite3
