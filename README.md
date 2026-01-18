@@ -66,13 +66,43 @@ ki engine for two player games
     - `pip install -r train/requirements.txt`
   - to upload file with the ssh-in-browser tool you may retry to update outdated ssh keys
 
-## Patch paths for local machine
-- create patch:
-  - `diff -u /home/monade/source/beat-it/Makefile /home/monade/source/beat-it/Makefile.modified > /home/monade/source/beat-it/libtorch.patch`
-- run patch
-  - `patch < libtorch.patch`
+
+## Docker Setup
+```bash
+# Install Lima and Docker CLI
+brew install lima docker
+# Start a Linux instance with Docker support in the lima config
+limactl start docker-rootful.yaml
+# Configure docker CLI to use Lima
+export DOCKER_HOST="unix://$(limactl list docker --format '{{.Dir}}/sock/docker.sock')"
+```
+
+### Quick Start (Local CPU)
+```bash
+docker build -t beat-it:cpu .
+docker run -it -p 6006:6006 -v $(pwd)/runs:/app/runs beat-it:cpu
+```
+
+### Start on training machine (GPU)
+- goto to pytorch.org and configure in the link section on the page buttom, e.g. for windows:
+  - Stable(2.9.1) -> Windows -> LibTorch -> C++/Java -> CUDA 12.6 -> Link 
+```bash
+docker build -t beat-it:gpu \
+  --build-arg LIBTORCH_URL=https://download.pytorch.org/libtorch/cu126/libtorch-win-shared-with-deps-2.9.1%2Bcu126.zip .
+```
 
 ## How to Run
+
+### On the target machine interactive shell in docker
+```bash
+docker run -it --rm \
+  -p 6006:6006 \
+  -v $(pwd)/runs:/app/runs \
+  -v $(pwd)/models:/app/models \
+  beat-it:gpu
+```
+
+### Natively on bare metal
 
 -  **Activate the virtual environment:**
     ```bash
@@ -155,19 +185,6 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 - a lock-free queue with a semaphore should be a high performance replacement for mutex and condition variables.
 - exit a blocking semaphore acquire by sending a "poison-pill" dummy value.
    
-## Todos
-- regularly evaluate game play in a match
-  - add match function to shared lib
-  - every time a new checkpoint model is saved start a match (100 games) against the previous model and output stats to console.
-- set up docker for ease of deployment
-  - optimizing selfplay
-  - training
-  - interactive shell into docker
-  - questions
-    - is the gpu accessible from docker?
-    - how to transfer files to/from docker
-    - how to access tensorboard and optuna-dashboard
-
 ## Further potential optimizations
 - make virtual_loss a hyperparameter
 - try Int8 arithmetic for gpu

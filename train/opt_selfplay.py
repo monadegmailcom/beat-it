@@ -7,9 +7,6 @@ import torch
 import optuna
 from typing import Callable
 
-# --- Ctypes Definitions ---
-# These must match the structs in lib_interface.cpp
-
 
 number_of_selfplay_workers = "number_of_selfplay_workers"
 number_of_threads_per_selfplay_worker = "number_of_threads_per_selfplay_worker"
@@ -17,6 +14,8 @@ max_number_of_threads_per_selfplay_worker = \
     "max_number_of_threads_per_selfplay_worker"
 min_batch_size = "min_batch_size"
 
+# --- Ctypes Definitions ---
+# These must match the structs in lib_interface.cpp
 
 class OptimizerParams(ctypes.Structure):
     _fields_ = [

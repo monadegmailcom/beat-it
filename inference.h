@@ -5,6 +5,7 @@
 #include <boost/lockfree/queue.hpp>
 
 #include <array>
+#include <condition_variable>
 #include <semaphore>
 #include <stop_token>
 #include <thread>

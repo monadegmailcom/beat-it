@@ -1,0 +1,30 @@
+# Build artifacts
+build/
+cmake-build-*/
+.cache/
+
+# Git
+.git/
+.gitignore
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# System
+.DS_Store
+
+# IDEs
+.vscode/
+.idea/
+
+# Data and Models (mount these as volumes instead)
+runs/
+models/
+
+# Downloaded libtorch if present
+libtorch/
+libtorch.zip

@@ -29,8 +29,8 @@ class Player : public ::Player< MoveT >
     using pre_node_type = PreNode< MoveT, StateT, payload_type >;
     using allocator_type = GenerationalArenaAllocator;
 
-    Player( Game< MoveT, StateT > const &game, float exploration,
-            size_t simulations, unsigned seed, allocator_type &allocator )
+    Player( Game< MoveT, StateT > const& game, float exploration,
+            size_t simulations, unsigned seed, allocator_type& allocator )
         : g( seed ), allocator( allocator ), exploration( exploration ),
           simulations( simulations ),
           root( new ( allocator.allocate< pre_node_type >() )
@@ -40,11 +40,11 @@ class Player : public ::Player< MoveT >
     {
     }
 
-    double uct( payload_type const &payload, size_t parent_visits )
+    double uct( payload_type const& payload, size_t parent_visits )
     {
         return 1 - payload.points / payload.visits +
                exploration *
-                   std::sqrtf( std::logf( parent_visits ) / payload.visits );
+                   std::sqrt( std::log( parent_visits ) / payload.visits );
     }
 
     // require: game finally ends into result != Undecided
@@ -69,16 +69,16 @@ class Player : public ::Player< MoveT >
         return result;
     }
 
-    node_type &select( node_type &node )
+    node_type& select( node_type& node )
     {
-        auto &payload = node.get_payload();
-        pre_node_type &pre_node = static_cast< pre_node_type & >( node );
+        auto& payload = node.get_payload();
+        pre_node_type& pre_node = static_cast< pre_node_type& >( node );
 
         // if another move is available push front newly created child node
         if ( payload.next_move_itr != pre_node.get_game().end() )
         {
             const MoveT move = *payload.next_move_itr++;
-            auto &child =
+            auto& child =
                 *( new ( allocator.allocate< pre_node_type >() ) pre_node_type(
                     pre_node.get_game().apply( move ), move,
                     payload_type{ .next_move_itr =
@@ -95,7 +95,7 @@ class Player : public ::Player< MoveT >
             return *std::ranges::max_element(
                 node.get_children(),
                 [this, parent_visits = node.get_payload().visits](
-                    auto const &a, auto const &b )
+                    auto const& a, auto const& b )
                 {
                     return uct( a.get_payload(), parent_visits ) <
                            uct( b.get_payload(), parent_visits );
@@ -103,9 +103,9 @@ class Player : public ::Player< MoveT >
         }
     }
 
-    GameResult simulation( node_type &node )
+    GameResult simulation( node_type& node )
     {
-        auto &payload = node.get_payload();
+        auto& payload = node.get_payload();
         ++payload.visits;
 
         GameResult backpropagation;
@@ -114,7 +114,7 @@ class Player : public ::Player< MoveT >
             backpropagation = node.get_game_result();
         else if ( payload.visits == 1 ) // PLAYOUT on first visit
             backpropagation =
-                playout( static_cast< pre_node_type & >( node ).get_game() );
+                playout( static_cast< pre_node_type& >( node ).get_game() );
         else // recursively simulate the selected child node
             backpropagation = simulation( select( node ) );
 
@@ -137,7 +137,7 @@ class Player : public ::Player< MoveT >
 
         // remove child with most visits
         auto itr = std::ranges::max_element(
-            root->get_children(), []( auto const &a, auto const &b )
+            root->get_children(), []( auto const& a, auto const& b )
             { return a.get_payload().visits < b.get_payload().visits; } );
         if ( itr == root->get_children().end() )
             throw beat_it::Exception( "no move choosen" );
@@ -147,30 +147,30 @@ class Player : public ::Player< MoveT >
         return root->get_move();
     }
 
-    void apply_opponent_move( MoveT const &move ) override
+    void apply_opponent_move( MoveT const& move ) override
     {
         auto itr = std::ranges::find_if( root->get_children(),
-                                         [move]( auto const &node )
+                                         [move]( auto const& node )
                                          { return node.get_move() == move; } );
         if ( itr == root->get_children().end() )
             throw beat_it::Exception( "Invalid move." );
-        node_type &new_root = *itr;
+        node_type& new_root = *itr;
 
         allocator.reset();
         root = &new_root.copy_tree( allocator );
     }
 
-    node_type &root_node() const { return *root; }
+    node_type& root_node() const { return *root; }
 
   private:
     std::mt19937 g;
     std::vector< MoveT > move_stack;
-    allocator_type &allocator;
+    allocator_type& allocator;
     size_t playout_count = 0;
 
     float exploration;
     size_t simulations;
-    node_type *root;
+    node_type* root;
 };
 
 } // namespace montecarlo

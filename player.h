@@ -2,6 +2,7 @@
 
 #include "game.h"
 #include <functional>
+#include <memory>
 
 // require: choose_move and set_opponent_move are called alternatingly
 template < typename MoveT > class Player
