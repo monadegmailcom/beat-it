@@ -87,8 +87,7 @@ docker run -it -p 6006:6006 -v $(pwd)/runs:/app/runs beat-it:cpu
 - goto to pytorch.org and configure in the link section on the page buttom, e.g. for windows:
   - Stable(2.9.1) -> Windows -> LibTorch -> C++/Java -> CUDA 12.6 -> Link 
 ```bash
-docker build -t beat-it:gpu \
-  --build-arg LIBTORCH_URL=https://download.pytorch.org/libtorch/cu126/libtorch-win-shared-with-deps-2.9.1%2Bcu126.zip .
+docker build -t beat-it:gpu .
 ```
 
 ## How to Run
