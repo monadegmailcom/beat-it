@@ -5,7 +5,9 @@ if(POLICY CMP0167)
     cmake_policy(SET CMP0167 NEW)
 endif()
 
-project(beat-it LANGUAGES CXX)
+project(beat-it LANGUAGES CXX CUDA)
+
+set(CMAKE_CUDA_STANDARD 17)
 
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

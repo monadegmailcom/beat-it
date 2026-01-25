@@ -1,5 +1,3 @@
-torch
-torchvision
 tensorboard
 matplotlib
 flake8
