@@ -1,0 +1,113 @@
+# Use an official AMD ROCm base image for Ubuntu 22.04
+FROM rocm/dev-ubuntu-22.04
+
+# Set non-interactive installation to avoid stuck builds
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install core build tools and dependencies (including g++-13)
+# The ROCm base image already includes many build essentials.
+RUN apt-get update && apt-get install -y \
+    software-properties-common \
+    && add-apt-repository ppa:ubuntu-toolchain-r/test \
+    && add-apt-repository ppa:savoury1/boost-defaults-1.83 \
+    && add-apt-repository ppa:deadsnakes/ppa \
+    && apt-get update && apt-get install -y \
+    build-essential \
+    g++-13 \
+    git \
+    wget \
+    curl \
+    unzip \
+    libboost1.83-dev \
+    libboost-json1.83-dev \
+    python3.12 \
+    python3.12-venv \
+    python3-full \
+    python3-pip \
+    python3.12-dev \
+    libunwind-dev \
+    libnuma-dev \
+    pkg-config \
+    screen \
+    ccache \
+    libjpeg-dev
+
+# Set g++-13 as the default C++ compiler
+ENV CC="ccache gcc-13"
+ENV CXX="ccache g++-13"
+
+# --- project setup ---
+WORKDIR /app
+
+# Copy requirements first to leverage Docker cache
+COPY train/requirements.txt /app/train/requirements.txt
+COPY train/pytorch_requirements.txt /app/train/pytorch_requirements.txt
+
+# Create a virtual environment and install dependencies
+# Venv is added to PATH
+ENV PATH="/app/.venv/bin:$PATH"
+# Note: The ROCm version might be different, check the PyTorch website for the latest supported version (e.g., rocm5.6, rocm5.7)
+RUN python3.12 -m venv .venv && \
+    pip install --upgrade pip && \
+    pip install cmake && \
+    wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/triton-3.5.1%2Brocm7.2.0.gita272dfa8-cp312-cp312-linux_x86_64.whl && \
+    pip install triton-3.5.1+rocm7.2.0.gita272dfa8-cp312-cp312-linux_x86_64.whl && \
+    wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torch-2.9.1%2Brocm7.2.0.lw.git7e1940d4-cp312-cp312-linux_x86_64.whl && \
+    wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torchvision-0.24.0%2Brocm7.2.0.gitb919bd0c-cp312-cp312-linux_x86_64.whl && \
+    wget https://repo.radeon.com/rocm/manylinux/rocm-rel-7.2/torchaudio-2.9.0%2Brocm7.2.0.gite3c6ee2b-cp312-cp312-linux_x86_64.whl && \
+    pip install torch-2.9.1+rocm7.2.0.lw.git7e1940d4-cp312-cp312-linux_x86_64.whl && \
+    pip install torchvision-0.24.0+rocm7.2.0.gitb919bd0c-cp312-cp312-linux_x86_64.whl && \
+    pip install torchaudio-2.9.0+rocm7.2.0.gite3c6ee2b-cp312-cp312-linux_x86_64.whl && \
+    pip install -r train/requirements.txt
+
+# Install additional ROCm development packages needed by PyTorch
+# This is placed after the pip installation to avoid busting the cache for large wheels
+# when only adding/removing build dependencies.
+RUN apt-get update && apt-get install -y \
+    rocm-dev \
+    rocrand-dev \
+    hiprand-dev \
+    rocblas-dev \
+    hipblas-dev \
+    hipblas-common-dev \
+    miopen-hip-dev \
+    rocprim-dev \
+    rocthrust-dev \
+    hipcub-dev \
+    hipsolver-dev \
+    rocsolver-dev \
+    rccl-dev \
+    rocfft-dev \
+    rocsparse-dev \
+    hipfft-dev \
+    hipsparse-dev \
+    hipsparse \
+    hipblaslt-dev \
+    hipsparselt-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# --- LibTorch Configuration ---
+# Use the LibTorch included in the python package to ensure architecture compatibility
+# Ubuntu 22.04 uses Python 3.12
+ENV Torch_DIR=/app/.venv/lib/python3.12/site-packages/torch/share/cmake/Torch
+ENV LD_LIBRARY_PATH="/app/.venv/lib/python3.12/site-packages/torch/lib:/app/.venv/lib/python3.12/site-packages/torch.libs:${LD_LIBRARY_PATH:-}"
+
+# --- Project Build ---
+# Copy the rest of the source code
+COPY . /app
+
+# Build the C++ project for ROCm
+ENV PYTORCH_ROCM_ARCH=gfx803
+RUN mkdir -p build && cd build && \
+    cmake -DCMAKE_BUILD_TYPE=Release -DUSE_ROCM=ON -DCMAKE_PREFIX_PATH=/opt/rocm .. && \
+    make -j$(nproc)
+
+# --- Runtime Configuration ---
+# Expose TensorBoard port
+EXPOSE 6006
+
+# Create a volume mount point for external data/models if needed (optional)
+VOLUME ["/app/runs", "/app/models"]
+
+# Default command: Generic interactive shell with venv activated
+CMD ["/bin/bash"]

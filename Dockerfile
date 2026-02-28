@@ -21,6 +21,7 @@ RUN apt-get update && apt-get install -y \
     libboost-json1.83-dev \
     python3-full \
     python3-pip \
+    screen \
     && rm -rf /var/lib/apt/lists/*
 
 # Set g++-13 as the default C++ compiler
