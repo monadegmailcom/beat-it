@@ -120,14 +120,33 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # --- Load Library ---
+    lib_dir = os.environ.get('KAGGLE_LIB_DIR', '/kaggle/input/alphazero-lib/torch_lib')
+    if os.path.exists(lib_dir):
+        print(f"Loading dependencies from {lib_dir}...")
+        os.environ['LD_LIBRARY_PATH'] = f"{lib_dir}:{os.environ.get('LD_LIBRARY_PATH', '')}"
+        
+        # Pre-load torch dependencies with RTLD_GLOBAL to avoid undefined symbol errors
+        deps = ["libc10.so", "libc10_cuda.so", "libtorch_cpu.so", "libtorch_cuda.so", "libtorch.so"]
+        for dep in deps:
+            dep_path = os.path.join(lib_dir, dep)
+            if os.path.exists(dep_path):
+                try:
+                    ctypes.CDLL(dep_path, mode=ctypes.RTLD_GLOBAL)
+                except Exception as e:
+                    print(f"Warning: Could not pre-load {dep}: {e}")
+
     possible_paths = [
         os.path.join('build', 'libalphazero.dylib'),
         os.path.join('build', 'libalphazero.so'),
         os.path.join('obj', 'libalphazero.so'),
+        '/kaggle/input/alphazero-lib/libalphazero.so',
+        'libalphazero.so'
     ]
     lib_path = next((p for p in possible_paths if os.path.exists(p)), None)
     if lib_path is None:
         raise FileNotFoundError(f"Could not find libalphazero shared library. Checked: {possible_paths}")
+    
+    print(f"Loading library: {lib_path}")
     alphazero_lib = ctypes.CDLL(lib_path)
 
     # --- Game Type ---
