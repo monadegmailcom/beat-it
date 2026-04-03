@@ -1,0 +1,15 @@
+CodinGame (The Obvious Choice)
+
+They have Ultimate Tic-Tac-Toe. It is a dedicated bot programming challenge.
+The Vibe: Gamified, visual, competitive. Leaderboards are active.
+The Challenge: You have strict time limits per move (usually 100ms or 50ms). This will test your "speed-optimized" claim to the limit. Your cloud-GPU idea might die here due to latency, but a Dockerized local version would thrive.
+Ludii (The Hardcore Choice)
+
+What it is: A General Game Playing (GGP) system developed by the Digital Ludeme Project.
+The Scope: It supports thousands of board games.
+The Competitions: They run the Ludii AI Competition.
+Why you'll like it: It is pure academic warfare. You can implement your agent to play any game in their library (including UTTT and things you've never heard of). This fits your "General Purpose Engine" goal perfectly.
+TheOfekFoundation (The Niche)
+
+They host an online Ultimate Tic-Tac-Toe where you play against their MCTS AI.
+Not really a "tournament," but a good benchmark to see if "Beat-It" can crush their "strongest bot."

@@ -253,13 +253,13 @@ if __name__ == '__main__':
                 optimizer_state_buffer = io.BytesIO(
                     extra_files_to_load['optimizer_state.pt'])
                 optimizer.load_state_dict(
-                    torch.load(optimizer_state_buffer))
+                    torch.load(optimizer_state_buffer, map_location=device))
                 # Also load scheduler state if it exists
                 if extra_files_to_load[scheduler_state_file]:
                     scheduler_state_buffer = io.BytesIO(
                         extra_files_to_load[scheduler_state_file])
                     scheduler.load_state_dict(
-                        torch.load(scheduler_state_buffer))
+                        torch.load(scheduler_state_buffer, map_location=device))
 
         # --- TensorBoard Setup ---
         if log_dir is None:
@@ -567,7 +567,10 @@ if __name__ == '__main__':
                     # Since we just saved a checkpoint, it's safest and easiest to just reload everything after.
                     del optimizer
                     del scheduler
-                    torch.mps.empty_cache()
+                    if torch.backends.mps.is_available():
+                        torch.mps.empty_cache()
+                    elif torch.cuda.is_available():
+                        torch.cuda.empty_cache()
                     
                     eval_games_dir = os.path.join(log_dir, "games")
                     os.makedirs(eval_games_dir, exist_ok=True)
@@ -665,9 +668,9 @@ if __name__ == '__main__':
                     torch.jit.load(checkpoint_path, _extra_files=extra_files)
                     
                     # extra_files values are already bytes, so directly wrap in BytesIO
-                    optimizer.load_state_dict(torch.load(io.BytesIO(extra_files['optimizer_state.pt']))) 
+                    optimizer.load_state_dict(torch.load(io.BytesIO(extra_files['optimizer_state.pt']), map_location=device)) 
                     
-                    scheduler.load_state_dict(torch.load(io.BytesIO(extra_files['scheduler_state.pt'])))
+                    scheduler.load_state_dict(torch.load(io.BytesIO(extra_files['scheduler_state.pt']), map_location=device))
                     
                     print("Training state restored.")
                     

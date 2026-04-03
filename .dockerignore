@@ -4,7 +4,7 @@ cmake-build-*/
 .cache/
 
 # Git
-.git/
+# (.git/ is intentionally included so Docker can read the git revision during build)
 .gitignore
 
 # Python

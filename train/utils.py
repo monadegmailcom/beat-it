@@ -221,9 +221,19 @@ def resume_session(session_handle, alphazero_lib, game_type):
 
 def get_git_revision_hash() -> str:
     """Retrieves the current git commit hash."""
+    # First try reading from the file created during Docker build
+    version_file = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'git_version.txt')
+    if os.path.exists(version_file):
+        try:
+            with open(version_file, 'r') as f:
+                return f.read().strip()
+        except Exception:
+            pass
+            
+    # Fallback to dynamic git command if running locally
     try:
         return subprocess.check_output(
-            ['git', 'rev-parse', 'HEAD']).decode('ascii').strip()
+            ['git', 'rev-parse', 'HEAD'], stderr=subprocess.DEVNULL).decode('ascii').strip()
     except Exception:
         return "N/A"
 
@@ -290,7 +300,9 @@ def save_checkpoint(
         extra_files_dict['validation_buffer_metadata.json'] = \
             val_buffer_bytes['metadata']
 
-    torch.jit.save(loaded_model, path, _extra_files=extra_files_dict)
+    tmp_path = path + ".tmp"
+    torch.jit.save(loaded_model, tmp_path, _extra_files=extra_files_dict)
+    os.replace(tmp_path, path)
 
 
 def split_and_add_data(
