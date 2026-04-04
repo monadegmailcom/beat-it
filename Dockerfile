@@ -68,8 +68,8 @@ COPY . /app
 RUN git rev-parse HEAD > /app/git_version.txt 2>/dev/null || echo "N/A" > /app/git_version.txt
 
 # --- Runtime Configuration ---
-# Expose TensorBoard port
-EXPOSE 6006
+# Expose TensorBoard port and Optuna Dashboard port
+EXPOSE 6006 8080
 
 # Create a volume mount point for external data/models if needed (optional)
 VOLUME ["/app/runs", "/app/models"]

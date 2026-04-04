@@ -50,6 +50,30 @@ By default, the pushed image might be marked as private on your GitHub profile.
 3. Under **Volume Mounts**, ensure your persistent pod volume is mapped to:
    - `/app/models`
    - `/app/runs`
-4. Under **Expose HTTP Ports**, add `6006` so you can click the web link directly in RunPod to view your Tensorboard logs.
+4. Under **Expose HTTP Ports**, add `6006, 8080` so you can securely click the web link directly in RunPod to view your Tensorboard and Optuna data traces live!
 
-RunPod will now fetch your image directly from GitHub, spin it up, restore your most recent checkpoint from the volume, and begin actively training!
+---
+
+## Running Hyperparameter Optimization (Optuna)
+
+Instead of the default `train` mode, the Docker Entrypoint has been structurally rewritten to easily pivot into an optimization mode. You can visualize the search by navigating to `http://localhost:8080` or using the proxy link in the RunPod UI.
+
+### In Docker Locally (Mac/Windows)
+To dynamically invoke these from your debugging script, supply the environment configurations directly:
+
+**Optimize Inter-game parallel throughput (Training)**
+```bash
+RUN_MODE=optuna OPTUNA_MODE=train ./test_runpod_mac.sh
+```
+
+**Optimize Intra-game search parallelism (Match Evaluation)**
+```bash
+RUN_MODE=optuna OPTUNA_MODE=match ./test_runpod_mac.sh
+```
+
+### On RunPod Cloud
+In the exact same "Environment Variables" section of the Pod Configuration wizard where you setup the container:
+- Create a Variable named `RUN_MODE` and set it to `optuna`
+- Create a Variable named `OPTUNA_MODE` and set it to either `train` or `match`
+
+*RunPod will natively execute the Optuna logic! Since the `optuna.db` file drops directly into the persistent `/app/runs` volume alongside the tensorboard logs, you can pick up exactly where you left off organically across different pods!*

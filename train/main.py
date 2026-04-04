@@ -262,8 +262,12 @@ if __name__ == '__main__':
                         torch.load(scheduler_state_buffer, map_location=device))
 
         # --- TensorBoard Setup ---
+        # BASE_RUNS_DIR / BASE_MODELS_DIR are set by the entrypoint to redirect
+        # writes to /tmp in test mode (avoids VirtioFS locking on Mac/Lima).
+        base_runs = os.environ.get('BASE_RUNS_DIR', 'runs')
+        base_models = os.environ.get('BASE_MODELS_DIR', 'models')
         if log_dir is None:
-            base_log_dir = 'runs/' + basename
+            base_log_dir = os.path.join(base_runs, basename)
             if not os.path.exists(base_log_dir):
                 log_dir = base_log_dir
             else:
@@ -274,8 +278,8 @@ if __name__ == '__main__':
         else:
             print(f"Resuming TensorBoard logs in: {log_dir}")
 
-        checkpoint_dir = os.path.join("models", os.path.basename(log_dir))
-        os.makedirs(os.path.dirname(checkpoint_dir), exist_ok=True)
+        checkpoint_dir = os.path.join(base_models, os.path.basename(log_dir))
+        os.makedirs(checkpoint_dir, exist_ok=True)
         checkpoint_path = os.path.join(checkpoint_dir, "checkpoint.pt")
 
         writer = SummaryWriter(log_dir)

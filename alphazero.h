@@ -410,7 +410,6 @@ class Player : public ::Player< MoveT >
     }
 
     // lockfree setting of policies and nn value and backpropagation.
-    // require: mode is undecided.
     // thread-safe.
     void backpropagation( node_type& node,
                           std::array< float, P > const& policies,

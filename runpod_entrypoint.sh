@@ -4,26 +4,89 @@ set -e
 # Default to port 6006 if not set
 TENSORBOARD_PORT=${TENSORBOARD_PORT:-6006}
 
-echo "Starting Tensorboard in the background on port $TENSORBOARD_PORT..."
-tensorboard --logdir=/app/runs --host=0.0.0.0 --port=$TENSORBOARD_PORT &
+# --- Determine storage paths based on environment ---
+# In TEST mode (local Mac via Lima/VirtioFS), all writes go to ephemeral /tmp
+# to bypass VirtioFS file-locking which breaks SQLite, TensorBoard, and torch.save.
+# /app/models (host-mounted read-only) is still used to SEED the starting checkpoint.
+# In PROD mode (RunPod), all writes go to the persistent mounted volumes.
+if [ "$ENV_TYPE" = "test" ]; then
+    echo "Running in TEST mode: writes go to ephemeral /tmp to bypass VirtioFS locking."
+    export BASE_RUNS_DIR="/tmp/runs"
+    export BASE_MODELS_DIR="/tmp/models"
+    # Source of truth for initial checkpoints is still the read-only host mount
+    CHECKPOINT_SOURCE_DIR="/app/models"
+else
+    echo "Running in PROD mode: using persistent /app storage."
+    export BASE_RUNS_DIR="/app/runs"
+    export BASE_MODELS_DIR="/app/models"
+    CHECKPOINT_SOURCE_DIR="/app/models"
+fi
 
-# We check if there's a recent checkpoint in subdirectories, 
-# or if not, use the base starting checkpoint.
-LATEST_CHECKPOINT=$(ls -t /app/models/*/checkpoint.pt 2>/dev/null | head -n 1)
-START_CHECKPOINT="/app/models/checkpoint.pt"
+mkdir -p "$BASE_RUNS_DIR"
+mkdir -p "$BASE_MODELS_DIR"
+
+echo "Starting Tensorboard in the background on port $TENSORBOARD_PORT..."
+tensorboard --logdir=$BASE_RUNS_DIR --host=0.0.0.0 --port=$TENSORBOARD_PORT &
+
+# --- Find starting checkpoint ---
+# In test mode, look in the ephemeral dir first (in case a previous test wrote one),
+# then fall back to the read-only host source for bootstrapping.
+LATEST_CHECKPOINT=$(ls -t $BASE_MODELS_DIR/*/checkpoint.pt 2>/dev/null | head -n 1)
+
+if [ -z "$LATEST_CHECKPOINT" ] && [ "$ENV_TYPE" = "test" ]; then
+    # Try seeding from the read-only host mount
+    LATEST_CHECKPOINT=$(ls -t $CHECKPOINT_SOURCE_DIR/*/checkpoint.pt 2>/dev/null | head -n 1)
+    if [ -n "$LATEST_CHECKPOINT" ]; then
+        echo "TEST MODE: Seeding from host checkpoint at $LATEST_CHECKPOINT (read-only, writes go to /tmp)."
+    fi
+fi
+
+START_CHECKPOINT="$BASE_MODELS_DIR/checkpoint.pt"
+if [ -z "$START_CHECKPOINT_FILE_EXISTS" ] && [ "$ENV_TYPE" = "test" ] && [ ! -f "$START_CHECKPOINT" ]; then
+    # Also fall back to host-mounted base checkpoint for seeding
+    if [ -f "$CHECKPOINT_SOURCE_DIR/checkpoint.pt" ]; then
+        START_CHECKPOINT="$CHECKPOINT_SOURCE_DIR/checkpoint.pt"
+    fi
+fi
 
 RESUME_ARGS=""
+MODEL_PATH=""
 if [ -n "$LATEST_CHECKPOINT" ]; then
-    echo "Found recent checkpoint at $LATEST_CHECKPOINT, resuming from it..."
+    echo "Found checkpoint at $LATEST_CHECKPOINT"
     RESUME_ARGS="--resume_from $LATEST_CHECKPOINT"
+    MODEL_PATH="$LATEST_CHECKPOINT"
 elif [ -f "$START_CHECKPOINT" ]; then
-    echo "No recent run checkpoint found, but found starting checkpoint at $START_CHECKPOINT."
+    echo "No run checkpoint found, using starting checkpoint at $START_CHECKPOINT."
     RESUME_ARGS="--resume_from $START_CHECKPOINT"
+    MODEL_PATH="$START_CHECKPOINT"
 else
     echo "No checkpoints found. Starting fresh."
 fi
 
-# Make sure we use the right Python environment if needed. 
-# Dockerfile already sets PATH="/app/.venv/bin:$PATH", so we just call python.
-echo "Starting training..."
-python -m train.main --game uttt $RESUME_ARGS
+# --- Launch the selected mode ---
+if [ "$RUN_MODE" = "optuna" ]; then
+    if [ -z "$MODEL_PATH" ]; then
+        echo "Error: Optuna mode requires a valid model checkpoint to optimize!"
+        exit 1
+    fi
+
+    OPTUNA_DB="$BASE_RUNS_DIR/optuna.db"
+    # Launch the dashboard only after opt_selfplay.py has created and initialized
+    # the DB (with its schema tables). Polling avoids the 'no such table: version_info'
+    # crash that occurs when the dashboard opens a brand-new empty file.
+    (
+        echo "Waiting for Optuna DB to be initialized before starting dashboard..."
+        while [ ! -f "$OPTUNA_DB" ]; do sleep 1; done
+        # Give Optuna one extra second to finish writing the schema
+        sleep 2
+        echo "Starting Optuna Dashboard in the background on port 8080..."
+        optuna-dashboard sqlite:///$OPTUNA_DB --host 0.0.0.0 --port 8080
+    ) &
+
+    OPTUNA_MODE=${OPTUNA_MODE:-train}
+    echo "Starting Optuna Hyperparameter Optimization in mode: $OPTUNA_MODE..."
+    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE --n_trials 50 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
+else
+    echo "Starting training..."
+    python -u -m train.main --game uttt $RESUME_ARGS 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
+fi

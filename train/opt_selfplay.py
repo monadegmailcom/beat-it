@@ -191,8 +191,13 @@ if __name__ == '__main__':
     if args.study_name is None:
         args.study_name = f"selfplay_{args.mode}_{int(time.time())}"
 
+    os.makedirs(os.environ.get('BASE_RUNS_DIR', 'runs'), exist_ok=True)
+    db_path = os.path.abspath(
+        os.path.join(os.environ.get('BASE_RUNS_DIR', 'runs'), 'optuna.db')
+    )
+    
     study = optuna.create_study(
-        storage="sqlite:///db.sqlite3",
+        storage=f"sqlite:///{db_path}",
         study_name=args.study_name,
         direction="maximize",
         load_if_exists=True
