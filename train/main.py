@@ -224,7 +224,8 @@ if __name__ == '__main__':
                       "Optimizer state loaded.")
 
                 run_name = os.path.basename(os.path.dirname(args.resume_from))
-                log_dir = os.path.join("runs", run_name)
+                base_runs = os.environ.get('BASE_RUNS_DIR', 'runs')
+                log_dir = os.path.join(base_runs, run_name)
             else:
                 print(f"Warning: Checkpoint file not found at "
                       f"{args.resume_from}. Starting a new run.")
@@ -696,9 +697,10 @@ if __name__ == '__main__':
 
         # --- Save the final trained model with embedded metadata ---
         if writer:
+            base_models = os.environ.get('BASE_MODELS_DIR', 'models')
             # The log_dir is like 'runs/ttt_alphazero_experiment_6'
             final_model_path = os.path.join(
-                "models", os.path.basename(log_dir), "final_model.pt")
+                base_models, os.path.basename(log_dir), "final_model.pt")
             print(f"\nSaving final trained model to {final_model_path}...")
             save_checkpoint(
                 model,
