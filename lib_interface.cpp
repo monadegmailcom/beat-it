@@ -242,11 +242,15 @@ template < typename PlayerT > struct Session
         uint32_t total_positions = 0;
         unique_lock lock( queue_mutex );
         position_type pos;
-        while ( total_positions < number_of_positions )
+        while ( total_positions < number_of_positions && !cleanup_requested )
         {
-            queue_cv.wait( lock, [this] { return !queue.empty(); } );
+            queue_cv.wait( lock, [this] { return !queue.empty() || cleanup_requested; } );
             while ( queue.pop( pos ) )
+            {
                 ++total_positions;
+                if ( total_positions >= number_of_positions )
+                    break;
+            }
         }
         return total_positions;
     }

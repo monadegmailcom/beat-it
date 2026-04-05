@@ -168,7 +168,7 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
     Game< MoveT, StateT > game( PlayerIndex::Player1, initial_state );
     RecordingMatch< MoveT, StateT > match(
         game, factory1, factory2, allocator_factory, rounds,
-        std::thread::hardware_concurrency(), seed, save_path, metadata );
+        1, seed, save_path, metadata );
     match.run();
 
     return { match.get_fst_player_wins(), match.get_snd_player_wins(),

@@ -77,7 +77,7 @@ def objective(
         config['parallel_games'] = parallel_games
         config['parallel_simulations'] = 1
     elif mode == "match":
-        parallel_simulations = trial.suggest_int('parallel_simulations', 1, 64)
+        parallel_simulations = os.cpu_count() or 1
         config['parallel_simulations'] = parallel_simulations
         config['parallel_games'] = 1
     

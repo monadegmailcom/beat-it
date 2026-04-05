@@ -6,6 +6,8 @@
 #include <mutex>
 #include <vector>
 
+using std::size_t;
+
 class ArenaAllocator
 {
   public:
