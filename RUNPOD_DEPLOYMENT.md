@@ -14,7 +14,7 @@ To push images from your Windows WSL compiling machine (or Mac) to GHCR, you nee
 2. Generate a new token with the `write:packages` and `read:packages` scopes.
 3. On your compiling machine terminal, log in to Docker using that token:
    ```bash
-   echo "YOUR_GITHUB_TOKEN" | docker login ghcr.io -u YOUR_GITHUB_USERNAME --password-stdin
+   echo "YOUR_GITHUB_TOKEN" | docker login ghcr.io -u monadegmailcom --password-stdin
    ```
 
 ## Step 2: Build the Image for x86_64
@@ -22,17 +22,17 @@ To push images from your Windows WSL compiling machine (or Mac) to GHCR, you nee
 Because RunPod instances run on Intel/AMD GPUs, you must ensure the image is built using the standard x86 architecture. If you are building this on WSL on an Intel Window's machine, it does this by default:
    
 ```bash
-# Build the image and strictly target x86_64
-docker build --platform linux/amd64 -t ghcr.io/YOUR_GITHUB_USERNAME/beat-it-runpod:latest .
+# Build the image
+docker build -t ghcr.io/monadegmailcom/beat-it-runpod:latest .
 ```
 
-*Note: Replace `YOUR_GITHUB_USERNAME` with your actual GitHub handle (e.g., `monade`)*.
+*Note: Replace `monadegmailcom` with your actual GitHub handle (e.g., `monade`)*.
 
 ## Step 3: Push to GitHub Container Registry
 
 Once the Docker engine is finished compiling the C++ dependencies and downloading PyTorch, upload your image to the web:
 ```bash
-docker push ghcr.io/YOUR_GITHUB_USERNAME/beat-it-runpod:latest
+docker push ghcr.io/monadegmailcom/beat-it-runpod:latest
 ```
 
 ## Step 4: Make the Image Public (Optional but Recommended)
@@ -45,12 +45,13 @@ By default, the pushed image might be marked as private on your GitHub profile.
 ## Step 5: Deploy on RunPod
 
 1. Go to your RunPod dashboard and rent a GPU Pod.
-2. In the setup wizard under **Container Image**, just paste your image URL:
-   `ghcr.io/YOUR_GITHUB_USERNAME/beat-it-runpod:latest`
-3. Under **Volume Mounts**, ensure your persistent pod volume is mapped to:
+2. The UI will default to a "Runpod Pytorch" template. Click **Customize Deployment**.
+3. Under **Container Image**, replace the default text with your image URL:
+   `ghcr.io/monadegmailcom/beat-it-runpod:latest`
+4. Under **Volume Mounts**, ensure your persistent pod volume is mapped to:
    - `/app/models`
    - `/app/runs`
-4. Under **Expose HTTP Ports**, add `6006, 8080` so you can securely click the web link directly in RunPod to view your Tensorboard and Optuna data traces live!
+5. Under **Expose HTTP Ports**, add `6006, 8080` so you can securely click the web link directly in RunPod to view your Tensorboard and Optuna data traces live!
 
 ---
 

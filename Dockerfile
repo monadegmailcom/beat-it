@@ -38,11 +38,11 @@ ENV PATH="/app/.venv/bin:$PATH"
 RUN python3 -m venv .venv && \
     pip install --upgrade pip && \
     if [ "$(uname -m)" = "x86_64" ]; then \
-        pip install -r train/pytorch_requirements.txt --index-url https://download.pytorch.org/whl/cu121; \
+        pip install --no-cache-dir -r train/pytorch_requirements.txt --index-url https://download.pytorch.org/whl/cu121; \
     else \
-        pip install -r train/pytorch_requirements.txt; \
+        pip install --no-cache-dir -r train/pytorch_requirements.txt; \
     fi && \
-    pip install -r train/requirements.txt
+    pip install --no-cache-dir -r train/requirements.txt
 
 # --- LibTorch Configuration ---
 # Use the LibTorch included in the python package to ensure architecture compatibility (amd64/arm64)

@@ -17,9 +17,9 @@ if [ "$ENV_TYPE" = "test" ]; then
     CHECKPOINT_SOURCE_DIR="/app/models"
 else
     echo "Running in PROD mode: using persistent /app storage."
-    export BASE_RUNS_DIR="/app/runs"
-    export BASE_MODELS_DIR="/app/models"
-    CHECKPOINT_SOURCE_DIR="/app/models"
+    export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/app/runs}"
+    export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
+    CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
 fi
 
 mkdir -p "$BASE_RUNS_DIR"
