@@ -87,6 +87,20 @@ Now that your checkpoint is safely on the persistent volume, you can switch the 
 
 RunPod will automatically restart your container. It will pick up your checkpoint and start the C++ engine! You can click the **6006** port button for TensorBoard or **8080** for Optuna.
 
+## Step 8: Access Dashboards Locally via SSH
+
+While RunPod provides web proxy buttons, you can also forward the ports directly to your Mac/Windows machine to access them on `localhost`. This requires your SSH public key to be added to your RunPod Account Settings.
+
+1. On the RunPod dashboard, click **Connect** on your pod.
+2. Under **SSH**, copy the provided SSH command (e.g., `ssh root@x.x.x.x -p 10000 -i ~/.ssh/id_ed25519`).
+3. In your local terminal, paste the command and insert the port forwarding flags (`-L`):
+   ```bash
+   ssh -L 6006:localhost:6006 -L 8080:localhost:8080 root@x.x.x.x -p 10000 -i ~/.ssh/id_ed25519
+   ```
+4. Once connected, open your local web browser and navigate to:
+   - **TensorBoard:** http://localhost:6006
+   - **Optuna:** http://localhost:8080
+
 ---
 
 ## Running Hyperparameter Optimization (Optuna)
