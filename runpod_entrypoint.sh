@@ -29,6 +29,16 @@ mkdir -p "$BASE_MODELS_DIR"
 if command -v sshd > /dev/null; then
     echo "Starting SSH daemon..."
     mkdir -p /var/run/sshd
+    
+    # RunPod automatically injects your SSH key via the PUBLIC_KEY environment variable
+    if [ -n "$PUBLIC_KEY" ]; then
+        echo "Installing SSH key from RunPod..."
+        mkdir -p /root/.ssh
+        chmod 700 /root/.ssh
+        echo "$PUBLIC_KEY" >> /root/.ssh/authorized_keys
+        chmod 600 /root/.ssh/authorized_keys
+    fi
+
     service ssh start
 fi
 
