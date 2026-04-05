@@ -42,16 +42,50 @@ By default, the pushed image might be marked as private on your GitHub profile.
 2. Click on `beat-it-runpod`.
 3. Go to **Package Settings** and change visibility to **Public**. *(This allows RunPod to easily pull the image without requiring complicated secret-key setups in RunPod).*
 
-## Step 5: Deploy on RunPod
+## Step 5: Create a RunPod Template
 
-1. Go to your RunPod dashboard and rent a GPU Pod.
-2. The UI will default to a "Runpod Pytorch" template. Click **Customize Deployment**.
-3. Under **Container Image**, replace the default text with your image URL:
-   `ghcr.io/monadegmailcom/beat-it-runpod:latest`
-4. Under **Volume Mounts**, ensure your persistent pod volume is mapped to:
-   - `/app/models`
-   - `/app/runs`
-5. Under **Expose HTTP Ports**, add `6006, 8080` so you can securely click the web link directly in RunPod to view your Tensorboard and Optuna data traces live!
+To save time and ensure your persistent storage paths are correct, create a reusable template:
+
+1. In the RunPod dashboard, go to **Templates** -> **New Template**.
+2. Set the following fields:
+   - **Container Image:** `ghcr.io/monadegmailcom/beat-it-runpod:latest`
+   - **Container Disk:** `25 GB`
+   - **Volume Disk:** `30 GB`
+   - **Volume Mount Path:** `/workspace`
+   - **Expose HTTP Ports:** `6006, 8080`
+   - **Expose TCP Ports:** `22`
+3. Add these **Environment Variables**:
+   - `BASE_RUNS_DIR` = `/workspace/runs`
+   - `BASE_MODELS_DIR` = `/workspace/models`
+4. Save the template.
+
+## Step 6: Deploy and Upload Checkpoint
+
+1. Go to **Pods** -> **Deploy** and select a Spot GPU (e.g., RTX 3090).
+2. Choose your new custom template from the dropdown.
+3. Click **Customize Deployment**, enter `sleep infinity` into the **Start Command** field, and click **Deploy**. *(This keeps the pod awake but idle so you can securely upload files).*
+4. Once the pod is running, click **Connect** -> **Web Terminal**.
+5. Create the required directories by running:
+   ```bash
+   mkdir -p /workspace/models /workspace/runs
+   ```
+6. Use the **Upload File** button in the Web Terminal to upload your `checkpoint.pt` file.
+7. Move the uploaded file to the persistent models folder:
+   ```bash
+   mv checkpoint.pt /workspace/models/checkpoint.pt
+   ```
+
+## Step 7: Start Optuna or Training
+
+Now that your checkpoint is safely on the persistent volume, you can switch the pod out of sleep mode.
+
+1. Close the terminal, go to your Pods dashboard, and click **Edit Pod** (the gear/hamburger menu).
+2. Clear out the **Start Command** field completely (this forces the pod to use your Dockerfile's native `runpod_entrypoint.sh`).
+3. Add a new Environment Variable `RUN_MODE` and set it to `train` or `optuna`.
+   *(If using optuna, also add `OPTUNA_MODE` set to `train` or `match`).*
+4. Click **Save**.
+
+RunPod will automatically restart your container. It will pick up your checkpoint and start the C++ engine! You can click the **6006** port button for TensorBoard or **8080** for Optuna.
 
 ---
 
@@ -73,8 +107,8 @@ RUN_MODE=optuna OPTUNA_MODE=match ./test_runpod_mac.sh
 ```
 
 ### On RunPod Cloud
-In the exact same "Environment Variables" section of the Pod Configuration wizard where you setup the container:
+In the **Edit Pod** "Environment Variables" section:
 - Create a Variable named `RUN_MODE` and set it to `optuna`
 - Create a Variable named `OPTUNA_MODE` and set it to either `train` or `match`
 
-*RunPod will natively execute the Optuna logic! Since the `optuna.db` file drops directly into the persistent `/app/runs` volume alongside the tensorboard logs, you can pick up exactly where you left off organically across different pods!*
+*RunPod will natively execute the Optuna logic! Since the `optuna.db` file drops directly into the persistent `/workspace/runs` volume alongside the tensorboard logs, you can pick up exactly where you left off organically across different pods!*

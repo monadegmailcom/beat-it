@@ -25,6 +25,13 @@ fi
 mkdir -p "$BASE_RUNS_DIR"
 mkdir -p "$BASE_MODELS_DIR"
 
+# --- Start SSH Daemon ---
+if command -v sshd > /dev/null; then
+    echo "Starting SSH daemon..."
+    mkdir -p /var/run/sshd
+    service ssh start
+fi
+
 echo "Starting Tensorboard in the background on port $TENSORBOARD_PORT..."
 tensorboard --logdir=$BASE_RUNS_DIR --host=0.0.0.0 --port=$TENSORBOARD_PORT &
 
