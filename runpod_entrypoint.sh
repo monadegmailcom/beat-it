@@ -25,6 +25,19 @@ fi
 mkdir -p "$BASE_RUNS_DIR"
 mkdir -p "$BASE_MODELS_DIR"
 
+# --- Handle Persistent Configuration ---
+# Find the baked-in config file and link it to the persistent volume
+CONFIG_PATH=$(find /app -maxdepth 2 -name "uttt_config.json" | head -n 1)
+if [ -n "$CONFIG_PATH" ]; then
+    if [ ! -f "$BASE_RUNS_DIR/uttt_config.json" ]; then
+        echo "Copying default uttt_config.json to persistent storage ($BASE_RUNS_DIR)..."
+        cp "$CONFIG_PATH" "$BASE_RUNS_DIR/uttt_config.json"
+    fi
+    echo "Symlinking persistent uttt_config.json to $CONFIG_PATH..."
+    rm -f "$CONFIG_PATH"
+    ln -s "$BASE_RUNS_DIR/uttt_config.json" "$CONFIG_PATH"
+fi
+
 # --- Start SSH Daemon ---
 if command -v sshd > /dev/null; then
     echo "Starting SSH daemon..."
