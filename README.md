@@ -14,6 +14,11 @@
 # beat-it
 ki engine for two player games
 
+## 📚 Documentation Quick Links
+- **[Daily Training Workflow](DAILY_WORKFLOW.md)**: Your step-by-step cheatsheet for building, deploying, optimizing, and training on RunPod via Tmux/SSH.
+- **[RunPod & GitHub Infrastructure](INFRASTRUCTURE_SETUP.md)**: One-time setup instructions for GitHub Container Registry and RunPod templates.
+- **[Optuna Tradeoffs](OPTUNA_TRADEOFF.md)**: Guide on how to interpret optimization metrics.
+
 ## Requirements on mac
 - install prerequisites with homebrew
   - brew install libomp
@@ -149,27 +154,10 @@ unzip -p models/ttt_alphazero_experiment_6/final_model.pt final_model/extra/meta
 - monitor cpu, memory and gpu usage: `watch 'ps -p $(pgrep python) -o %cpu,%mem ; nvidia-smi'`
 - `sensors`
 
-## Hyperparameter tuning
-
-- before starting a training you should optimize hyperparameters for the number of parallel self plays, virtual loss selfplay threads and minimal nn evaluation batch size.
-- `make shared && python -m train.opt_selfplay \
-    --model_path models/uttt_alphazero_experiment_2/final_model.pt \
-    --n_trials 100 \
-    --simulations_per_move 800 \
-    --number_of_games 20\
-    --study_name my_name`
-- `optuna-dashboard sqlite:///db.sqlite3`
-- open browser at the output url
-- find the sweet spot of 
-  - intra game parallelism (selfplay threads)
-  - inter game parallelism (parallel game play)
-  - gpu utilization (batch_size)
-  - well-guided search (shannon entropy of root-children-visit distribution)
-- "flying blind" -> high entropy
-- well-guided search -> low entropy
-- find the pareto front by simultaneously
-  - maximizing throughput
-  - minimizing shannon entropy
+## Hyperparameter tuning & Cloud Training
+> [!NOTE]
+> The detailed cloud hyperparameter tuning and model training processes have been streamlined. 
+> Please follow the **[Daily Training Workflow](DAILY_WORKFLOW.md)** for execution.
  
 # Lock-free techniques
 - use boost::lockfree::queue for a producer-consumer-pattern
