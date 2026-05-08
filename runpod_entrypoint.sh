@@ -1,8 +1,27 @@
 #!/bin/bash
+# --- Optional Self-Update ---
+# If AUTO_UPDATE=1 is set, pull latest code before doing anything else.
+# This avoids frequent Docker rebuilds for simple code changes.
+if [ "$AUTO_UPDATE" = "1" ]; then
+    echo "AUTO_UPDATE is set. Synchronizing with latest code from Git..."
+    cd /app
+    git fetch --all
+    git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
+fi
+
 set -e
 
 # Default to port 6006 if not set
 TENSORBOARD_PORT=${TENSORBOARD_PORT:-6006}
+
+# --- Persistent Environment Loading ---
+# We source a .env file from the persistent runs directory. 
+# This allows settings like RUN_MODE to survive Pod restarts/preemptions.
+# Note: This is sourced BEFORE the path logic so it can influence paths if needed.
+if [ -f "/app/runs/.env" ]; then
+    echo "Loading persistent environment from /app/runs/.env..."
+    source "/app/runs/.env"
+fi
 
 # --- Determine storage paths based on environment ---
 # In TEST mode (local Mac via Lima/VirtioFS), all writes go to ephemeral /tmp
@@ -21,6 +40,8 @@ else
     export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
     CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
 fi
+
+# --- Launch the selected mode ---
 
 mkdir -p "$BASE_RUNS_DIR"
 mkdir -p "$BASE_MODELS_DIR"
@@ -94,7 +115,14 @@ else
 fi
 
 # --- Launch the selected mode ---
-if [ "$RUN_MODE" = "optuna" ]; then
+if [ -z "$RUN_MODE" ]; then
+    echo "No RUN_MODE set (and no /app/runs/.env found)."
+    echo "Defaulting to IDLE mode (sandbox). SSH in to configure and start training."
+    echo "To start training and ensure it survives restarts:"
+    echo "  echo 'export RUN_MODE=train' > /app/runs/.env"
+    echo "  /app/runpod_entrypoint.sh"
+    exec sleep infinity
+elif [ "$RUN_MODE" = "optuna" ]; then
     if [ -z "$MODEL_PATH" ]; then
         echo "Error: Optuna mode requires a valid model checkpoint to optimize!"
         exit 1
@@ -117,6 +145,6 @@ if [ "$RUN_MODE" = "optuna" ]; then
     echo "Starting Optuna Hyperparameter Optimization in mode: $OPTUNA_MODE..."
     python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE --n_trials 50 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
 else
-    echo "Starting training..."
+    echo "Starting training (RUN_MODE=$RUN_MODE)..."
     python -u -m train.main --game uttt $RESUME_ARGS 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
 fi
