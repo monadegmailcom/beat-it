@@ -14,15 +14,6 @@ set -e
 # Default to port 6006 if not set
 TENSORBOARD_PORT=${TENSORBOARD_PORT:-6006}
 
-# --- Persistent Environment Loading ---
-# We source a .env file from the persistent runs directory. 
-# This allows settings like RUN_MODE to survive Pod restarts/preemptions.
-# Note: This is sourced BEFORE the path logic so it can influence paths if needed.
-if [ -f "/app/runs/.env" ]; then
-    echo "Loading persistent environment from /app/runs/.env..."
-    source "/app/runs/.env"
-fi
-
 # --- Determine storage paths based on environment ---
 # In TEST mode (local Mac via Lima/VirtioFS), all writes go to ephemeral /tmp
 # to bypass VirtioFS file-locking which breaks SQLite, TensorBoard, and torch.save.
@@ -41,10 +32,16 @@ else
     CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
 fi
 
-# --- Launch the selected mode ---
-
 mkdir -p "$BASE_RUNS_DIR"
 mkdir -p "$BASE_MODELS_DIR"
+
+# --- Persistent Environment Loading ---
+# We source a .env file from the persistent runs directory. 
+# This allows settings like RUN_MODE to survive Pod restarts/preemptions.
+if [ -f "$BASE_RUNS_DIR/.env" ]; then
+    echo "Loading persistent environment from $BASE_RUNS_DIR/.env..."
+    source "$BASE_RUNS_DIR/.env"
+fi
 
 # --- Handle Persistent Configuration ---
 # Find the baked-in config file and link it to the persistent volume

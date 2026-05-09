@@ -25,20 +25,25 @@ By default, any pushed image might be marked as private on your GitHub profile. 
 
 ## Step 3: Create a RunPod Template
 
-To save time and ensure your persistent storage paths are correct, create a reusable template:
+To save time and ensure your persistent storage paths are correct, create a reusable template. 
 
-1. In the RunPod dashboard, go to **Templates** -> **New Template**.
-2. Set the following fields:
+> [!IMPORTANT]
+> **Storage Choice:** For AlphaZero training on **Spot GPUs**, use **Network Storage** (Network Volume). Unlike "Volume Disk" (which is wiped if you terminate a Pod), a Network Volume persists even if your Pod is preempted or deleted.
+
+1. In the RunPod dashboard, go to **Storage** and create a new **Network Volume** (e.g., 50 GB).
+2. Go to **Templates** -> **New Template**.
+3. Set the following fields:
    - **Container Image:** `ghcr.io/monadegmailcom/beat-it-runpod:latest`
-   - **Container Disk:** `25 GB`
-   - **Volume Disk:** `30 GB`
+   - **Container Disk:** `20 GB`
+   - **Volume Disk:** (Leave at 0 if using Network Storage)
    - **Volume Mount Path:** `/workspace`
    - **Expose HTTP Ports:** `6006, 8080`
    - **Expose TCP Ports:** `22`
-3. Add these **Environment Variables**:
+4. Add these **Environment Variables**:
    - `BASE_RUNS_DIR` = `/workspace/runs`
    - `BASE_MODELS_DIR` = `/workspace/models`
-4. Save the template.
+   - `AUTO_UPDATE` = `1`
+5. Save the template.
 
 ---
 **All Set!** Proceed to `DAILY_WORKFLOW.md` for your workflow loops.
