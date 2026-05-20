@@ -26,9 +26,15 @@ if [ "$ENV_TYPE" = "test" ]; then
     # Source of truth for initial checkpoints is still the read-only host mount
     CHECKPOINT_SOURCE_DIR="/app/models"
 else
-    echo "Running in PROD mode: using persistent /app storage."
-    export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/app/runs}"
-    export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
+    if [ -d "/workspace" ]; then
+        echo "Running in PROD mode (RunPod): using persistent /workspace storage."
+        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/workspace/runs}"
+        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/workspace/models}"
+    else
+        echo "Running in PROD mode: using persistent /app storage."
+        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/app/runs}"
+        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
+    fi
     CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
 fi
 
