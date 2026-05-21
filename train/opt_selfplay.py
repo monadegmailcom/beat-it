@@ -13,6 +13,31 @@ from .utils import (
     TrainingHyperparameters
 )
 
+def get_usable_cpu_count() -> int:
+    import math
+    try:
+        # Check cgroup v2
+        with open('/sys/fs/cgroup/cpu.max', 'r') as f:
+            max_val, period = f.read().strip().split()
+            if max_val != 'max':
+                return math.ceil(int(max_val) / int(period))
+    except Exception:
+        pass
+    try:
+        # Check cgroup v1
+        with open('/sys/fs/cgroup/cpu/cpu.cfs_quota_us', 'r') as f:
+            quota = int(f.read().strip())
+        with open('/sys/fs/cgroup/cpu/cpu.cfs_period_us', 'r') as f:
+            period = int(f.read().strip())
+        if quota > 0:
+            return math.ceil(quota / period)
+    except Exception:
+        pass
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 4
+
 def measure_throughput(
         alphazero_lib: ctypes.CDLL,
         game_type: GameType,
@@ -65,8 +90,9 @@ def objective(
     # Create a copy of config to modify
     config = base_hp_config.copy()
 
-    # Dynamically scale search space based on the current host's CPU count
-    cpu_count = os.cpu_count() or 4
+    # Dynamically scale search space based on the current host's actual usable CPU count.
+    # RunPod/Docker exposes all host CPUs to os.cpu_count(), so we check cgroup quotas first.
+    cpu_count = get_usable_cpu_count()
     min_threads = max(1, int(cpu_count * 0.5))
     max_threads = int(cpu_count * 1.5)
 
