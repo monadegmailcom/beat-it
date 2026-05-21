@@ -20,6 +20,7 @@ RUN apt-get update && apt-get install -y \
     python3-pip \
     python3-venv \
     screen \
+    vim \
     && rm -rf /var/lib/apt/lists/*
 
 # Set g++-13 as the default C++ compiler

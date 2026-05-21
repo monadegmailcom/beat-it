@@ -60,8 +60,8 @@ Inside your Tmux session on RunPod:
 
 1. Configure the environment to persist across restarts by writing to the `.env` file:
    ```bash
-   echo "export RUN_MODE=optuna" > /app/runs/.env
-   echo "export OPTUNA_MODE=train" >> /app/runs/.env
+   echo "export RUN_MODE=optuna" > /workspace/runs/.env
+   echo "export OPTUNA_MODE=train" >> /workspace/runs/.env
    ```
 2. Launch the entrypoint script:
    ```bash
@@ -77,17 +77,17 @@ Once you have the optimal numbers from Optuna, apply them and start the main tra
 
 1. Still in Tmux, edit your configuration file:
    ```bash
-   nano /app/runs/uttt_config.json
+   nano /workspace/runs/uttt_config.json
    ```
 2. Update the persistent environment to training mode:
    ```bash
-   echo "export RUN_MODE=train" > /app/runs/.env
+   echo "export RUN_MODE=train" > /workspace/runs/.env
    ```
 3. Launch the entrypoint script:
    ```bash
    /app/runpod_entrypoint.sh
    ```
-   *(Since `RUN_MODE=train` is now in `/app/runs/.env`, the training will automatically resume if the Pod is preempted and restarts!)*
+   *(Since `RUN_MODE=train` is now in `/workspace/runs/.env`, the training will automatically resume if the Pod is preempted and restarts!)*
 
 4. Open your Mac's browser to [http://localhost:6006](http://localhost:6006) to watch TensorBoard.
 5. Detach from Tmux using `Ctrl+B`, then `D`. Your training is now safely running and protected against Spot restarts!

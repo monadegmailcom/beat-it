@@ -11,6 +11,14 @@ fi
 
 set -e
 
+# Ensure virtual environment and library paths are active (critical for interactive SSH terminals)
+export PATH="/app/.venv/bin:$PATH"
+export Torch_DIR="/app/.venv/lib/python3.12/site-packages/torch/share/cmake/Torch"
+export LD_LIBRARY_PATH="/app/.venv/lib/python3.12/site-packages/torch/lib:/app/.venv/lib/python3.12/site-packages/torch.libs:${LD_LIBRARY_PATH}"
+
+# Always run from the app directory
+cd /app
+
 # Default to port 6006 if not set
 TENSORBOARD_PORT=${TENSORBOARD_PORT:-6006}
 
@@ -80,7 +88,7 @@ if command -v sshd > /dev/null; then
 fi
 
 echo "Starting Tensorboard in the background on port $TENSORBOARD_PORT..."
-tensorboard --logdir=$BASE_RUNS_DIR --host=0.0.0.0 --port=$TENSORBOARD_PORT &
+tensorboard --logdir=$BASE_RUNS_DIR --host=0.0.0.0 --port=$TENSORBOARD_PORT > "$BASE_RUNS_DIR/tensorboard.log" 2>&1 &
 
 # --- Find starting checkpoint ---
 # In test mode, look in the ephemeral dir first (in case a previous test wrote one),
@@ -141,7 +149,7 @@ elif [ "$RUN_MODE" = "optuna" ]; then
         # Give Optuna one extra second to finish writing the schema
         sleep 2
         echo "Starting Optuna Dashboard in the background on port 8080..."
-        optuna-dashboard sqlite:///$OPTUNA_DB --host 0.0.0.0 --port 8080
+        optuna-dashboard sqlite:///$OPTUNA_DB --host 0.0.0.0 --port 8080 > "$BASE_RUNS_DIR/optuna_dashboard.log" 2>&1
     ) &
 
     OPTUNA_MODE=${OPTUNA_MODE:-train}

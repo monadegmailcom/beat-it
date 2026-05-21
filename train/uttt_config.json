@@ -12,29 +12,29 @@
     "training_hyperparams": {
         "learning_rate": 0.0005,
         "weight_decay": 1e-4,
-        "batch_size": 32,
-        "log_freq_steps": 10,
+        "batch_size": 64,
+        "log_freq_steps": 100,
         "total_training_steps": 200000,
-        "model_update_freq_steps": 20,
-        "checkpoint_freq_steps": 50,
-        "replay_buffer_size": 10000,
-        "min_replay_buffer_size": 100,
+        "model_update_freq_steps": 500,
+        "checkpoint_freq_steps": 1000,
+        "replay_buffer_size": 200000,
+        "min_replay_buffer_size": 1000,
         "target_replay_ratio": 4.0,
         "validation_split_percentage": 0.05,
-        "validation_freq_steps": 20,
+        "validation_freq_steps": 500,
         "lr_schedule_milestones": [100000, 150000],
         "lr_schedule_gamma": 0.1,
-        "evaluation_games": 6
+        "evaluation_games": 100
     },
     "self_play_config": {
         "parallel_games": 8,
         "parallel_simulations": 1,
-        "max_batch_size": 32,
+        "max_batch_size": 64,
         "c_base": 19652.0,
         "c_init": 1.25,
         "dirichlet_alpha": 0.3,
         "dirichlet_epsilon": 0.25,
-        "simulations": 10,
-        "opening_moves": 2
+        "simulations": 100,
+        "opening_moves": 5
     }
 }
