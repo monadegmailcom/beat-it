@@ -65,19 +65,26 @@ def objective(
     # Create a copy of config to modify
     config = base_hp_config.copy()
 
-    # --- Suggest Hyperparameters based on Mode ---
-    
-    # Common parameter: batch size
-    # We can probably search in powers of 2 or typical gpu sizes
-    max_batch_size = trial.suggest_int('max_batch_size', 16, 4096, log=True)
+    # Dynamically scale search space based on the current host's CPU count
+    cpu_count = os.cpu_count() or 4
+    min_threads = max(1, int(cpu_count * 0.5))
+    max_threads = int(cpu_count * 1.5)
+
+    # 2. max_batch_size determines the GPU queue capacity. As you correctly noted, 
+    # MCTS threads can push multiple evaluations (via virtual loss) before blocking.
+    # Therefore, we must tune the queue capacity independently!
+    max_batch_size = trial.suggest_int('max_batch_size', max_threads, 4096, log=True)
     config['max_batch_size'] = max_batch_size
 
     if mode == "train":
-        parallel_games = trial.suggest_int('parallel_games', 1, 256, log=True)
+        # 1. Tune parallel_games around the CPU count (pristine single-thread search per game)
+        parallel_games = trial.suggest_int('parallel_games', min_threads, max_threads)
         config['parallel_games'] = parallel_games
         config['parallel_simulations'] = 1
+        
     elif mode == "match":
-        parallel_simulations = os.cpu_count() or 1
+        # 1. Tune parallel_simulations (threads) around the CPU count
+        parallel_simulations = trial.suggest_int('parallel_simulations', min_threads, max_threads)
         config['parallel_simulations'] = parallel_simulations
         config['parallel_games'] = 1
     
