@@ -16,6 +16,7 @@ ki engine for two player games
 
 ## 📚 Documentation Quick Links
 - **[Daily Training Workflow](DAILY_WORKFLOW.md)**: Your step-by-step cheatsheet for building, deploying, optimizing, and training on RunPod via Tmux/SSH.
+- **[RunPod Hardware Selection Guide](RUNPOD_HARDWARE_GUIDE.md)**: Essential advice on monolithic vs. chiplet CPUs and SXM vs. PCIe GPUs for AlphaZero self-play performance.
 - **[RunPod & GitHub Infrastructure](INFRASTRUCTURE_SETUP.md)**: One-time setup instructions for GitHub Container Registry and RunPod templates.
 - **[Optuna Tradeoffs](OPTUNA_TRADEOFF.md)**: Guide on how to interpret optimization metrics.
 

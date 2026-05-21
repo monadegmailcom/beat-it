@@ -2,6 +2,9 @@
 
 This guide compiles all the critical, hard-earned knowledge and terminal workarounds we implemented for running your AlphaZero training pipeline on RunPod. Keep this file handy in VS Code whenever you deploy or configure a new Pod.
 
+> [!TIP]
+> If you are experiencing low training or self-play generation throughput (positions per second), refer to our comprehensive **[RunPod Hardware Selection Guide](RUNPOD_HARDWARE_GUIDE.md)** to optimize your instance CPU and GPU selection.
+
 ---
 
 ## 🚨 1. Avoid Data Loss: The Network Volume Rule
