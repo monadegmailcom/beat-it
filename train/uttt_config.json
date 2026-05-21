@@ -12,7 +12,7 @@
     "training_hyperparams": {
         "learning_rate": 0.0005,
         "weight_decay": 1e-4,
-        "batch_size": 64,
+        "batch_size": 256,
         "log_freq_steps": 100,
         "total_training_steps": 200000,
         "model_update_freq_steps": 500,
@@ -24,12 +24,13 @@
         "validation_freq_steps": 500,
         "lr_schedule_milestones": [100000, 150000],
         "lr_schedule_gamma": 0.1,
-        "evaluation_games": 100
+        "evaluation_games": 100,
+        "evaluation_parallel_simulations": 14
     },
     "self_play_config": {
-        "parallel_games": 8,
+        "parallel_games": 17,
         "parallel_simulations": 1,
-        "max_batch_size": 64,
+        "max_batch_size": 4096,
         "c_base": 19652.0,
         "c_init": 1.25,
         "dirichlet_alpha": 0.3,

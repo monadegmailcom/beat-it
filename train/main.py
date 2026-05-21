@@ -595,6 +595,9 @@ if __name__ == '__main__':
                         
                     # Reconstruct Hyperparameters struct
                     hp_struct = Hyperparameters(self_play_config)
+                    # Override parallel simulations specifically for the evaluation match
+                    if 'evaluation_parallel_simulations' in training_hyperparams:
+                        hp_struct.parallel_simulations = training_hyperparams['evaluation_parallel_simulations']
                     
                     try:
                         eval_start = time.time()
