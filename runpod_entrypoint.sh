@@ -154,7 +154,7 @@ elif [ "$RUN_MODE" = "optuna" ]; then
 
     OPTUNA_MODE=${OPTUNA_MODE:-train}
     echo "Starting Optuna Hyperparameter Optimization in mode: $OPTUNA_MODE..."
-    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE --n_trials 50 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
+    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
 else
     echo "Starting training (RUN_MODE=$RUN_MODE)..."
     python -u -m train.main --game uttt $RESUME_ARGS 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
