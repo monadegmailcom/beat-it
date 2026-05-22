@@ -33,6 +33,11 @@ validation_buffer_data_file = 'validation_buffer_data.npz'
 
 
 if __name__ == '__main__':
+    # Limit PyTorch CPU threads to prevent starving the C++ MCTS threads
+    # This prevents the 3-second GPU idle valley during training bursts
+    torch.set_num_threads(2)
+    torch.set_num_interop_threads(2)
+
     parser = argparse.ArgumentParser(
         description="AlphaZero Training")
     parser.add_argument('--resume_from', type=str, default=None,
