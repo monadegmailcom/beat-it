@@ -15,7 +15,7 @@
         "batch_size": 256,
         "log_freq_steps": 100,
         "total_training_steps": 200000,
-        "model_update_freq_steps": 500,
+        "model_update_freq_steps": 10000,
         "checkpoint_freq_steps": 1000,
         "replay_buffer_size": 200000,
         "min_replay_buffer_size": 1000,

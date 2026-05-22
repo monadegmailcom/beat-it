@@ -111,6 +111,7 @@ template < size_t G, size_t P > class Service
                 requests[i] = postponed[i].first;
                 responses[i] = postponed[i].second;
             }
+            batch_size = postponed.size();
             postponed.clear();
             std::this_thread::yield();
         }
