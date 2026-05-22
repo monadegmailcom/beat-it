@@ -387,9 +387,9 @@ if __name__ == '__main__':
         if args.resume_from and os.path.exists(args.resume_from):
              previous_checkpoint_path = args.resume_from
         else:
-             # Save initial random model as 'checkpoint_prev.pt' so the first evaluation has a baseline
-             initial_prev_path = os.path.join(checkpoint_dir, "checkpoint_prev.pt")
-             print(f"Saving initial random model to {initial_prev_path} for first evaluation...")
+             # Save initial random model as 'checkpoint_baseline.pt' so the first evaluation has a baseline
+             initial_baseline_path = os.path.join(checkpoint_dir, "checkpoint_baseline.pt")
+             print(f"Saving initial random model to {initial_baseline_path} for first evaluation...")
              save_checkpoint(
                 model,
                 optimizer,
@@ -399,11 +399,11 @@ if __name__ == '__main__':
                 game_config=game_config,
                 self_play_config=self_play_config,
                 training_hyperparams=training_hyperparams,
-                path=initial_prev_path,
+                path=initial_baseline_path,
                 train_buffer=None,
                 validation_buffer=None
              )
-             previous_checkpoint_path = initial_prev_path
+             previous_checkpoint_path = initial_baseline_path
 
 
         # 1. Fetch a small batch of new data to keep the buffer fresh.
@@ -545,13 +545,25 @@ if __name__ == '__main__':
 
             # Periodically save a checkpoint
             if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
-                # Rotate checkpoints to allow evaluation against previous version
-                prev_checkpoint_path = os.path.join(checkpoint_dir, "checkpoint_prev.pt")
-                if os.path.exists(checkpoint_path):
-                    shutil.copy2(checkpoint_path, prev_checkpoint_path)
-                    previous_checkpoint_path = prev_checkpoint_path
-                    print(f"Backed up previous checkpoint to {prev_checkpoint_path}")
+                # Keep a fixed baseline for evaluations to track true Elo progress.
+                # Update the baseline every N checkpoints (default: 10).
+                baseline_update_freq = training_hyperparams.get('baseline_update_freq_steps', training_hyperparams['checkpoint_freq_steps'] * 10)
+                baseline_path = os.path.join(checkpoint_dir, "checkpoint_baseline.pt")
                 
+                if os.path.exists(checkpoint_path):
+                    if not os.path.exists(baseline_path):
+                        # Initialize baseline if it doesn't exist
+                        shutil.copy2(checkpoint_path, baseline_path)
+                    elif (step + 1) % baseline_update_freq == 0:
+                        # Historize the old baseline so you have a permanent record of old models
+                        history_path = os.path.join(checkpoint_dir, f"checkpoint_{step+1-baseline_update_freq}.pt")
+                        shutil.copy2(baseline_path, history_path)
+                        # Promote current model to be the new baseline
+                        shutil.copy2(checkpoint_path, baseline_path)
+                        print(f"Historized old baseline to {history_path}")
+                        print(f"Promoted step {step+1} to be the new baseline for evaluations.")
+
+                previous_checkpoint_path = baseline_path if os.path.exists(baseline_path) else None
                 print(f"\nSaving checkpoint at step {step+1} to "
                       f"{checkpoint_path}...")
                 save_checkpoint(
