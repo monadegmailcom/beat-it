@@ -105,7 +105,7 @@ template < typename PlayerT > struct Session
     Session( state_type const& initial_state,
              std::unique_ptr< torch::jit::script::Module >&& model,
              libtorch::Hyperparameters const& hp )
-        : queue( hp.max_batch_size ), hp( hp ), initial_state( initial_state ),
+        : queue( hp.parallel_games * 1000 ), hp( hp ), initial_state( initial_state ),
           thread_pool( hp.parallel_games ),
           inference_service( std::move( model ), libtorch::get_device(),
                              hp.max_batch_size )
