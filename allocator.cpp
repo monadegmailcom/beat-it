@@ -41,11 +41,22 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment )
             // Signal to other threads that we are transitioning blocks
             current_offset.store( ~(size_t)0, std::memory_order_release );
                 
-            auto new_block = make_unique< ArenaAllocator::Block >( block_limit );
-            ArenaAllocator::Block* new_block_ptr = new_block.get();
-            blocks.push_back( std::move( new_block ) );
+            size_t next_idx = current_block_index.load( std::memory_order_relaxed ) + 1;
+            ArenaAllocator::Block* new_block_ptr = nullptr;
+            
+            if ( next_idx < blocks.size() )
+            {
+                new_block_ptr = blocks[next_idx].get();
+            }
+            else
+            {
+                auto new_block = make_unique< ArenaAllocator::Block >( block_limit );
+                new_block_ptr = new_block.get();
+                blocks.push_back( std::move( new_block ) );
+            }
 
             // Update state: store block pointer FIRST, then offset to prevent deadly ABA races
+            current_block_index.store( next_idx, std::memory_order_relaxed );
             current_block_ptr.store( new_block_ptr, std::memory_order_release );
             current_offset.store( size, std::memory_order_release );
             
@@ -70,6 +81,7 @@ void* ArenaAllocator::allocate( size_t size, size_t alignment )
 void ArenaAllocator::reset() noexcept
 {
     std::lock_guard< std::mutex > lock( block_mutex );
+    current_block_index.store( 0, std::memory_order_relaxed );
     current_block_ptr.store( blocks.front().get(), std::memory_order_release );
     current_offset.store( 0, std::memory_order_release );
 }

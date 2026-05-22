@@ -40,6 +40,7 @@ class ArenaAllocator
   private:
     std::deque< std::unique_ptr< Block > > blocks;
     std::mutex block_mutex;
+    std::atomic< size_t > current_block_index{ 0 };
     std::atomic< Block* > current_block_ptr{ nullptr };
     std::atomic< size_t > current_offset{ 0 };
 };
