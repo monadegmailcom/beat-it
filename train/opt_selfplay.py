@@ -98,28 +98,32 @@ def objective(
     min_threads = max(1, int(cpu_count * 0.5))
     max_threads = int(cpu_count * 1.5)
 
-    # 2. max_batch_size determines the GPU queue capacity. As you correctly noted, 
-    # MCTS threads can push multiple evaluations (via virtual loss) before blocking.
-    # Therefore, we must tune the queue capacity independently!
-    max_batch_size = trial.suggest_int('max_batch_size', max_threads, 4096, log=True)
-    config['max_batch_size'] = max_batch_size
-
     if mode == "train":
+        # 2. max_batch_size determines the GPU queue capacity. As you correctly noted, 
+        # MCTS threads can push multiple evaluations (via virtual loss) before blocking.
+        # Therefore, we must tune the queue capacity independently!
+        max_batch_size = trial.suggest_int('max_batch_size', max_threads, 4096, log=True)
+        config['max_batch_size'] = max_batch_size
+
         # 1. Tune parallel_games around the CPU count (pristine single-thread search per game)
         parallel_games = trial.suggest_int('parallel_games', min_threads, max_threads)
         config['parallel_games'] = parallel_games
         config['parallel_simulations'] = 1
         
     elif mode == "match":
+        # 2. In match mode, use evaluation_max_batch_size to keep the dashboard and hyperparameter tracking perfectly decoupled.
+        evaluation_max_batch_size = trial.suggest_int('evaluation_max_batch_size', max_threads, 4096, log=True)
+        config['max_batch_size'] = evaluation_max_batch_size
+
         # 1. Tune both parallel_games and parallel_simulations for Match mode!
         # To prevent thread explosion (total threads = games * simulations) from 
         # crashing the CPU, we constrain their product to roughly 2x the CPU count.
-        parallel_games = trial.suggest_int('parallel_games', 1, max_threads)
-        max_sims_allowed = max(1, (max_threads * 2) // parallel_games)
-        parallel_simulations = trial.suggest_int('parallel_simulations', 1, max_sims_allowed)
+        evaluation_parallel_games = trial.suggest_int('evaluation_parallel_games', 1, max_threads)
+        max_sims_allowed = max(1, (max_threads * 2) // evaluation_parallel_games)
+        evaluation_parallel_simulations = trial.suggest_int('evaluation_parallel_simulations', 1, max_sims_allowed)
         
-        config['parallel_simulations'] = parallel_simulations
-        config['parallel_games'] = parallel_games
+        config['parallel_simulations'] = evaluation_parallel_simulations
+        config['parallel_games'] = evaluation_parallel_games
     
     hp = Hyperparameters(config)
 

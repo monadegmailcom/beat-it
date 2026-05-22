@@ -595,11 +595,13 @@ if __name__ == '__main__':
                         
                     # Reconstruct Hyperparameters struct
                     hp_struct = Hyperparameters(self_play_config)
-                    # Override parallel simulations and games specifically for the evaluation match
+                    # Override parallel simulations, games, and max batch size specifically for the evaluation match
                     if 'evaluation_parallel_simulations' in training_hyperparams:
                         hp_struct.parallel_simulations = training_hyperparams['evaluation_parallel_simulations']
                     if 'evaluation_parallel_games' in training_hyperparams:
                         hp_struct.parallel_games = training_hyperparams['evaluation_parallel_games']
+                    if 'evaluation_max_batch_size' in training_hyperparams:
+                        hp_struct.max_batch_size = training_hyperparams['evaluation_max_batch_size']
                     
                     try:
                         eval_start = time.time()

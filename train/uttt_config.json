@@ -26,7 +26,8 @@
         "lr_schedule_gamma": 0.1,
         "evaluation_games": 100,
         "evaluation_parallel_games": 4,
-        "evaluation_parallel_simulations": 14
+        "evaluation_parallel_simulations": 14,
+        "evaluation_max_batch_size": 4096
     },
     "self_play_config": {
         "parallel_games": 17,

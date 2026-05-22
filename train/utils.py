@@ -99,6 +99,7 @@ class TrainingHyperparameters(TypedDict):
     evaluation_games: int  # Added for evaluation match config
     evaluation_parallel_games: int
     evaluation_parallel_simulations: int
+    evaluation_max_batch_size: int
 
 
 def set_model(session_handle, set_model_func, game_type: GameType,
