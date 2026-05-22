@@ -153,7 +153,7 @@ if __name__ == '__main__':
         '--mode', type=str, required=True, choices=['train', 'match'],
         help='Optimization mode: "train" or "match".')
     parser.add_argument(
-        '--n_trials', type=int, default=100,
+        '--n_trials', type=int, default=200,
         help='Number of optimization trials to run.')
     parser.add_argument(
         '--number_of_positions', type=int, default=1000,

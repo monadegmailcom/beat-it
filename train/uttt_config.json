@@ -25,6 +25,7 @@
         "lr_schedule_milestones": [100000, 150000],
         "lr_schedule_gamma": 0.1,
         "evaluation_games": 100,
+        "evaluation_parallel_games": 4,
         "evaluation_parallel_simulations": 14
     },
     "self_play_config": {

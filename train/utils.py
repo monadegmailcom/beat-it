@@ -97,6 +97,8 @@ class TrainingHyperparameters(TypedDict):
     lr_schedule_milestones: list[int]
     lr_schedule_gamma: float
     evaluation_games: int  # Added for evaluation match config
+    evaluation_parallel_games: int
+    evaluation_parallel_simulations: int
 
 
 def set_model(session_handle, set_model_func, game_type: GameType,
