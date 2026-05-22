@@ -325,12 +325,12 @@ extern "C"
             destroy_session( static_cast< uttt_session_type* >( session ) );
     }
 
-    // return number of created positions
     uint32_t measure_selfplay_throughput( GameType game_type,
                                           const char* model_data,
                                           uint32_t model_data_len,
                                           libtorch::Hyperparameters const& hp,
-                                          uint32_t number_of_positions )
+                                          uint32_t number_of_positions,
+                                          CppStats* batch_size_stats )
     {
         void* session =
             create_session( game_type, model_data, model_data_len, hp );
@@ -340,12 +340,16 @@ extern "C"
             auto ttt_session = static_cast< ttt_session_type* >( session );
             total_positions =
                 ttt_session->measure_selfplay_throughput( number_of_positions );
+            if ( batch_size_stats )
+                statistic_to_cpp_stat( ttt_session->inference_service.batch_size_stats(), *batch_size_stats );
         }
         else if ( game_type == GameType::UTTT )
         {
             auto uttt_session = static_cast< uttt_session_type* >( session );
             total_positions = uttt_session->measure_selfplay_throughput(
                 number_of_positions );
+            if ( batch_size_stats )
+                statistic_to_cpp_stat( uttt_session->inference_service.batch_size_stats(), *batch_size_stats );
         }
 
         destroy_session( game_type, session );

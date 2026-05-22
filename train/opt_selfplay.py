@@ -10,7 +10,7 @@ import importlib
 
 from .utils import (
     GameType, create_inference_model_bundle, Hyperparameters,
-    TrainingHyperparameters
+    TrainingHyperparameters, CppStats
 )
 
 def get_usable_cpu_count() -> int:
@@ -43,13 +43,11 @@ def measure_throughput(
         game_type: GameType,
         model_bytes: bytes,
         hp: Hyperparameters,
-        number_of_positions: int) -> float:
+        number_of_positions: int) -> tuple[float, float]:
     """
     Measures throughput by calling the C++ measure_selfplay_throughput function.
-    Returns positions per second.
+    Returns (positions_per_second, average_inference_batch_size).
     """
-    
-    # Define C func signature
     c_measure_func = alphazero_lib.measure_selfplay_throughput
     c_measure_func.restype = ctypes.c_uint32
     c_measure_func.argtypes = [
@@ -57,23 +55,27 @@ def measure_throughput(
         ctypes.c_char_p,         # model_data
         ctypes.c_uint32,         # model_data_len
         ctypes.POINTER(Hyperparameters), # hp
-        ctypes.c_uint32          # number_of_positions
+        ctypes.c_uint32,         # number_of_positions
+        ctypes.POINTER(CppStats) # batch_size_stats
     ]
 
+    batch_size_stats = CppStats()
     start_time = time.time()
     total_positions = c_measure_func(
         game_type.value,
         model_bytes,
         len(model_bytes),
         ctypes.byref(hp),
-        number_of_positions
+        number_of_positions,
+        ctypes.byref(batch_size_stats)
     )
     duration = time.time() - start_time
+    avg_batch_size = batch_size_stats.mean
 
     if duration > 0:
-        return total_positions / duration
+        return (total_positions / duration), avg_batch_size
     else:
-        return 0.0
+        return 0.0, 0.0
 
 
 def objective(
@@ -109,10 +111,15 @@ def objective(
         config['parallel_simulations'] = 1
         
     elif mode == "match":
-        # 1. Tune parallel_simulations (threads) around the CPU count
-        parallel_simulations = trial.suggest_int('parallel_simulations', min_threads, max_threads)
+        # 1. Tune both parallel_games and parallel_simulations for Match mode!
+        # To prevent thread explosion (total threads = games * simulations) from 
+        # crashing the CPU, we constrain their product to roughly 2x the CPU count.
+        parallel_games = trial.suggest_int('parallel_games', 1, max_threads)
+        max_sims_allowed = max(1, (max_threads * 2) // parallel_games)
+        parallel_simulations = trial.suggest_int('parallel_simulations', 1, max_sims_allowed)
+        
         config['parallel_simulations'] = parallel_simulations
-        config['parallel_games'] = 1
+        config['parallel_games'] = parallel_games
     
     hp = Hyperparameters(config)
 
@@ -120,11 +127,16 @@ def objective(
           f"PG={hp.parallel_games}, PS={hp.parallel_simulations}, "
           f"BS={hp.max_batch_size}...")
 
-    throughput = measure_throughput(
+    throughput, avg_batch_size = measure_throughput(
         alphazero_lib, game_type, model_bytes, hp, number_of_positions
     )
 
-    print(f"  ... Throughput: {throughput:.2f} pos/s")
+    if avg_batch_size > 0.0:
+        trial.set_user_attr('avg_inference_batch_size', avg_batch_size)
+        print(f"  ... Throughput: {throughput:.2f} pos/s, Avg Batch Size: {avg_batch_size:.2f}")
+    else:
+        print(f"  ... Throughput: {throughput:.2f} pos/s")
+    
     return throughput
 
 
