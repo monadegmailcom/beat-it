@@ -102,6 +102,46 @@ class TrainingHyperparameters(TypedDict):
     evaluation_max_batch_size: int
 
 
+def check_and_merge_config(active_config: dict, git_config: dict, active_path: str) -> bool:
+    """
+    Compares active_config (user's persistent config) with git_config (pristine git config).
+    - If active_config is missing keys present in git_config, merges them in-place and returns True.
+    - Prints warnings highlighting any differences between the user's custom values and git defaults.
+    """
+    if not git_config:
+        return False
+    
+    modified = False
+    diffs = []
+    
+    for section in ["game_config", "training_hyperparams", "self_play_config"]:
+        if section not in git_config:
+            continue
+        if section not in active_config:
+            active_config[section] = {}
+            modified = True
+            
+        for key, val in git_config[section].items():
+            if key not in active_config[section]:
+                print(f"  -> Auto-merging missing config key: {section}.{key} = {val}")
+                active_config[section][key] = val
+                modified = True
+            elif active_config[section][key] != val:
+                diffs.append((f"{section}.{key}", val, active_config[section][key]))
+                
+    if diffs:
+        print("\n" + "="*80)
+        print("⚠️  WARNING: Your persistent configuration differs from the latest Git defaults:")
+        print(f"Configuration File: {active_path}")
+        print(f"{'Parameter':<35} | {'Git Default':<15} | {'Your Value (Active)':<15}")
+        print("-" * 80)
+        for param, git_val, active_val in diffs:
+            print(f"{param:<35} | {str(git_val):<15} | {str(active_val):<15}")
+        print("="*80 + "\n")
+        
+    return modified
+
+
 def set_model(session_handle, set_model_func, game_type: GameType,
               model_data: bytes):
     """Generic function to set a model in the C++ library."""

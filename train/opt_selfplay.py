@@ -10,7 +10,7 @@ import importlib
 
 from .utils import (
     GameType, create_inference_model_bundle, Hyperparameters,
-    TrainingHyperparameters, CppStats
+    TrainingHyperparameters, CppStats, check_and_merge_config
 )
 
 def get_usable_cpu_count() -> int:
@@ -215,6 +215,20 @@ if __name__ == '__main__':
             os.path.dirname(__file__), f"{args.game}_config.json")
         with open(config_path, 'r') as f:
             full_config = json.load(f)
+            
+        # Smartly merge in new default config keys from pristine Git version if available
+        git_config_path = config_path + ".git"
+        if os.path.exists(git_config_path):
+            try:
+                with open(git_config_path, 'r') as gf:
+                    git_config = json.load(gf)
+                if check_and_merge_config(full_config, git_config, config_path):
+                    print(f"Saving merged configuration back to persistent file: {config_path}")
+                    with open(config_path, 'w') as f_write:
+                        json.dump(full_config, f_write, indent=4)
+            except Exception as ex:
+                print(f"Warning: Could not merge with Git default configuration: {ex}")
+                
         self_play_config = full_config.get('self_play_config', {})
         game_config = full_config.get('game_config', {})
         training_hyperparams = full_config.get('training_hyperparams', {})

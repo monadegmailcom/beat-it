@@ -17,7 +17,7 @@ from .utils import (
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
     DataPointers, split_and_add_data, GameType, CppStats,
     train_buffer_metadata_file, Hyperparameters, evaluate_models,
-    pause_session, resume_session
+    pause_session, resume_session, check_and_merge_config
 )
 
 scheduler_state_file = 'scheduler_state.pt'
@@ -77,6 +77,20 @@ if __name__ == '__main__':
                 os.path.dirname(__file__), f"{args.game}_config.json")
             with open(config_path, 'r') as f:
                 config = json.load(f)
+                
+            # Smartly merge in new default config keys from pristine Git version if available
+            git_config_path = config_path + ".git"
+            if os.path.exists(git_config_path):
+                try:
+                    with open(git_config_path, 'r') as gf:
+                        git_config = json.load(gf)
+                    if check_and_merge_config(config, git_config, config_path):
+                        print(f"Saving merged configuration back to persistent file: {config_path}")
+                        with open(config_path, 'w') as f_write:
+                            json.dump(config, f_write, indent=4)
+                except Exception as ex:
+                    print(f"Warning: Could not merge with Git default configuration: {ex}")
+                    
             game_config = config['game_config']
             training_hyperparams = cast(
                 TrainingHyperparameters, config['training_hyperparams'])
