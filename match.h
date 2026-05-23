@@ -158,6 +158,10 @@ class MultiMatch : public ::Match< MoveT, StateT >
 
             std::swap( player1_record, player2_record );
             current_starter_index = toggle( current_starter_index );
+
+            // Print progress
+            int remaining = rounds.load( std::memory_order_relaxed );
+            std::cout << "\rEvaluation games remaining: " << remaining << "   " << std::flush;
         }
 
         std::lock_guard< std::mutex > lock( mutex );

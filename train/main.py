@@ -649,7 +649,7 @@ if __name__ == '__main__':
                             step+1
                         )
                         eval_duration = time.time() - eval_start
-                        print(f"Evaluation took {eval_duration:.2f}s")
+                        print(f"\nEvaluation took {eval_duration:.2f}s")
                         
                         total_games = eval_result.wins_p1 + eval_result.wins_p2 + eval_result.draws
                         if total_games > 0:
