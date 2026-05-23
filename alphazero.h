@@ -275,14 +275,21 @@ class Player : public ::Player< MoveT >
         void visit( pre_node_type& node ) noexcept override
         {
             update_selection_stats( node );
-
-            while ( node.get_children().empty() )
+            while ( true )
+            {
+                // acquire the shared lock to safely read the list.
+                // this also blocks if the node is expanding right now.
+                std::shared_lock _( node.get_mutex() );
+                if ( !node.get_children().empty() )
+                {
+                    select( node );
+                    break;
+                }
+                
+                // if still empty, release lock and yield to let the expanding thread finish.
+                _.unlock();
                 std::this_thread::yield();
-
-            // multiple threads are allowed to read access, but it blocks if
-            // the node is expanding right now.
-            std::shared_lock _( node.get_mutex() );
-            select( node );
+            }
         }
 
         Player& player;

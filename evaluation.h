@@ -126,17 +126,26 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
     auto make_buf = []( const string& s )
     { return libtorch::DataBuffer{ s.data(), (uint32_t)s.size() }; };
 
+    std::cout << "Loading model1 into C++..." << std::endl;
     auto model1 = libtorch::load_model( make_buf( model1_data ), device );
+    std::cout << "Loading model2 into C++..." << std::endl;
     auto model2 = libtorch::load_model( make_buf( model2_data ), device );
+    std::cout << "Models loaded, starting evaluation..." << std::endl;
 
     using game_type = Game< MoveT, StateT >;
 
     using inference_service =
         libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;
+    std::cout << "Creating inference services..." << std::endl;
     inference_service service1( std::move( model1 ), device,
                                 hp.max_batch_size );
     inference_service service2( std::move( model2 ), device,
                                 hp.max_batch_size );
+
+    // wait for inference workers to start up.
+    std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
+
+    std::cout << "Running match..." << std::endl;
 
     auto factory1 = [&]( game_type const& g, unsigned seed,
                          GenerationalArenaAllocator* allocator )

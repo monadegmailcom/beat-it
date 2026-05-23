@@ -12,7 +12,7 @@
     "training_hyperparams": {
         "learning_rate": 0.0005,
         "weight_decay": 1e-4,
-        "batch_size": 256,
+        "batch_size": 1024,
         "log_freq_steps": 100,
         "total_training_steps": 200000,
         "model_update_freq_steps": 1000,
