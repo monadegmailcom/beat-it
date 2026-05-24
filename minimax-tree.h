@@ -54,8 +54,27 @@ class Player : public ::Player< MoveT >
             node_type( value_type( game, move ) );
     }
 
+    void ensure_children( node_type &node )
+    {
+        if ( node.get_children().empty() )
+        {
+            pre_node_type &pre_node = static_cast< pre_node_type & >( node );
+            move_stack.clear();
+            GameState< MoveT, StateT >::get_valid_moves(
+                move_stack, node.get_current_player_index(),
+                pre_node.get_game().get_state() );
+            std::ranges::shuffle( move_stack, g );
+
+            for ( MoveT const &move : move_stack )
+                node.get_children().push_front( *(
+                    new ( allocator.allocate< pre_node_type >() ) pre_node_type(
+                        pre_node.get_game().apply( move ), move ) ) );
+        }
+    }
+
     void apply_opponent_move( MoveT const &move ) override
     {
+        ensure_children( *root );
         auto itr = std::ranges::find_if( root->get_children(),
                                          [move]( auto const &node )
                                          { return node.get_move() == move; } );
@@ -104,19 +123,7 @@ class Player : public ::Player< MoveT >
         }
 
         // push_front child nodes on first visit
-        if ( node.get_children().empty() )
-        {
-            move_stack.clear();
-            GameState< MoveT, StateT >::get_valid_moves(
-                move_stack, node.get_current_player_index(),
-                pre_node.get_game().get_state() );
-            std::ranges::shuffle( move_stack, g );
-
-            for ( MoveT const &move : move_stack )
-                node.get_children().push_front( *(
-                    new ( allocator.allocate< pre_node_type >() ) pre_node_type(
-                        pre_node.get_game().apply( move ), move ) ) );
-        }
+        ensure_children( node );
         // evaluate child nodes recursively until pruning
         auto child_itr = node.get_children().begin();
         for ( ; child_itr != node.get_children().end(); ++child_itr ) // NOSONAR

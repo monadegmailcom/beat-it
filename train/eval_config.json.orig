@@ -1,0 +1,20 @@
+{
+  "game_type": "uttt",
+  "rounds": 2,
+  "parallel_games": 2,
+  "save_path": "temp/test_eval_temp.json",
+  "run_name": "temp_matchup",
+  "step": 0,
+  "player1": {
+    "type": "mcts",
+    "model_path": "models/checkpoint_24_05.pt",
+    "simulations": 15,
+    "parallel_simulations": 1
+  },
+  "player2": {
+    "type": "mcts",
+    "model_path": "random",
+    "simulations": 5,
+    "parallel_simulations": 1
+  }
+}

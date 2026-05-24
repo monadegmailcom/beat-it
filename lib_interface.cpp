@@ -16,108 +16,38 @@ enum class GameType : int32_t
 extern "C"
 {
     evaluation::EvaluationStats
-    evaluate_models( int32_t game_type, const char* model1_data,
-                     uint32_t model1_len, const char* model2_data,
-                     uint32_t model2_len, libtorch::Hyperparameters const& hp1,
-                     libtorch::Hyperparameters const& hp2,
-                     int32_t rounds, const char* save_path_c,
-                     const char* run_name_c, int32_t step )
+    evaluate_matchup( int32_t game_type,
+                      libtorch::MatchupPlayerConfig const& p1,
+                      libtorch::MatchupPlayerConfig const& p2,
+                      int32_t rounds, const char* save_path_c,
+                      const char* run_name_c, int32_t step )
     {
-        std::string m1( model1_data, model1_len );
-        std::string m2( model2_data, model2_len );
         std::string save_path( save_path_c );
         std::string run_name( run_name_c );
 
         unsigned seed = 0;
         evaluation::EvaluationStats stats;
+
+        // Calculate dynamic block size based on simulations
+        uint32_t max_simulations = 800;
+        if ( p1.type == 1 ) max_simulations = std::max( max_simulations, p1.simulations_or_depth );
+        if ( p2.type == 1 ) max_simulations = std::max( max_simulations, p2.simulations_or_depth );
+
         if ( game_type == static_cast< int32_t >( GameType::TTT ) )
         {
-            auto f = evaluation::evaluate< ttt::Move, ttt::State,
-                                           ttt::alphazero::Player >;
-            stats = f( m1, m2, hp1, hp2, rounds, save_path, run_name, step,
+            auto f = evaluation::evaluate_matchup< ttt::Move, ttt::State,
+                                                   ttt::alphazero::Player >;
+            stats = f( game_type, p1, p2, rounds, save_path, run_name, step,
                        ttt::empty_state, seed,
-                       50 * std::max( hp1.simulations, hp2.simulations ) * sizeof( ttt::alphazero::Node ) );
+                       50 * max_simulations * sizeof( ttt::alphazero::Node ) );
         }
         else if ( game_type == static_cast< int32_t >( GameType::UTTT ) )
         {
-            auto f = evaluation::evaluate< uttt::Move, uttt::State,
-                                           uttt::alphazero::Player >;
-            stats = f( m1, m2, hp1, hp2, rounds, save_path, run_name, step,
+            auto f = evaluation::evaluate_matchup< uttt::Move, uttt::State,
+                                                   uttt::alphazero::Player >;
+            stats = f( game_type, p1, p2, rounds, save_path, run_name, step,
                        uttt::empty_state, seed,
-                       50 * std::max( hp1.simulations, hp2.simulations ) * sizeof( uttt::alphazero::Node ) );
-        }
-        else
-        {
-            throw std::runtime_error( "Unsupported game type" );
-        }
-
-        return { static_cast< uint32_t >( stats.wins_p1 ),
-                 static_cast< uint32_t >( stats.wins_p2 ),
-                 static_cast< uint32_t >( stats.draws ) };
-    }
-
-    evaluation::EvaluationStats
-    evaluate_against_minimax( int32_t game_type, const char* model1_data,
-                              uint32_t model1_len, libtorch::Hyperparameters const& hp,
-                              int32_t rounds, uint32_t minimax_depth, const char* save_path_c,
-                              const char* run_name_c, int32_t step )
-    {
-        std::string m1( model1_data, model1_len );
-        std::string save_path( save_path_c );
-        std::string run_name( run_name_c );
-
-        unsigned seed = 0;
-        evaluation::EvaluationStats stats;
-        if ( game_type == static_cast< int32_t >( GameType::TTT ) )
-        {
-            auto f = evaluation::evaluate_minimax< ttt::Move, ttt::State,
-                                                   ttt::alphazero::Player, ttt::minimax::Player >;
-            stats = f( m1, hp, rounds, minimax_depth, save_path, run_name, step,
-                       ttt::empty_state, seed,
-                       50 * hp.simulations * sizeof( ttt::alphazero::Node ) );
-        }
-        else if ( game_type == static_cast< int32_t >( GameType::UTTT ) )
-        {
-            auto f = evaluation::evaluate_minimax< uttt::Move, uttt::State,
-                                                   uttt::alphazero::Player, uttt::minimax::Player >;
-            stats = f( m1, hp, rounds, minimax_depth, save_path, run_name, step,
-                       uttt::empty_state, seed,
-                       50 * hp.simulations * sizeof( uttt::alphazero::Node ) );
-        }
-        else
-        {
-            throw std::runtime_error( "Unsupported game type" );
-        }
-
-        return { static_cast< uint32_t >( stats.wins_p1 ),
-                 static_cast< uint32_t >( stats.wins_p2 ),
-                 static_cast< uint32_t >( stats.draws ) };
-    }
-
-    evaluation::EvaluationStats
-    evaluate_minimax_vs_minimax( int32_t game_type, int32_t rounds,
-                                 uint32_t depth1, uint32_t depth2,
-                                 const char* save_path_c, const char* run_name_c,
-                                 int32_t step, int32_t parallel_games )
-    {
-        std::string save_path( save_path_c );
-        std::string run_name( run_name_c );
-
-        unsigned seed = 0;
-        evaluation::EvaluationStats stats;
-        if ( game_type == static_cast< int32_t >( GameType::TTT ) )
-        {
-            auto f = evaluation::evaluate_minimax_vs_minimax< ttt::Move, ttt::State,
-                                                             ttt::minimax::Player, ttt::minimax::Player >;
-            stats = f( rounds, depth1, depth2, save_path, run_name, step,
-                       ttt::empty_state, seed, parallel_games );
-        }
-        else if ( game_type == static_cast< int32_t >( GameType::UTTT ) )
-        {
-            auto f = evaluation::evaluate_minimax_vs_minimax< uttt::Move, uttt::State,
-                                                             uttt::minimax::Player, uttt::minimax::Player >;
-            stats = f( rounds, depth1, depth2, save_path, run_name, step,
-                       uttt::empty_state, seed, parallel_games );
+                       50 * max_simulations * sizeof( uttt::alphazero::Node ) );
         }
         else
         {

@@ -3,8 +3,7 @@ import json
 import torch
 import ctypes
 from train.utils import (
-    evaluate_models, evaluate_against_minimax_from_cpp,
-    evaluate_minimax_vs_minimax_from_cpp, Hyperparameters, GameType,
+    evaluate_matchup_from_cpp, MatchupPlayerConfig, Hyperparameters, GameType,
     create_inference_model_bundle
 )
 
@@ -105,91 +104,71 @@ def main():
     # 4. Dispatch Matchup
     p1 = eval_config['player1']
     p2 = eval_config['player2']
-    p1_type = p1['type'].lower()
-    p2_type = p2['type'].lower()
 
     rounds = eval_config.get('rounds', 100)
-    save_path = eval_config.get('save_path', 'test_eval_custom.json')
+    save_path = eval_config.get('save_path', 'temp/test_eval_custom.json')
     run_name = eval_config.get('run_name', 'custom_matchup')
     step = eval_config.get('step', 0)
-    parallel_games = eval_config.get('parallel_games', 10)
 
-    # MCTS vs MCTS Matchup
-    if p1_type == "mcts" and p2_type == "mcts":
-        model1_bytes = load_player_model_bytes(p1)
-        model2_bytes = load_player_model_bytes(p2)
-        
-        hp1 = make_hyperparameters(p1)
-        hp2 = make_hyperparameters(p2)
-        
-        print(f"Starting MCTS vs MCTS Matchup ({rounds} rounds)...")
-        res = evaluate_models(
-            None, alphazero_lib.evaluate_models, game_type,
-            model1_bytes, model2_bytes, hp1, hp2, rounds,
-            save_path, run_name, step
-        )
-        print("\n========================================")
-        print("Match Complete")
-        print("========================================")
-        print(f"Player 1 (MCTS: {p1.get('model_path')}) wins: {res.wins_p1}")
-        print(f"Player 2 (MCTS: {p2.get('model_path')}) wins: {res.wins_p2}")
-        print(f"Draws: {res.draws}")
-        print("========================================\n")
-
-    # Minimax vs Minimax Matchup
-    elif p1_type == "minimax" and p2_type == "minimax":
-        depth1 = p1.get('depth', 3)
-        depth2 = p2.get('depth', 3)
-        
-        print(f"Starting Minimax vs Minimax Matchup (Depth {depth1} vs Depth {depth2}, {rounds} rounds)...")
-        res = evaluate_minimax_vs_minimax_from_cpp(
-            None, alphazero_lib.evaluate_minimax_vs_minimax, game_type,
-            rounds, depth1, depth2, save_path, run_name, step, parallel_games
-        )
-        print("\n========================================")
-        print("Match Complete")
-        print("========================================")
-        print(f"Player 1 (Minimax Depth {depth1}) wins: {res.wins_p1}")
-        print(f"Player 2 (Minimax Depth {depth2}) wins: {res.wins_p2}")
-        print(f"Draws: {res.draws}")
-        print("========================================\n")
-
-    # MCTS vs Minimax / Minimax vs MCTS Matchup
-    elif (p1_type == "mcts" and p2_type == "minimax") or (p1_type == "minimax" and p2_type == "mcts"):
-        is_p1_mcts = (p1_type == "mcts")
-        mcts_player = p1 if is_p1_mcts else p2
-        minimax_player = p2 if is_p1_mcts else p1
-        
-        model_bytes = load_player_model_bytes(mcts_player)
-        hp = make_hyperparameters(mcts_player)
-        minimax_depth = minimax_player.get('depth', 3)
-        
-        print(f"Starting MCTS ({mcts_player.get('model_path')}) vs Minimax (Depth {minimax_depth}) Matchup ({rounds} rounds)...")
-        res = evaluate_against_minimax_from_cpp(
-            None, alphazero_lib.evaluate_against_minimax, game_type,
-            model_bytes, hp, rounds, minimax_depth, save_path, run_name, step
-        )
-        
-        # Handle result swapping so player 1 gets their mapped outcomes
-        if is_p1_mcts:
-            wins_p1 = res.wins_p1
-            wins_p2 = res.wins_p2
+    def build_matchup_player_config(p_cfg_dict):
+        p_type = p_cfg_dict.get('type', '').lower()
+        if p_type == "mcts":
+            t = 1
+            sims_or_depth = p_cfg_dict.get('simulations', DEFAULT_MCTS_PARAMS['simulations'])
+            model_bytes = load_player_model_bytes(p_cfg_dict)
+            hp_struct = make_hyperparameters(p_cfg_dict)
+        elif p_type in ("minimax", "standard_minimax"):
+            t = 2
+            sims_or_depth = p_cfg_dict.get('depth', 3)
+            model_bytes = b""
+            hp_struct = Hyperparameters(DEFAULT_MCTS_PARAMS)
+        elif p_type in ("tree_minimax", "tree", "treeminimax", "tree minimax"):
+            t = 3
+            sims_or_depth = p_cfg_dict.get('depth', 3)
+            model_bytes = b""
+            hp_struct = Hyperparameters(DEFAULT_MCTS_PARAMS)
         else:
-            wins_p1 = res.wins_p2
-            wins_p2 = res.wins_p1
-            
-        print("\n========================================")
-        print("Match Complete")
-        print("========================================")
-        p1_label = f"MCTS: {p1.get('model_path')}" if is_p1_mcts else f"Minimax Depth {p1.get('depth')}"
-        p2_label = f"Minimax Depth {p2.get('depth')}" if is_p1_mcts else f"MCTS: {p2.get('model_path')}"
-        print(f"Player 1 ({p1_label}) wins: {wins_p1}")
-        print(f"Player 2 ({p2_label}) wins: {wins_p2}")
-        print(f"Draws: {res.draws}")
-        print("========================================\n")
+            raise ValueError(f"Unknown player type: {p_type}")
 
-    else:
-        print(f"Unsupported matchup types: {p1_type} vs {p2_type}")
+        return MatchupPlayerConfig(
+            type=t,
+            simulations_or_depth=sims_or_depth,
+            model_data=model_bytes,
+            model_data_len=len(model_bytes),
+            hp=hp_struct
+        )
+
+    p1_cfg = build_matchup_player_config(p1)
+    p2_cfg = build_matchup_player_config(p2)
+
+    print(f"Starting Matchup: Player 1 (Type: {p1['type']}) vs Player 2 (Type: {p2['type']}) ({rounds} rounds)...")
+    
+    res = evaluate_matchup_from_cpp(
+        None, alphazero_lib.evaluate_matchup, game_type,
+        p1_cfg, p2_cfg, rounds, save_path, run_name, step
+    )
+    
+    print("\n========================================")
+    print("Match Complete")
+    print("========================================")
+    
+    def get_player_label(p, p_cfg):
+        ptype = p['type'].lower()
+        if ptype == "mcts":
+            return f"MCTS: {p.get('model_path')}"
+        elif ptype in ("minimax", "standard_minimax"):
+            return f"Minimax (Depth {p_cfg.simulations_or_depth})"
+        elif ptype in ("tree_minimax", "tree", "treeminimax", "tree minimax"):
+            return f"Tree Minimax (Depth {p_cfg.simulations_or_depth})"
+        return p['type']
+
+    p1_label = get_player_label(p1, p1_cfg)
+    p2_label = get_player_label(p2, p2_cfg)
+    
+    print(f"Player 1 ({p1_label}) wins: {res.wins_p1}")
+    print(f"Player 2 ({p2_label}) wins: {res.wins_p2}")
+    print(f"Draws: {res.draws}")
+    print("========================================\n")
 
 if __name__ == "__main__":
     torch.set_num_threads(2)

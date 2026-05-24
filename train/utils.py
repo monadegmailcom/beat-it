@@ -80,6 +80,17 @@ class Hyperparameters(ctypes.Structure):
             'nodes_per_block', default_nodes_per_block)
 
 
+class MatchupPlayerConfig(ctypes.Structure):
+    """Mirrors the MatchupPlayerConfig struct in C++ for data transfer."""
+    _fields_ = [
+        ("type", ctypes.c_int32),
+        ("simulations_or_depth", ctypes.c_uint32),
+        ("model_data", ctypes.c_char_p),
+        ("model_data_len", ctypes.c_uint32),
+        ("hp", Hyperparameters),
+    ]
+
+
 class TrainingHyperparameters(TypedDict):
     """A TypedDict to enforce the structure of training hyperparameters."""
     learning_rate: float
@@ -212,24 +223,20 @@ def fetch_selfplay_data_from_cpp(
     return data, stats
 
 
-def evaluate_models(session_handle, evaluate_func, game_type: GameType,
-                    model1_bytes: bytes, model2_bytes: bytes,
-                    hp1: Hyperparameters, hp2: Hyperparameters, rounds: int, save_path: str,
-                    run_name: str, step: int):
+def evaluate_matchup_from_cpp(session_handle, evaluate_func, game_type: GameType,
+                              p1_cfg: MatchupPlayerConfig, p2_cfg: MatchupPlayerConfig,
+                              rounds: int, save_path: str, run_name: str, step: int):
     """
-    Evaluates two models against each other.
+    Evaluates a matchup between two players using the unified C++ evaluate_matchup.
     """
     save_path_bytes = save_path.encode('utf-8')
     run_name_bytes = run_name.encode('utf-8')
     
-    # Define result type
     evaluate_func.restype = EvaluationResult
     evaluate_func.argtypes = [
          ctypes.c_int32, 
-         ctypes.c_char_p, ctypes.c_uint32,
-         ctypes.c_char_p, ctypes.c_uint32,
-         ctypes.POINTER(Hyperparameters),
-         ctypes.POINTER(Hyperparameters),
+         ctypes.POINTER(MatchupPlayerConfig),
+         ctypes.POINTER(MatchupPlayerConfig),
          ctypes.c_int32,
          ctypes.c_char_p,
          ctypes.c_char_p,
@@ -238,84 +245,12 @@ def evaluate_models(session_handle, evaluate_func, game_type: GameType,
     
     result = evaluate_func(
         game_type.value,
-        model1_bytes, len(model1_bytes),
-        model2_bytes, len(model2_bytes),
-        ctypes.byref(hp1),
-        ctypes.byref(hp2),
+        ctypes.byref(p1_cfg),
+        ctypes.byref(p2_cfg),
         rounds,
         save_path_bytes,
         run_name_bytes,
         step
-    )
-    
-    return result
-
-def evaluate_against_minimax_from_cpp(session_handle, evaluate_func, game_type: GameType,
-                                      model1_bytes: bytes,
-                                      hp: Hyperparameters, rounds: int, minimax_depth: int,
-                                      save_path: str, run_name: str, step: int):
-    """
-    Evaluates a model against the C++ Minimax player.
-    """
-    save_path_bytes = save_path.encode('utf-8')
-    run_name_bytes = run_name.encode('utf-8')
-    
-    evaluate_func.restype = EvaluationResult
-    evaluate_func.argtypes = [
-         ctypes.c_int32, 
-         ctypes.c_char_p, ctypes.c_uint32,
-         ctypes.POINTER(Hyperparameters),
-         ctypes.c_int32,
-         ctypes.c_uint32,
-         ctypes.c_char_p,
-         ctypes.c_char_p,
-         ctypes.c_int32
-    ]
-    
-    result = evaluate_func(
-        game_type.value,
-        model1_bytes, len(model1_bytes),
-        ctypes.byref(hp),
-        rounds,
-        minimax_depth,
-        save_path_bytes,
-        run_name_bytes,
-        step
-    )
-    return result
-
-
-def evaluate_minimax_vs_minimax_from_cpp(session_handle, evaluate_func, game_type: GameType,
-                                         rounds: int, depth1: int, depth2: int,
-                                         save_path: str, run_name: str, step: int,
-                                         parallel_games: int):
-    """
-    Evaluates two C++ Minimax players against each other.
-    """
-    save_path_bytes = save_path.encode('utf-8')
-    run_name_bytes = run_name.encode('utf-8')
-    
-    evaluate_func.restype = EvaluationResult
-    evaluate_func.argtypes = [
-         ctypes.c_int32, 
-         ctypes.c_int32,
-         ctypes.c_uint32,
-         ctypes.c_uint32,
-         ctypes.c_char_p,
-         ctypes.c_char_p,
-         ctypes.c_int32,
-         ctypes.c_int32
-    ]
-    
-    result = evaluate_func(
-        game_type.value,
-        rounds,
-        depth1,
-        depth2,
-        save_path_bytes,
-        run_name_bytes,
-        step,
-        parallel_games
     )
     return result
 

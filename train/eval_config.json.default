@@ -1,0 +1,23 @@
+{
+  "game_type": "uttt",
+  "rounds": 100,
+  "parallel_games": 10,
+  "save_path": "temp/test_eval_custom.json",
+  "run_name": "custom_matchup",
+  "step": 0,
+  "player1": {
+    "type": "mcts",
+    "model_path": "models/checkpoint_24_05.pt",
+    "simulations": 800,
+    "parallel_simulations": 2,
+    "c_base": 19652.0,
+    "c_init": 1.25,
+    "dirichlet_alpha": 0.3,
+    "dirichlet_epsilon": 0.25,
+    "opening_moves": 5
+  },
+  "player2": {
+    "type": "minimax",
+    "depth": 3
+  }
+}

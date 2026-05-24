@@ -1,0 +1,16 @@
+{
+  "game_type": "uttt",
+  "rounds": 100,
+  "parallel_games": 10,
+  "save_path": "temp/test_eval_temp.json",
+  "run_name": "temp_matchup",
+  "step": 0,
+  "player1": {
+    "type": "tree",
+    "depth": 7 
+  },
+  "player2": {
+    "type": "minimax",
+    "depth": 6 
+  }
+}

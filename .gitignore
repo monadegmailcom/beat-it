@@ -15,3 +15,4 @@ train/__pycache__
 .cache
 db.sqlite3
 train/eval_config.json
+temp/

@@ -47,6 +47,15 @@ struct Hyperparameters
     size_t nodes_per_block = 0;
 };
 
+struct MatchupPlayerConfig
+{
+    int32_t type; // 1: mcts, 2: minimax, 3: tree_minimax
+    uint32_t simulations_or_depth;
+    const char* model_data;
+    uint32_t model_data_len;
+    libtorch::Hyperparameters hp;
+};
+
 // promise: model is set to eval mode
 std::pair< std::unique_ptr< torch::jit::script::Module >, Hyperparameters >
 load_model( const char* model_path, torch::Device );

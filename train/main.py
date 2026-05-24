@@ -16,8 +16,8 @@ from .utils import (
     ReplayBuffer, set_model, fetch_selfplay_data_from_cpp, MetricLogger,
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
     DataPointers, split_and_add_data, GameType, CppStats,
-    train_buffer_metadata_file, Hyperparameters, evaluate_models,
-    pause_session, resume_session, check_and_merge_config
+    train_buffer_metadata_file, Hyperparameters, evaluate_matchup_from_cpp,
+    MatchupPlayerConfig, pause_session, resume_session, check_and_merge_config
 )
 
 scheduler_state_file = 'scheduler_state.pt'
@@ -334,8 +334,8 @@ if __name__ == '__main__':
             training_hyperparams=training_hyperparams
         )
 
-        c_evaluate_func = alphazero_lib.evaluate_models
-        # restype/argtypes are set inside evaluate_models wrapper
+        c_evaluate_func = alphazero_lib.evaluate_matchup
+        # restype/argtypes are set inside evaluate_matchup_from_cpp wrapper
 
         # Populate Hyperparameters struct
         hp = Hyperparameters(self_play_config)
@@ -639,13 +639,27 @@ if __name__ == '__main__':
                     
                     try:
                         eval_start = time.time()
-                        eval_result = evaluate_models(
+                        p1_cfg = MatchupPlayerConfig(
+                            type=1, # MCTS
+                            simulations_or_depth=hp_struct.simulations,
+                            model_data=current_model_bytes,
+                            model_data_len=len(current_model_bytes),
+                            hp=hp_struct
+                        )
+                        p2_cfg = MatchupPlayerConfig(
+                            type=1, # MCTS
+                            simulations_or_depth=hp_struct.simulations,
+                            model_data=prev_model_bytes,
+                            model_data_len=len(prev_model_bytes),
+                            hp=hp_struct
+                        )
+                        
+                        eval_result = evaluate_matchup_from_cpp(
                             None, # No session handle needed for eval
                             c_evaluate_func,
                             game_type,
-                            current_model_bytes,
-                            prev_model_bytes,
-                            hp_struct,
+                            p1_cfg,
+                            p2_cfg,
                             num_eval_games,
                             eval_log_path,
                             os.path.basename(log_dir),
