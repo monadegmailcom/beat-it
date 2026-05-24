@@ -1,4 +1,55 @@
 #!/bin/bash
+set -e
+
+# --- Determine storage paths based on environment ---
+# In TEST mode (local Mac via Lima/VirtioFS), all writes go to ephemeral /tmp
+# to bypass VirtioFS file-locking which breaks SQLite, TensorBoard, and torch.save.
+# /app/models (host-mounted read-only) is still used to SEED the starting checkpoint.
+# In PROD mode (RunPod), all writes go to the persistent mounted volumes.
+if [ "$ENV_TYPE" = "test" ]; then
+    export BASE_RUNS_DIR="/tmp/runs"
+    export BASE_MODELS_DIR="/tmp/models"
+    # Source of truth for initial checkpoints is still the read-only host mount
+    CHECKPOINT_SOURCE_DIR="/app/models"
+else
+    if [ -d "/workspace" ]; then
+        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/workspace/runs}"
+        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/workspace/models}"
+    else
+        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/app/runs}"
+        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
+    fi
+    CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
+fi
+
+mkdir -p "$BASE_RUNS_DIR"
+mkdir -p "$BASE_MODELS_DIR"
+
+# --- Dynamic Timestamp Logging ---
+# Prepend UTC/local timestamps to all output lines, logging to console and console_output.log
+log_with_timestamp() {
+    local log_file="$BASE_RUNS_DIR/console_output.log"
+    while IFS= read -r line || [ -n "$line" ]; do
+        local formatted="[$(date '+%Y-%m-%d %H:%M:%S')] $line"
+        echo "$formatted"
+        echo "$formatted" >> "$log_file"
+    done
+}
+
+# Redirect all subsequent stdout/stderr of this script and its subprocesses to the logging filter
+exec > >(log_with_timestamp) 2>&1
+
+# Now start printing info
+if [ "$ENV_TYPE" = "test" ]; then
+    echo "Running in TEST mode: writes go to ephemeral /tmp to bypass VirtioFS locking."
+else
+    if [ -d "/workspace" ]; then
+        echo "Running in PROD mode (RunPod): using persistent /workspace storage."
+    else
+        echo "Running in PROD mode: using persistent /app storage."
+    fi
+fi
+
 # --- Optional Self-Update ---
 # If AUTO_UPDATE=1 is set, pull latest code before doing anything else.
 # This avoids frequent Docker rebuilds for simple code changes.
@@ -8,8 +59,6 @@ if [ "$AUTO_UPDATE" = "1" ]; then
     git fetch --all
     git reset --hard origin/$(git rev-parse --abbrev-ref HEAD)
 fi
-
-set -e
 
 # Ensure virtual environment and library paths are active (critical for interactive SSH terminals)
 export PATH="/app/.venv/bin:$PATH"
@@ -21,33 +70,6 @@ cd /app
 
 # Default to port 6006 if not set
 TENSORBOARD_PORT=${TENSORBOARD_PORT:-6006}
-
-# --- Determine storage paths based on environment ---
-# In TEST mode (local Mac via Lima/VirtioFS), all writes go to ephemeral /tmp
-# to bypass VirtioFS file-locking which breaks SQLite, TensorBoard, and torch.save.
-# /app/models (host-mounted read-only) is still used to SEED the starting checkpoint.
-# In PROD mode (RunPod), all writes go to the persistent mounted volumes.
-if [ "$ENV_TYPE" = "test" ]; then
-    echo "Running in TEST mode: writes go to ephemeral /tmp to bypass VirtioFS locking."
-    export BASE_RUNS_DIR="/tmp/runs"
-    export BASE_MODELS_DIR="/tmp/models"
-    # Source of truth for initial checkpoints is still the read-only host mount
-    CHECKPOINT_SOURCE_DIR="/app/models"
-else
-    if [ -d "/workspace" ]; then
-        echo "Running in PROD mode (RunPod): using persistent /workspace storage."
-        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/workspace/runs}"
-        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/workspace/models}"
-    else
-        echo "Running in PROD mode: using persistent /app storage."
-        export BASE_RUNS_DIR="${BASE_RUNS_DIR:-/app/runs}"
-        export BASE_MODELS_DIR="${BASE_MODELS_DIR:-/app/models}"
-    fi
-    CHECKPOINT_SOURCE_DIR="${BASE_MODELS_DIR}"
-fi
-
-mkdir -p "$BASE_RUNS_DIR"
-mkdir -p "$BASE_MODELS_DIR"
 
 # --- Persistent Environment Loading ---
 # We source a .env file from the persistent runs directory. 
@@ -158,8 +180,8 @@ elif [ "$RUN_MODE" = "optuna" ]; then
 
     OPTUNA_MODE=${OPTUNA_MODE:-train}
     echo "Starting Optuna Hyperparameter Optimization in mode: $OPTUNA_MODE..."
-    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
+    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE
 else
     echo "Starting training (RUN_MODE=$RUN_MODE)..."
-    python -u -m train.main --game uttt $RESUME_ARGS 2>&1 | tee -a $BASE_RUNS_DIR/console_output.log
+    python -u -m train.main --game uttt $RESUME_ARGS
 fi
