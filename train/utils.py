@@ -184,13 +184,17 @@ def fetch_selfplay_data_from_cpp(
     inference_batch_size = CppStats()
     inference_time = CppStats()
     allocator_size = CppStats()
+    root_node_entropy = CppStats()
+    informed_selection = CppStats()
 
     fetch_data_func(
         session_handle, game_type, ctypes.byref(data_pointers), 
         number_of_positions, 
         ctypes.byref(inference_batch_size), 
         ctypes.byref(inference_time), 
-        ctypes.byref(allocator_size))
+        ctypes.byref(allocator_size),
+        ctypes.byref(root_node_entropy),
+        ctypes.byref(informed_selection))
 
     data = {
         "game_states": game_states,
@@ -201,14 +205,16 @@ def fetch_selfplay_data_from_cpp(
     stats = {
         "inference_batch_size": inference_batch_size,
         "inference_time": inference_time,
-        "allocator_size": allocator_size
+        "allocator_size": allocator_size,
+        "root_node_entropy": root_node_entropy,
+        "informed_selection": informed_selection
     }
     return data, stats
 
 
 def evaluate_models(session_handle, evaluate_func, game_type: GameType,
                     model1_bytes: bytes, model2_bytes: bytes,
-                    hp: Hyperparameters, rounds: int, save_path: str,
+                    hp1: Hyperparameters, hp2: Hyperparameters, rounds: int, save_path: str,
                     run_name: str, step: int):
     """
     Evaluates two models against each other.
@@ -223,6 +229,7 @@ def evaluate_models(session_handle, evaluate_func, game_type: GameType,
          ctypes.c_char_p, ctypes.c_uint32,
          ctypes.c_char_p, ctypes.c_uint32,
          ctypes.POINTER(Hyperparameters),
+         ctypes.POINTER(Hyperparameters),
          ctypes.c_int32,
          ctypes.c_char_p,
          ctypes.c_char_p,
@@ -233,7 +240,8 @@ def evaluate_models(session_handle, evaluate_func, game_type: GameType,
         game_type.value,
         model1_bytes, len(model1_bytes),
         model2_bytes, len(model2_bytes),
-        ctypes.byref(hp),
+        ctypes.byref(hp1),
+        ctypes.byref(hp2),
         rounds,
         save_path_bytes,
         run_name_bytes,
@@ -273,6 +281,41 @@ def evaluate_against_minimax_from_cpp(session_handle, evaluate_func, game_type: 
         save_path_bytes,
         run_name_bytes,
         step
+    )
+    return result
+
+
+def evaluate_minimax_vs_minimax_from_cpp(session_handle, evaluate_func, game_type: GameType,
+                                         rounds: int, depth1: int, depth2: int,
+                                         save_path: str, run_name: str, step: int,
+                                         parallel_games: int):
+    """
+    Evaluates two C++ Minimax players against each other.
+    """
+    save_path_bytes = save_path.encode('utf-8')
+    run_name_bytes = run_name.encode('utf-8')
+    
+    evaluate_func.restype = EvaluationResult
+    evaluate_func.argtypes = [
+         ctypes.c_int32, 
+         ctypes.c_int32,
+         ctypes.c_uint32,
+         ctypes.c_uint32,
+         ctypes.c_char_p,
+         ctypes.c_char_p,
+         ctypes.c_int32,
+         ctypes.c_int32
+    ]
+    
+    result = evaluate_func(
+        game_type.value,
+        rounds,
+        depth1,
+        depth2,
+        save_path_bytes,
+        run_name_bytes,
+        step,
+        parallel_games
     )
     return result
 
@@ -406,6 +449,8 @@ class MetricLogger:
         self.inference_batch_size_stats = CppStats()
         self.inference_time_stats = CppStats()
         self.allocator_size_stats = CppStats()
+        self.root_node_entropy_stats = CppStats()
+        self.informed_selection_stats = CppStats()
         
         # Setup custom scalars layout to group min/max/mean into single charts 
         # without creating separate "Runs"
@@ -426,6 +471,16 @@ class MetricLogger:
                     "Performance/Allocator_SizeBytes/max",
                     "Performance/Allocator_SizeBytes/mean",
                 ]],
+                "Root Node Entropy": ["Multiline", [
+                    "Performance/Root_Node_Entropy/min",
+                    "Performance/Root_Node_Entropy/max",
+                    "Performance/Root_Node_Entropy/mean",
+                ]],
+                "Informed Selection": ["Multiline", [
+                    "Performance/Informed_Selection/min",
+                    "Performance/Informed_Selection/max",
+                    "Performance/Informed_Selection/mean",
+                ]],
             }
         }
         self.writer.add_custom_scalars(layout)
@@ -440,6 +495,10 @@ class MetricLogger:
                     self.inference_time_stats = value
                 elif key == 'allocator_size':
                     self.allocator_size_stats = value
+                elif key == 'root_node_entropy':
+                    self.root_node_entropy_stats = value
+                elif key == 'informed_selection':
+                    self.informed_selection_stats = value
             else:
                 self.metrics[key] += value
                 self.counts[key] += 1
@@ -477,7 +536,9 @@ class MetricLogger:
         for stats, name in [
             (self.inference_batch_size_stats, 'Inference_Batch_Size'),
             (self.inference_time_stats, 'Inference_Time_us'),
-            (self.allocator_size_stats, 'Allocator_SizeBytes')
+            (self.allocator_size_stats, 'Allocator_SizeBytes'),
+            (self.root_node_entropy_stats, 'Root_Node_Entropy'),
+            (self.informed_selection_stats, 'Informed_Selection')
         ]:
             self.writer.add_scalar(f'Performance/{name}/min', stats.min, step)
             self.writer.add_scalar(f'Performance/{name}/max', stats.max, step)

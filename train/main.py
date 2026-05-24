@@ -313,6 +313,7 @@ if __name__ == '__main__':
             ctypes.c_void_p, ctypes.c_int32, ctypes.POINTER(DataPointers),
             ctypes.c_uint32,
             ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
+            ctypes.POINTER(CppStats), ctypes.POINTER(CppStats),
             ctypes.POINTER(CppStats)
         ]
 
@@ -487,7 +488,9 @@ if __name__ == '__main__':
                 selfplay_time_ms=fetch_duration * 1000,
                 inference_batch_size=stats['inference_batch_size'],
                 inference_time=stats['inference_time'],
-                allocator_size=stats['allocator_size']
+                allocator_size=stats['allocator_size'],
+                root_node_entropy=stats['root_node_entropy'],
+                informed_selection=stats['informed_selection']
             )
 
             if (step + 1) % training_hyperparams['log_freq_steps'] == 0:

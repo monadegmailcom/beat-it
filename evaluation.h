@@ -108,7 +108,7 @@ class RecordingMatch : public MultiMatch< MoveT, StateT >
 template < typename MoveT, typename StateT, typename PlayerT >
 EvaluationStats
 evaluate( std::string const& model1_data, std::string const& model2_data,
-          libtorch::Hyperparameters const& hp, int rounds,
+          libtorch::Hyperparameters const& hp1, libtorch::Hyperparameters const& hp2, int rounds,
           std::string const& save_path, std::string const& run_name, int step,
           StateT const& initial_state, unsigned seed, unsigned block_size )
 {
@@ -138,9 +138,9 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
         libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;
     std::cout << "Creating inference services..." << std::endl;
     inference_service service1( std::move( model1 ), device,
-                                hp.max_batch_size );
+                                hp1.max_batch_size );
     inference_service service2( std::move( model2 ), device,
-                                hp.max_batch_size );
+                                hp2.max_batch_size );
 
     // wait for inference workers to start up.
     std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
@@ -151,9 +151,9 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
                          GenerationalArenaAllocator* allocator )
         -> std::unique_ptr< PlayerT >
     {
-        alphazero::params::Ucb ucb{ hp.c_base, hp.c_init };
-        alphazero::params::GamePlay gp{ hp.simulations, hp.opening_moves,
-                                        hp.parallel_simulations };
+        alphazero::params::Ucb ucb{ hp1.c_base, hp1.c_init };
+        alphazero::params::GamePlay gp{ hp1.simulations, hp1.opening_moves,
+                                        hp1.parallel_simulations };
 
         return std::make_unique< PlayerT >( g, ucb, gp, seed, *allocator,
                                             service1 );
@@ -163,9 +163,9 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
                          GenerationalArenaAllocator* allocator )
         -> std::unique_ptr< PlayerT >
     {
-        alphazero::params::Ucb ucb{ hp.c_base, hp.c_init };
-        alphazero::params::GamePlay gp{ hp.simulations, hp.opening_moves,
-                                        hp.parallel_simulations };
+        alphazero::params::Ucb ucb{ hp2.c_base, hp2.c_init };
+        alphazero::params::GamePlay gp{ hp2.simulations, hp2.opening_moves,
+                                        hp2.parallel_simulations };
 
         return std::make_unique< PlayerT >( g, ucb, gp, seed, *allocator,
                                             service2 );
@@ -177,8 +177,22 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
     Game< MoveT, StateT > game( PlayerIndex::Player1, initial_state );
     RecordingMatch< MoveT, StateT > match(
         game, factory1, factory2, allocator_factory, rounds,
-        hp.parallel_games, seed, save_path, metadata );
+        std::max( hp1.parallel_games, hp2.parallel_games ), seed, save_path, metadata );
     match.run();
+
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "Model 1 Inference Timing & Batch Statistics:" << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+    std::cout << "Batch Size Stats:      " << service1.batch_size_stats() << std::endl;
+    std::cout << "Inference Time (μs):   " << service1.inference_time_stats() << std::endl;
+    std::cout << "========================================\n" << std::endl;
+
+    std::cout << "========================================" << std::endl;
+    std::cout << "Model 2 Inference Timing & Batch Statistics:" << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+    std::cout << "Batch Size Stats:      " << service2.batch_size_stats() << std::endl;
+    std::cout << "Inference Time (μs):   " << service2.inference_time_stats() << std::endl;
+    std::cout << "========================================\n" << std::endl;
 
     return { match.get_fst_player_wins(), match.get_snd_player_wins(),
              match.get_draws() };
@@ -222,7 +236,7 @@ evaluate_minimax( std::string const& model1_data,
 
     auto factory1 = [&]( game_type const& g, unsigned seed,
                          GenerationalArenaAllocator* allocator )
-        -> std::unique_ptr< ::Player< MoveT > >
+        -> std::unique_ptr< PlayerT >
     {
         alphazero::params::Ucb ucb{ hp.c_base, hp.c_init };
         alphazero::params::GamePlay gp{ hp.simulations, hp.opening_moves,
@@ -233,7 +247,7 @@ evaluate_minimax( std::string const& model1_data,
     };
 
     auto factory2 = [&]( game_type const& g, unsigned seed,
-                         GenerationalArenaAllocator* allocator )
+                         GenerationalArenaAllocator* )
         -> std::unique_ptr< ::Player< MoveT > >
     {
         if constexpr ( std::is_same_v< StateT, uttt::State > )
@@ -253,6 +267,70 @@ evaluate_minimax( std::string const& model1_data,
     RecordingMatch< MoveT, StateT > match(
         game, factory1, factory2, allocator_factory, rounds,
         hp.parallel_games, seed, save_path, metadata );
+    match.run();
+
+    std::cout << "\n========================================" << std::endl;
+    std::cout << "Model 1 Inference Timing & Batch Statistics:" << std::endl;
+    std::cout << "----------------------------------------" << std::endl;
+    std::cout << "Batch Size Stats:      " << service1.batch_size_stats() << std::endl;
+    std::cout << "Inference Time (μs):   " << service1.inference_time_stats() << std::endl;
+    std::cout << "========================================\n" << std::endl;
+
+    return { match.get_fst_player_wins(), match.get_snd_player_wins(),
+             match.get_draws() };
+}
+
+template < typename MoveT, typename StateT, typename MinimaxPlayerT1, typename MinimaxPlayerT2 >
+EvaluationStats
+evaluate_minimax_vs_minimax( int rounds, unsigned depth1, unsigned depth2,
+          std::string const& save_path, std::string const& run_name, int step,
+          StateT const& initial_state, unsigned seed, int parallel_games )
+{
+    using namespace std;
+
+    // Setup metadata
+    boost::json::object metadata;
+    metadata["run_name"] = run_name;
+    metadata["step"] = step;
+    metadata["model1"] = "minimax_depth_" + to_string(depth1);
+    metadata["model2"] = "minimax_depth_" + to_string(depth2);
+
+    using game_type = Game< MoveT, StateT >;
+
+    std::cout << "Running Minimax (Depth " << depth1 << ") vs Minimax (Depth " << depth2 << ")..." << std::endl;
+
+    auto factory1 = [&]( game_type const& g, unsigned seed,
+                         GenerationalArenaAllocator* )
+        -> std::unique_ptr< ::Player< MoveT > >
+    {
+        if constexpr ( std::is_same_v< StateT, uttt::State > )
+        {
+            return std::make_unique< MinimaxPlayerT1 >( g, 9.0, depth1, seed );
+        }
+        else
+        {
+            return std::make_unique< MinimaxPlayerT1 >( g, depth1, seed );
+        }
+    };
+
+    auto factory2 = [&]( game_type const& g, unsigned seed,
+                         GenerationalArenaAllocator* )
+        -> std::unique_ptr< ::Player< MoveT > >
+    {
+        if constexpr ( std::is_same_v< StateT, uttt::State > )
+        {
+            return std::make_unique< MinimaxPlayerT2 >( g, 9.0, depth2, seed );
+        }
+        else
+        {
+            return std::make_unique< MinimaxPlayerT2 >( g, depth2, seed );
+        }
+    };
+
+    Game< MoveT, StateT > game( PlayerIndex::Player1, initial_state );
+    RecordingMatch< MoveT, StateT > match(
+        game, factory1, factory2, [] { return nullptr; }, rounds,
+        parallel_games, seed, save_path, metadata );
     match.run();
 
     return { match.get_fst_player_wins(), match.get_snd_player_wins(),
