@@ -184,15 +184,18 @@ class InferenceService : public inference::Service< G, P >
             // set mode to no model training, seems to have affect on the
             // memory handling. if not set, crashes with mps gpu.
             c10::InferenceMode guard;
-            // the actual inference step.
+            // Pass the full static-sized tensor to guarantee O(1) graph execution
+            // and prevent cuDNN benchmarking overhead. The garbage in the padding
+            // area won't affect the valid batch_size outputs because the model
+            // is in eval() mode.
             torch::jit::IValue output_ivalue =
-                model->forward( { gpu_input_view } );
+                model->forward( { gpu_input_tensor } );
 
             // copy data back to cpu.
             auto output_tuple = output_ivalue.toTuple();
 
-            auto gpu_value_batch = output_tuple->elements()[0].toTensor();
-            auto gpu_policy_batch = output_tuple->elements()[1].toTensor();
+            auto gpu_value_batch = output_tuple->elements()[0].toTensor().narrow( 0, 0, batch_size );
+            auto gpu_policy_batch = output_tuple->elements()[1].toTensor().narrow( 0, 0, batch_size );
 
             cpu_value_view = cpu_value_tensor.narrow( 0, 0, batch_size );
             cpu_policy_view = cpu_policy_tensor.narrow( 0, 0, batch_size );
