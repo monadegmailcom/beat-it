@@ -61,7 +61,7 @@ class MultiMatch : public ::Match< MoveT, StateT >
                 PlayerFactory< MoveT, StateT > snd_player_factory,
                 AllocatorFactory allocator_factory, int rounds,
                 size_t number_of_threads, unsigned seed )
-        : rounds( rounds ), g( seed ), game( game ),
+        : total_rounds( rounds ), rounds( rounds ), completed_games( 0 ), g( seed ), game( game ),
           fst_player_factory( fst_player_factory ),
           snd_player_factory( snd_player_factory ),
           allocator_factory( allocator_factory ),
@@ -71,6 +71,7 @@ class MultiMatch : public ::Match< MoveT, StateT >
 
     void run()
     {
+        std::cout << "\rEvaluation games remaining: " << total_rounds << "   " << std::endl;
         std::vector< std::thread > threads( number_of_threads );
         for ( std::thread &thread : threads )
             thread = std::thread( [this]() { worker(); } );
@@ -160,8 +161,9 @@ class MultiMatch : public ::Match< MoveT, StateT >
             current_starter_index = toggle( current_starter_index );
 
             // Print progress
-            int remaining = rounds.load( std::memory_order_relaxed );
-            std::cout << "\rEvaluation games remaining: " << remaining << "   " << std::flush;
+            int completed = ++completed_games;
+            int remaining = total_rounds - completed;
+            std::cout << "\rEvaluation games remaining: " << std::max( 0, remaining ) << "   " << std::endl;
         }
 
         std::lock_guard< std::mutex > lock( mutex );
@@ -174,7 +176,9 @@ class MultiMatch : public ::Match< MoveT, StateT >
     }
 
     mutable std::mutex mutex;
+    int total_rounds;
     std::atomic< int > rounds;
+    std::atomic< int > completed_games;
     std::mt19937 g;
     size_t draws = 0;
     size_t fst_player_wins = 0;

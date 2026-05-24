@@ -184,4 +184,79 @@ evaluate( std::string const& model1_data, std::string const& model2_data,
              match.get_draws() };
 }
 
+template < typename MoveT, typename StateT, typename PlayerT, typename MinimaxPlayerT >
+EvaluationStats
+evaluate_minimax( std::string const& model1_data,
+          libtorch::Hyperparameters const& hp, int rounds, unsigned minimax_depth,
+          std::string const& save_path, std::string const& run_name, int step,
+          StateT const& initial_state, unsigned seed, unsigned block_size )
+{
+    using namespace std;
+
+    // Setup metadata
+    boost::json::object metadata;
+    metadata["run_name"] = run_name;
+    metadata["step"] = step;
+    metadata["model1"] = "current";
+    metadata["model2"] = "minimax";
+
+    torch::Device device = libtorch::get_device();
+    auto make_buf = []( const string& s )
+    { return libtorch::DataBuffer{ s.data(), (uint32_t)s.size() }; };
+
+    std::cout << "Loading model into C++..." << std::endl;
+    auto model1 = libtorch::load_model( make_buf( model1_data ), device );
+
+    using game_type = Game< MoveT, StateT >;
+    using inference_service =
+        libtorch::InferenceService< PlayerT::game_size, PlayerT::policy_size >;
+    
+    std::cout << "Creating inference service..." << std::endl;
+    inference_service service1( std::move( model1 ), device,
+                                hp.max_batch_size );
+
+    // wait for inference workers to start up.
+    std::this_thread::sleep_for( std::chrono::milliseconds( 100 ) );
+
+    std::cout << "Running match against Minimax (Depth " << minimax_depth << ")..." << std::endl;
+
+    auto factory1 = [&]( game_type const& g, unsigned seed,
+                         GenerationalArenaAllocator* allocator )
+        -> std::unique_ptr< ::Player< MoveT > >
+    {
+        alphazero::params::Ucb ucb{ hp.c_base, hp.c_init };
+        alphazero::params::GamePlay gp{ hp.simulations, hp.opening_moves,
+                                        hp.parallel_simulations };
+
+        return std::make_unique< PlayerT >( g, ucb, gp, seed, *allocator,
+                                            service1 );
+    };
+
+    auto factory2 = [&]( game_type const& g, unsigned seed,
+                         GenerationalArenaAllocator* allocator )
+        -> std::unique_ptr< ::Player< MoveT > >
+    {
+        if constexpr ( std::is_same_v< StateT, uttt::State > )
+        {
+            return std::make_unique< MinimaxPlayerT >( g, 9.0, minimax_depth, seed );
+        }
+        else
+        {
+            return std::make_unique< MinimaxPlayerT >( g, minimax_depth, seed );
+        }
+    };
+
+    auto allocator_factory = [block_size]()
+    { return make_unique< GenerationalArenaAllocator >( block_size ); };
+
+    Game< MoveT, StateT > game( PlayerIndex::Player1, initial_state );
+    RecordingMatch< MoveT, StateT > match(
+        game, factory1, factory2, allocator_factory, rounds,
+        hp.parallel_games, seed, save_path, metadata );
+    match.run();
+
+    return { match.get_fst_player_wins(), match.get_snd_player_wins(),
+             match.get_draws() };
+}
+
 } // namespace evaluation

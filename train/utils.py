@@ -242,6 +242,40 @@ def evaluate_models(session_handle, evaluate_func, game_type: GameType,
     
     return result
 
+def evaluate_against_minimax_from_cpp(session_handle, evaluate_func, game_type: GameType,
+                                      model1_bytes: bytes,
+                                      hp: Hyperparameters, rounds: int, minimax_depth: int,
+                                      save_path: str, run_name: str, step: int):
+    """
+    Evaluates a model against the C++ Minimax player.
+    """
+    save_path_bytes = save_path.encode('utf-8')
+    run_name_bytes = run_name.encode('utf-8')
+    
+    evaluate_func.restype = EvaluationResult
+    evaluate_func.argtypes = [
+         ctypes.c_int32, 
+         ctypes.c_char_p, ctypes.c_uint32,
+         ctypes.POINTER(Hyperparameters),
+         ctypes.c_int32,
+         ctypes.c_uint32,
+         ctypes.c_char_p,
+         ctypes.c_char_p,
+         ctypes.c_int32
+    ]
+    
+    result = evaluate_func(
+        game_type.value,
+        model1_bytes, len(model1_bytes),
+        ctypes.byref(hp),
+        rounds,
+        minimax_depth,
+        save_path_bytes,
+        run_name_bytes,
+        step
+    )
+    return result
+
 
 def pause_session(session_handle, alphazero_lib, game_type):
     if not session_handle:
