@@ -14,7 +14,7 @@
         "weight_decay": 1e-4,
         "batch_size": 1024,
         "log_freq_steps": 100,
-        "total_training_steps": 200000,
+        "total_training_steps": 2000000,
         "model_update_freq_steps": 1000,
         "checkpoint_freq_steps": 1000,
         "replay_buffer_size": 200000,

@@ -82,7 +82,7 @@ def main():
     from .utils import Hyperparameters
     hp = Hyperparameters(config["self_play_config"])
     session_handle = alphazero_lib.create_session(game_type.value, model_buffer, len(model_buffer), ctypes.byref(hp))
-    replay_buffer = ReplayBuffer(10000, G_SIZE, P_SIZE, device)
+    replay_buffer = ReplayBuffer(200000, G_SIZE, P_SIZE, device)
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
 
     print(f"\n--- Running Performance Test: Mode {args.mode.upper()} ---")
