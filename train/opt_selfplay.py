@@ -100,7 +100,7 @@ def measure_throughput_with_training(
     model.train()
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    replay_buffer = ReplayBuffer(capacity=40000)
+    replay_buffer = ReplayBuffer(40000, game_module.G_SIZE, game_module.P_SIZE, device)
 
     # Initialize C++ session
     c_create_session = alphazero_lib.create_session
