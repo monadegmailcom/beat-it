@@ -72,44 +72,63 @@ class InferenceService : public inference::Service< G, P >
 {
   public:
     using service_type = inference::Service< G, P >;
-    InferenceService( std::unique_ptr< torch::jit::script::Module >&& model,
+    InferenceService( std::unique_ptr< torch::jit::script::Module >&& base_model,
                       torch::Device device, size_t max_batch_size )
-        : service_type( max_batch_size ), device( device ),
-          model( std::move( model ) )
+        : service_type( max_batch_size, device.type() == torch::kCUDA ? std::max<size_t>(1, torch::cuda::device_count()) : 1 )
     {
+        size_t num_workers = device.type() == torch::kCUDA ? std::max<size_t>(1, torch::cuda::device_count()) : 1;
+        
         auto cpu_options = torch::TensorOptions().dtype( torch::kFloat32 );
         if ( device.type() == torch::kCUDA )
         {
             cpu_options = cpu_options.pinned_memory( true );
         }
-        cpu_input_tensor = torch::empty(
-            { static_cast< long >( max_batch_size ), static_cast< long >( G ) },
-            cpu_options );
+        
+        for ( size_t i = 0; i < num_workers; ++i )
+        {
+            torch::Device worker_device = device;
+            if ( device.type() == torch::kCUDA )
+                worker_device = torch::Device(torch::kCUDA, i);
 
-        auto gpu_options =
-            torch::TensorOptions().device( device ).dtype( torch::kFloat32 );
-        gpu_input_tensor = torch::empty(
-            { static_cast< long >( max_batch_size ), static_cast< long >( G ) },
-            gpu_options );
+            auto worker = std::make_unique<WorkerState>(worker_device);
+            worker->model = std::make_unique<torch::jit::script::Module>(base_model->clone());
+            worker->model->to(worker_device);
 
-        cpu_value_tensor = torch::empty(
-            { static_cast< long >( max_batch_size ), 1 }, cpu_options );
-        cpu_policy_tensor = torch::empty(
-            { static_cast< long >( max_batch_size ), static_cast< long >( P ) },
-            cpu_options );
+            worker->cpu_input_tensor = torch::empty(
+                { static_cast< long >( max_batch_size ), static_cast< long >( G ) },
+                cpu_options );
+
+            auto gpu_options =
+                torch::TensorOptions().device( worker_device ).dtype( torch::kFloat32 );
+            worker->gpu_input_tensor = torch::empty(
+                { static_cast< long >( max_batch_size ), static_cast< long >( G ) },
+                gpu_options );
+
+            worker->cpu_value_tensor = torch::empty(
+                { static_cast< long >( max_batch_size ), 1 }, cpu_options );
+            worker->cpu_policy_tensor = torch::empty(
+                { static_cast< long >( max_batch_size ), static_cast< long >( P ) },
+                cpu_options );
+                
+            workers.push_back(std::move(worker));
+        }
     }
 
     ~InferenceService()
     {
-        if ( device.type() == torch::kCUDA )
+        for ( auto& worker : workers )
         {
-            torch::cuda::synchronize();
-        }
-        else if ( device.type() == torch::kMPS )
-        {
+            if ( worker->device.type() == torch::kCUDA )
+            {
+                // Synchronize on the specific device
+                torch::cuda::synchronize(worker->device.index());
+            }
+            else if ( worker->device.type() == torch::kMPS )
+            {
 #ifdef __APPLE__
-            torch::mps::synchronize();
+                torch::mps::synchronize();
 #endif
+            }
         }
     }
 
@@ -119,29 +138,58 @@ class InferenceService : public inference::Service< G, P >
                   Statistics& batch_size_stats,
                   Statistics& inference_time_stats )
     {
-        std::scoped_lock _( model_update_mutex );
-        model = std::move( new_model );
-        batch_size_stats_ = batch_size_stats;
-        inference_time_stats_ = inference_time_stats;
-        reset_stats();
+        for ( auto& worker : workers )
+        {
+            std::scoped_lock _( worker->model_update_mutex );
+            worker->model = std::make_unique<torch::jit::script::Module>(new_model->clone());
+            worker->model->to(worker->device);
+        }
+
+        batch_size_stats = Statistics();
+        inference_time_stats = Statistics();
+        
+        for ( auto& worker : workers )
+        {
+            std::scoped_lock _( worker->model_update_mutex );
+            batch_size_stats.join( worker->batch_size_stats_ );
+            inference_time_stats.join( worker->inference_time_stats_ );
+            worker->batch_size_stats_.reset();
+            worker->inference_time_stats_.reset();
+        }
     }
 
     Statistics const& batch_size_stats() const noexcept
     {
-        std::scoped_lock _( model_update_mutex );
-        return batch_size_stats_;
+        std::scoped_lock _( aggregated_stats_mutex );
+        aggregated_batch_size_stats_ = Statistics();
+        for ( auto& worker : workers )
+        {
+            std::scoped_lock _( worker->model_update_mutex );
+            aggregated_batch_size_stats_.join( worker->batch_size_stats_ );
+        }
+        return aggregated_batch_size_stats_;
     }
 
     Statistics const& inference_time_stats() const noexcept
     {
-        return inference_time_stats_;
+        std::scoped_lock _( aggregated_stats_mutex );
+        aggregated_inference_time_stats_ = Statistics();
+        for ( auto& worker : workers )
+        {
+            std::scoped_lock _( worker->model_update_mutex );
+            aggregated_inference_time_stats_.join( worker->inference_time_stats_ );
+        }
+        return aggregated_inference_time_stats_;
     }
 
     // not thread-safe.
     void reset_stats() noexcept
     {
-        batch_size_stats_.reset();
-        inference_time_stats_.reset();
+        for ( auto& worker : workers )
+        {
+            worker->batch_size_stats_.reset();
+            worker->inference_time_stats_.reset();
+        }
     }
 
     void pause_inference()
@@ -155,10 +203,12 @@ class InferenceService : public inference::Service< G, P >
     }
 
   private:
-    void inference( service_type::request_type request_batch[],
+    void inference( size_t worker_id, service_type::request_type request_batch[],
                     service_type::response_type response_batch[],
                     size_t batch_size ) override
     {
+        auto& worker = workers[worker_id];
+
         // Gracefully yield the GPU if Python requested a pause for PyTorch training
         while (inference_paused.load(std::memory_order_acquire))
         {
@@ -167,21 +217,19 @@ class InferenceService : public inference::Service< G, P >
 
         // Lock the module while running inference to prevent it from being
         // replaced by an update call from another thread mid-operation.
-        std::scoped_lock _( model_update_mutex );
+        std::scoped_lock _( worker->model_update_mutex );
 
         // serialize inference on mps device to prevent metal command buffer
         // commit errors.
         std::unique_lock< std::mutex > mps_lock;
-        if ( device.type() == torch::kMPS )
+        if ( worker->device.type() == torch::kMPS )
             mps_lock = std::unique_lock< std::mutex >( get_mps_mutex() );
 
         std::chrono::steady_clock::time_point start =
             std::chrono::steady_clock::now();
 
         // copy data to cpu tensor.
-        // note: gemini suggests to first copy data to cpu tensor and then move
-        // it to gpu tensor. it is not entirely clear to my, why.
-        auto cpu_input_view = cpu_input_tensor.narrow( 0, 0, batch_size );
+        auto cpu_input_view = worker->cpu_input_tensor.narrow( 0, 0, batch_size );
         float* tensor_data_ptr = cpu_input_view.template data_ptr< float >();
         for ( size_t i = 0; i < batch_size; ++i )
         {
@@ -193,15 +241,14 @@ class InferenceService : public inference::Service< G, P >
         torch::Tensor cpu_policy_view;
 
         {
-            auto gpu_input_view = gpu_input_tensor.narrow( 0, 0, batch_size );
+            auto gpu_input_view = worker->gpu_input_tensor.narrow( 0, 0, batch_size );
             // copy data to gpu asynchronously.
             gpu_input_view.copy_( cpu_input_view, true );
 
-            // set mode to no model training, seems to have affect on the
-            // memory handling. if not set, crashes with mps gpu.
+            // set mode to no model training
             c10::InferenceMode guard;
             torch::jit::IValue output_ivalue =
-                model->forward( { gpu_input_view } );
+                worker->model->forward( { gpu_input_view } );
 
             auto output_tuple = output_ivalue.toTuple();
             auto gpu_value_batch =
@@ -209,8 +256,8 @@ class InferenceService : public inference::Service< G, P >
             auto gpu_policy_batch =
                 output_tuple->elements()[1].toTensor();
 
-            cpu_value_view = cpu_value_tensor.narrow( 0, 0, batch_size );
-            cpu_policy_view = cpu_policy_tensor.narrow( 0, 0, batch_size );
+            cpu_value_view = worker->cpu_value_tensor.narrow( 0, 0, batch_size );
+            cpu_policy_view = worker->cpu_policy_tensor.narrow( 0, 0, batch_size );
             cpu_value_view.copy_( gpu_value_batch, true );
             cpu_policy_view.copy_( gpu_policy_batch, true );
         }
@@ -219,9 +266,9 @@ class InferenceService : public inference::Service< G, P >
                                   std::chrono::steady_clock::now() - start ) /
                               batch_size;
 
-        inference_time_stats_.update(
+        worker->inference_time_stats_.update(
             static_cast< size_t >( duration.count() ) );
-        batch_size_stats_.update( batch_size );
+        worker->batch_size_stats_.update( batch_size );
 
         // copy data from cpu tensor to response structures.
         for ( size_t i = 0; i < batch_size; ++i )
@@ -237,15 +284,24 @@ class InferenceService : public inference::Service< G, P >
         }
     }
 
-    torch::Device device;
-    std::unique_ptr< torch::jit::script::Module > model;
-    torch::Tensor cpu_input_tensor;
-    torch::Tensor gpu_input_tensor;
-    torch::Tensor cpu_value_tensor;
-    torch::Tensor cpu_policy_tensor;
-    mutable std::mutex model_update_mutex;
-    Statistics batch_size_stats_;
-    Statistics inference_time_stats_;
+    struct WorkerState {
+        torch::Device device;
+        std::unique_ptr<torch::jit::script::Module> model;
+        torch::Tensor cpu_input_tensor;
+        torch::Tensor gpu_input_tensor;
+        torch::Tensor cpu_value_tensor;
+        torch::Tensor cpu_policy_tensor;
+        Statistics batch_size_stats_;
+        Statistics inference_time_stats_;
+        mutable std::mutex model_update_mutex;
+        
+        WorkerState(torch::Device d) : device(d) {}
+    };
+    
+    std::vector<std::unique_ptr<WorkerState>> workers;
+    mutable std::mutex aggregated_stats_mutex;
+    mutable Statistics aggregated_batch_size_stats_;
+    mutable Statistics aggregated_inference_time_stats_;
     std::atomic<bool> inference_paused{false};
 };
 
