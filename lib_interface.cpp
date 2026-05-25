@@ -145,6 +145,16 @@ template < typename PlayerT > struct Session
         statistic_to_cpp_stat( inference_time_stat, inference_time );
     }
 
+    void pause_inference()
+    {
+        inference_service.pause_inference();
+    }
+
+    void resume_inference()
+    {
+        inference_service.resume_inference();
+    }
+
     void fetch_selfplay_data( DataPointers& data_pointers_out,
                               uint32_t number_of_positions )
     {
@@ -461,6 +471,26 @@ extern "C"
             static_cast< ttt_session_type* >( session )->resume();
         else if ( game_type == GameType::UTTT )
             static_cast< uttt_session_type* >( session )->resume();
+    }
+
+    void pause_inference( void* session, GameType game_type )
+    {
+        if ( !session )
+            return;
+        if ( game_type == GameType::TTT )
+            static_cast< ttt_session_type* >( session )->pause_inference();
+        else if ( game_type == GameType::UTTT )
+            static_cast< uttt_session_type* >( session )->pause_inference();
+    }
+
+    void resume_inference( void* session, GameType game_type )
+    {
+        if ( !session )
+            return;
+        if ( game_type == GameType::TTT )
+            static_cast< ttt_session_type* >( session )->resume_inference();
+        else if ( game_type == GameType::UTTT )
+            static_cast< uttt_session_type* >( session )->resume_inference();
     }
 
 } // extern "C"

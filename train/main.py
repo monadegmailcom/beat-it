@@ -17,7 +17,8 @@ from .utils import (
     TrainingHyperparameters, create_inference_model_bundle, save_checkpoint,
     DataPointers, split_and_add_data, GameType, CppStats,
     train_buffer_metadata_file, Hyperparameters, evaluate_matchup_from_cpp,
-    MatchupPlayerConfig, pause_session, resume_session, check_and_merge_config
+    MatchupPlayerConfig, pause_session, resume_session, check_and_merge_config,
+    pause_inference, resume_inference
 )
 
 scheduler_state_file = 'scheduler_state.pt'
@@ -463,6 +464,10 @@ if __name__ == '__main__':
             model.train()
             start_time = time.time()
 
+            # Pause C++ inference completely and drain the queue to ensure PyTorch gets 100% of the GPU
+            pause_inference(session_handle, alphazero_lib, game_type)
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+
             batch_states, batch_target_policies, batch_target_values = \
                 replay_buffer.sample(training_hyperparams['batch_size'])
 
@@ -478,6 +483,10 @@ if __name__ == '__main__':
             loss.backward()
             optimizer.step()
             scheduler.step()  # Update the learning rate
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            resume_inference(session_handle, alphazero_lib, game_type)
+
             duration = time.time() - start_time
 
             logger.update(

@@ -144,11 +144,27 @@ class InferenceService : public inference::Service< G, P >
         inference_time_stats_.reset();
     }
 
+    void pause_inference()
+    {
+        inference_paused.store(true, std::memory_order_release);
+    }
+
+    void resume_inference()
+    {
+        inference_paused.store(false, std::memory_order_release);
+    }
+
   private:
     void inference( service_type::request_type request_batch[],
                     service_type::response_type response_batch[],
                     size_t batch_size ) override
     {
+        // Gracefully yield the GPU if Python requested a pause for PyTorch training
+        while (inference_paused.load(std::memory_order_acquire))
+        {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+
         // Lock the module while running inference to prevent it from being
         // replaced by an update call from another thread mid-operation.
         std::scoped_lock _( model_update_mutex );
@@ -230,6 +246,7 @@ class InferenceService : public inference::Service< G, P >
     mutable std::mutex model_update_mutex;
     Statistics batch_size_stats_;
     Statistics inference_time_stats_;
+    std::atomic<bool> inference_paused{false};
 };
 
 } // namespace libtorch

@@ -273,6 +273,24 @@ def resume_session(session_handle, alphazero_lib, game_type):
     func(session_handle, game_type.value)
 
 
+def pause_inference(session_handle, alphazero_lib, game_type):
+    if not session_handle:
+        return
+    func = alphazero_lib.pause_inference
+    func.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+    func.restype = None
+    func(session_handle, game_type.value)
+
+
+def resume_inference(session_handle, alphazero_lib, game_type):
+    if not session_handle:
+        return
+    func = alphazero_lib.resume_inference
+    func.argtypes = [ctypes.c_void_p, ctypes.c_int32]
+    func.restype = None
+    func(session_handle, game_type.value)
+
+
 
 def get_git_revision_hash() -> str:
     """Retrieves the current git commit hash."""
