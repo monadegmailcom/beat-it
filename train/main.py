@@ -549,6 +549,11 @@ if __name__ == '__main__':
             if (step + 1) % training_hyperparams['model_update_freq_steps']\
                     == 0:
                 print(f"\nUpdating C++ model at step {step+1}...")
+                
+                # Pause inference to ensure PyTorch has 100% of the GPU for tracing and JIT compilation
+                pause_inference(session_handle, alphazero_lib, game_type)
+                if torch.cuda.is_available(): torch.cuda.synchronize()
+
                 model_bytes, metadata_json = create_inference_model_bundle(
                     model,
                     step=step + 1,
@@ -559,6 +564,9 @@ if __name__ == '__main__':
                 )
                 set_model(
                     session_handle, c_set_model_func, game_type, model_bytes)
+
+                if torch.cuda.is_available(): torch.cuda.synchronize()
+                resume_inference(session_handle, alphazero_lib, game_type)
 
             # Periodically save a checkpoint
             if (step + 1) % training_hyperparams['checkpoint_freq_steps'] == 0:
