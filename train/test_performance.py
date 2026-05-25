@@ -130,7 +130,7 @@ def main():
         if args.mode == "paused":
             resume_session(session_handle, alphazero_lib, game_type)
             
-        step_duration = time.time() - start_time
+        step_duration = time.time() - train_start
         
         # We skip the first step as warmup
         if step > 0:
