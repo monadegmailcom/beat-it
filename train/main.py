@@ -419,7 +419,7 @@ if __name__ == '__main__':
                 / training_hyperparams['target_replay_ratio']))
 
         print(f"Starting training loop from step {start_step} up to "
-              f"{20} steps."
+              f"{training_hyperparams['total_training_steps']} steps."
               f" Fetch {num_positions_to_fetch} positions at a time.")
 
         # Initialize accumulators for averaging metrics over a logging window
@@ -431,7 +431,7 @@ if __name__ == '__main__':
         steps_in_window = 0
         logger = MetricLogger(writer)
 
-        while step < 20:
+        while step < training_hyperparams['total_training_steps']:
             fetch_start_time = time.time()
             # This call blocks until the C++ workers have produced enough
             #  games.
@@ -519,7 +519,7 @@ if __name__ == '__main__':
                     writer.add_histogram(f'Gradients/{name}', param.grad, step)
                     writer.add_histogram(f'Weights/{name}', param.data, step)
                 logger.log_and_reset(
-                    step, 20,
+                    step, training_hyperparams['total_training_steps'],
                     len(replay_buffer),
                     optimizer.param_groups[0]['lr'])
 
