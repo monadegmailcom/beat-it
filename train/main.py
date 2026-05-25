@@ -461,13 +461,20 @@ if __name__ == '__main__':
 
             # 2. Perform one training step once the buffer is ready.
             model.train()
+            if torch.cuda.is_available(): torch.cuda.synchronize()
             start_time = time.time()
 
             batch_states, batch_target_policies, batch_target_values = \
                 replay_buffer.sample(training_hyperparams['batch_size'])
+            
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            sample_time = time.time()
 
             optimizer.zero_grad()
             pred_values, pred_policy_logits = model(batch_states)
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            forward_time = time.time()
+            
             value_loss_fn = nn.MSELoss()
 
             loss_policy = -torch.sum(batch_target_policies * F.log_softmax(
@@ -476,9 +483,22 @@ if __name__ == '__main__':
                 pred_values.squeeze(-1), batch_target_values)
             loss = loss_policy + loss_value
             loss.backward()
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            backward_time = time.time()
+            
             optimizer.step()
+            if torch.cuda.is_available(): torch.cuda.synchronize()
+            step_time = time.time()
+            
             scheduler.step()  # Update the learning rate
-            duration = time.time() - start_time
+            duration = step_time - start_time
+            if duration > 1.0:
+                print(f"WARN: Long step! total={duration:.2f}s "
+                      f"sample={sample_time-start_time:.2f}s "
+                      f"forward={forward_time-sample_time:.2f}s "
+                      f"backward={backward_time-forward_time:.2f}s "
+                      f"step={step_time-backward_time:.2f}s")
+
 
             logger.update(
                 loss_total=loss.item(),
