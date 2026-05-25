@@ -18,10 +18,10 @@ from .utils import (
 def main():
     parser = argparse.ArgumentParser(description="Performance test for AlphaZero")
     parser.add_argument("--game", type=str, default="uttt", help="Game to train (e.g. ttt, uttt)")
-    parser.add_argument("--steps", type=int, default=15, help="Number of training steps to run")
+    parser.add_argument("--steps", type=int, default=100, help="Number of training steps to run")
     parser.add_argument("--mode", type=str, choices=["baseline", "paused", "dedicated_stream"], default="baseline",
                         help="Which mode to test")
-    parser.add_argument("--batch-size", type=int, default=256, help="Batch size for training")
+    parser.add_argument("--batch-size", type=int, default=1024, help="Batch size for training")
     args = parser.parse_args()
 
     game_type = GameType[args.game.upper()]
