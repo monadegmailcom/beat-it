@@ -10,7 +10,8 @@ import importlib
 
 from .utils import (
     GameType, create_inference_model_bundle, Hyperparameters,
-    TrainingHyperparameters, CppStats, check_and_merge_config
+    TrainingHyperparameters, CppStats, check_and_merge_config,
+    fetch_selfplay_data_from_cpp, ReplayBuffer
 )
 
 def get_usable_cpu_count() -> int:
@@ -77,6 +78,97 @@ def measure_throughput(
     else:
         return 0.0, 0.0
 
+def measure_throughput_with_training(
+        alphazero_lib: ctypes.CDLL,
+        game_type: GameType,
+        model_bytes: bytes,
+        hp: Hyperparameters,
+        number_of_positions: int,
+        training_hyperparams: dict,
+        game_config: dict) -> tuple[float, float]:
+    """
+    Measures throughput by fetching data and doing mock PyTorch backward passes
+    to capture actual training overhead.
+    """
+    import torch.nn.functional as F
+    
+    device = torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu")
+    
+    # Mock python model
+    game_module = importlib.import_module(f".{game_type.name.lower()}", package=__package__)
+    model = game_module.create_model(game_config).to(device)
+    model.train()
+    
+    optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
+    replay_buffer = ReplayBuffer(capacity=40000)
+
+    # Initialize C++ session
+    c_create_session = alphazero_lib.create_session
+    c_create_session.restype = ctypes.c_void_p
+    c_create_session.argtypes = [
+        ctypes.c_int32,
+        ctypes.c_char_p,
+        ctypes.c_uint32,
+        ctypes.POINTER(Hyperparameters)
+    ]
+    
+    session_handle = c_create_session(
+        game_type.value,
+        model_bytes,
+        len(model_bytes),
+        ctypes.byref(hp)
+    )
+
+    c_fetch_data_func = alphazero_lib.fetch_selfplay_data
+    
+    c_destroy_session = alphazero_lib.destroy_session
+    c_destroy_session.argtypes = [ctypes.c_void_p]
+
+    total_fetched = 0
+    start_time = time.time()
+    
+    avg_batch_sizes = []
+    G_SIZE = game_config['input_channels'] * game_config['board_size'] * game_config['board_size']
+    P_SIZE = game_config['num_actions']
+    
+    while total_fetched < number_of_positions:
+        new_data, stats = fetch_selfplay_data_from_cpp(
+            session_handle, c_fetch_data_func, game_type,
+            256, G_SIZE, P_SIZE)
+
+        if new_data:
+            total_fetched += len(new_data)
+            replay_buffer.push_batch(new_data)
+        
+        if stats['inference_batch_size'].mean > 0:
+            avg_batch_sizes.append(stats['inference_batch_size'].mean)
+
+        batch_size = training_hyperparams.get('batch_size', 1024)
+        if len(replay_buffer) >= batch_size:
+            batch_states, batch_target_policies, batch_target_values, batch_player_indices = replay_buffer.sample(batch_size)
+            batch_states = batch_states.to(device)
+            batch_target_policies = batch_target_policies.to(device)
+            batch_target_values = batch_target_values.to(device)
+
+            optimizer.zero_grad()
+            pred_values, pred_policy_logits = model(batch_states)
+            
+            loss_policy = F.cross_entropy(pred_policy_logits, batch_target_policies)
+            loss_value = F.mse_loss(pred_values.squeeze(-1), batch_target_values)
+            loss = loss_policy + loss_value
+            loss.backward()
+            optimizer.step()
+
+    duration = time.time() - start_time
+    c_destroy_session(session_handle)
+
+    final_avg_batch_size = sum(avg_batch_sizes) / len(avg_batch_sizes) if avg_batch_sizes else 0.0
+
+    if duration > 0:
+        return (total_fetched / duration), final_avg_batch_size
+    else:
+        return 0.0, 0.0
+
 
 def objective(
         trial: optuna.Trial,
@@ -84,6 +176,8 @@ def objective(
         game_type: GameType,
         model_bytes: bytes,
         base_hp_config: dict,
+        training_hyperparams: dict,
+        game_config: dict,
         mode: str,
         number_of_positions: int) -> float:
     """
@@ -131,9 +225,15 @@ def objective(
           f"PG={hp.parallel_games}, PS={hp.parallel_simulations}, "
           f"BS={hp.max_batch_size}...")
 
-    throughput, avg_batch_size = measure_throughput(
-        alphazero_lib, game_type, model_bytes, hp, number_of_positions
-    )
+    if mode == "train":
+        throughput, avg_batch_size = measure_throughput_with_training(
+            alphazero_lib, game_type, model_bytes, hp, number_of_positions,
+            training_hyperparams, game_config
+        )
+    else:
+        throughput, avg_batch_size = measure_throughput(
+            alphazero_lib, game_type, model_bytes, hp, number_of_positions
+        )
 
     if avg_batch_size > 0.0:
         trial.set_user_attr('avg_inference_batch_size', avg_batch_size)
@@ -273,7 +373,7 @@ if __name__ == '__main__':
     study.optimize(
         lambda trial: objective(
             trial, alphazero_lib, game_type, model_bytes, 
-            self_play_config, args.mode, args.number_of_positions
+            self_play_config, training_hyperparams, game_config, args.mode, args.number_of_positions
         ),
         n_trials=args.n_trials
     )
