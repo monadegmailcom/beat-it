@@ -110,6 +110,7 @@ def main():
             continue
 
         # 2. Train
+        if torch.cuda.is_available(): torch.cuda.synchronize()
         train_start = time.time()
         model.train()
         
@@ -117,20 +118,38 @@ def main():
             pause_session(session_handle, alphazero_lib, game_type)
 
         batch_states, batch_target_policies, batch_target_values = replay_buffer.sample(args.batch_size)
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        sample_time = time.time()
+
         batch_states = batch_states.to(device)
         batch_target_policies = batch_target_policies.to(device)
         batch_target_values = batch_target_values.to(device)
 
         optimizer.zero_grad()
         pred_values, pred_policy_logits = model(batch_states)
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        forward_time = time.time()
+
         loss = F.cross_entropy(pred_policy_logits, batch_target_policies) + F.mse_loss(pred_values.squeeze(-1), batch_target_values)
         loss.backward()
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        backward_time = time.time()
+
         optimizer.step()
+        if torch.cuda.is_available(): torch.cuda.synchronize()
+        step_time = time.time()
 
         if args.mode == "paused":
             resume_session(session_handle, alphazero_lib, game_type)
             
-        step_duration = time.time() - train_start
+        step_duration = step_time - train_start
+        
+        if step_duration > 1.0:
+            print(f"WARN: Long step! total={step_duration:.2f}s "
+                  f"sample={sample_time-train_start:.2f}s "
+                  f"forward={forward_time-sample_time:.2f}s "
+                  f"backward={backward_time-forward_time:.2f}s "
+                  f"step={step_time-backward_time:.2f}s")
         
         # We skip the first step as warmup
         if step > 0:
