@@ -143,6 +143,8 @@ Hyperparameters::Hyperparameters( string const& metadata_json )
         get_value_with_default< size_t >( sp_config, "max_batch_size", 100 );
     nodes_per_block = get_value_with_default< size_t >(
         sp_config, "nodes_per_block", 50 * simulations );
+    use_dedicated_cuda_stream = get_value_with_default< bool >(
+        sp_config, "use_dedicated_cuda_stream", false );
 }
 
 } // namespace libtorch

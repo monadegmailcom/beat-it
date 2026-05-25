@@ -10,6 +10,11 @@
 
 #include <mutex>
 #include <torch/cuda.h>
+#ifndef __APPLE__
+#include <c10/cuda/CUDAStream.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <ATen/cuda/CUDAContext.h>
+#endif
 #ifdef __APPLE__
 #include <torch/mps.h>
 #endif
@@ -45,6 +50,7 @@ struct Hyperparameters
     size_t parallel_simulations = 0;
     size_t max_batch_size = 0;
     size_t nodes_per_block = 0;
+    bool use_dedicated_cuda_stream = false;
 };
 
 struct MatchupPlayerConfig
@@ -73,9 +79,11 @@ class InferenceService : public inference::Service< G, P >
   public:
     using service_type = inference::Service< G, P >;
     InferenceService( std::unique_ptr< torch::jit::script::Module >&& model,
-                      torch::Device device, size_t max_batch_size )
+                      torch::Device device, size_t max_batch_size,
+                      bool use_dedicated_stream = false )
         : service_type( max_batch_size ), device( device ),
-          model( std::move( model ) )
+          model( std::move( model ) ),
+          use_dedicated_stream( use_dedicated_stream )
     {
         auto cpu_options = torch::TensorOptions().dtype( torch::kFloat32 );
         if ( device.type() == torch::kCUDA )
@@ -177,6 +185,15 @@ class InferenceService : public inference::Service< G, P >
         torch::Tensor cpu_policy_view;
 
         {
+#ifndef __APPLE__
+            std::optional< c10::cuda::CUDAStreamGuard > cuda_guard;
+            if ( use_dedicated_stream && device.type() == torch::kCUDA )
+            {
+                c10::cuda::CUDAStream stream = at::cuda::getStreamFromPool();
+                cuda_guard.emplace( stream );
+            }
+#endif
+
             auto gpu_input_view = gpu_input_tensor.narrow( 0, 0, batch_size );
             // copy data to gpu asynchronously.
             gpu_input_view.copy_( cpu_input_view, true );
@@ -227,6 +244,8 @@ class InferenceService : public inference::Service< G, P >
     torch::Tensor gpu_input_tensor;
     torch::Tensor cpu_value_tensor;
     torch::Tensor cpu_policy_tensor;
+
+    bool use_dedicated_stream;
     mutable std::mutex model_update_mutex;
     Statistics batch_size_stats_;
     Statistics inference_time_stats_;

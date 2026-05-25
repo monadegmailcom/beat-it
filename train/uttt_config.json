@@ -32,7 +32,7 @@
     "self_play_config": {
         "parallel_games": 17,
         "parallel_simulations": 1,
-        "max_batch_size": 4096,
+        "max_batch_size": 2048,
         "c_base": 19652.0,
         "c_init": 1.25,
         "dirichlet_alpha": 0.3,

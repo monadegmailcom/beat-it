@@ -113,7 +113,7 @@ template < typename PlayerT > struct Session
         : queue( hp.parallel_games * 1000 ), hp( hp ), initial_state( initial_state ),
           thread_pool( hp.parallel_games ),
           inference_service( std::move( model ), libtorch::get_device(),
-                             hp.max_batch_size )
+                             hp.max_batch_size, hp.use_dedicated_cuda_stream )
     {
         allocators.reserve( hp.parallel_games );
         for ( size_t i = 0; i < hp.parallel_games; ++i )

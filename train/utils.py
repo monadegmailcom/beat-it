@@ -61,9 +61,11 @@ class Hyperparameters(ctypes.Structure):
         ("parallel_simulations", ctypes.c_size_t),
         ("max_batch_size", ctypes.c_size_t),
         ("nodes_per_block", ctypes.c_size_t),
+        ("use_dedicated_cuda_stream", ctypes.c_bool),
     ]
 
     def __init__(self, config):
+        super().__init__()
         self.c_base = config.get('c_base', 19652.0)
         self.c_init = config.get('c_init', 1.25)
         self.dirichlet_alpha = config.get('dirichlet_alpha', 0.3)
@@ -73,6 +75,7 @@ class Hyperparameters(ctypes.Structure):
         self.parallel_games = config.get('parallel_games', 1)
         self.parallel_simulations = config.get('parallel_simulations', 4)
         self.max_batch_size = config.get('max_batch_size', 1024)
+        self.use_dedicated_cuda_stream = config.get('use_dedicated_cuda_stream', False)
         
         # Default nodes_per_block logic from C++
         default_nodes_per_block = 50 * self.simulations
