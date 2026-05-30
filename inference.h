@@ -45,21 +45,30 @@ template < size_t G, size_t P > class Service
     using request_type = Request< G, P >;
     using response_type = Response< P >;
 
-    explicit Service( size_t max_batch_size )
-        : max_batch_size( max_batch_size ), inference_queue( max_batch_size ),
-          free_inference_slots( max_batch_size )
+    explicit Service( size_t max_batch_size, size_t num_workers = 1 )
+        : max_batch_size( max_batch_size ), inference_queue( max_batch_size * num_workers * 2 ),
+          free_inference_slots( max_batch_size * num_workers * 2 )
     {
         if ( !max_batch_size )
             throw beat_it::Exception( "Max batch size cannot be zero." );
-        inference_worker =
-            std::jthread( &Service::run, this, stop_source.get_token() );
+        if ( !num_workers )
+            throw beat_it::Exception( "Number of workers cannot be zero." );
+        
+        for ( size_t i = 0; i < num_workers; ++i )
+        {
+            inference_workers.emplace_back( &Service::run, this, stop_source.get_token(), i );
+        }
     }
 
     virtual ~Service() noexcept
     {
         // Signal the workers to stop.
         stop_source.request_stop();
-        inference_worker.join();
+        for ( auto& worker : inference_workers )
+        {
+            if ( worker.joinable() )
+                worker.join();
+        }
     }
 
     // blocks if max queue size is reached. this slows down production of new
@@ -84,7 +93,7 @@ template < size_t G, size_t P > class Service
   protected:
     // promise: feed all batched requests into the nn and put results into
     // response array.
-    virtual void inference( request_type[], response_type[],
+    virtual void inference( size_t worker_id, request_type[], response_type[],
                             size_t batch_size ) = 0;
 
   private:
@@ -118,7 +127,7 @@ template < size_t G, size_t P > class Service
     }
 
     // not thread-safe.
-    void run( std::stop_token token )
+    void run( std::stop_token token, size_t worker_id )
     {
         std::vector< request_type > request_batch( max_batch_size );
         std::vector< response_type > response_batch( max_batch_size );
@@ -143,7 +152,7 @@ template < size_t G, size_t P > class Service
             else
             {
                 // process requests, call inference implementation.
-                inference( request_batch.data(), response_batch.data(),
+                inference( worker_id, request_batch.data(), response_batch.data(),
                            batch_size );
 
                 deliver_responses( request_batch.data(), response_batch.data(),
@@ -154,7 +163,7 @@ template < size_t G, size_t P > class Service
     }
 
     size_t max_batch_size;
-    std::jthread inference_worker;
+    std::vector<std::jthread> inference_workers;
     std::stop_source stop_source;
     boost::lockfree::queue< request_type > inference_queue;
     std::counting_semaphore<> free_inference_slots;

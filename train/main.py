@@ -794,6 +794,8 @@ if __name__ == '__main__':
             print("TensorBoard writer closed.")
     except Exception as e:
         print(f"\nAn error occurred: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
         # This block runs whether the training loop succeeded or failed.
         # --- C++ Resource Cleanup ---
