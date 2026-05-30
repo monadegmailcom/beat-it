@@ -10,7 +10,7 @@
         "value_head_channels": 4
     },
     "training_hyperparams": {
-        "learning_rate": 0.0005,
+        "learning_rate": 0.02,
         "weight_decay": 1e-4,
         "batch_size": 1024,
         "log_freq_steps": 100,
@@ -22,7 +22,7 @@
         "target_replay_ratio": 4.0,
         "validation_split_percentage": 0.05,
         "validation_freq_steps": 500,
-        "lr_schedule_milestones": [100000, 150000],
+        "lr_schedule_milestones": [200000, 400000, 600000],
         "lr_schedule_gamma": 0.1,
         "evaluation_games": 100,
         "evaluation_parallel_games": 4,
@@ -38,6 +38,6 @@
         "dirichlet_alpha": 0.3,
         "dirichlet_epsilon": 0.25,
         "simulations": 800,
-        "opening_moves": 5
+        "opening_moves": 20 
     }
 }

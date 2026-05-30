@@ -622,13 +622,27 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
     {
         auto& root = player.get_root();
 
-        // add noise for root node
+        // Generate Gamma(alpha, 1) samples and normalize to form a proper
+        // Dirichlet distribution sample (must sum to 1).
+        noise.clear();
+        noise.reserve( root.get_children().size() );
+        float noise_sum = 0.0f;
+        for ( auto& child : root.get_children() )
+        {
+            float n = gamma_dist( g );
+            noise.push_back( n );
+            noise_sum += n;
+        }
+
+        // Mix normalized Dirichlet noise with the network prior
+        auto noise_itr = noise.begin();
         for ( auto& child : root.get_children() )
         {
             float policy =
                 child.get_payload().nn_policy.load( std::memory_order_relaxed );
-            policy *= 1.0f - dirichlet_epsilon;
-            policy += gamma_dist( g ) * dirichlet_epsilon;
+            float normalized_noise = *noise_itr++ / noise_sum;
+            policy = policy * ( 1.0f - dirichlet_epsilon ) +
+                     normalized_noise * dirichlet_epsilon;
             child.get_payload().nn_policy.store( policy,
                                                  std::memory_order_relaxed );
         }
@@ -673,6 +687,7 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
     std::mt19937& g;
     std::gamma_distribution< float > gamma_dist;
     std::vector< Position< G, P > >& positions;
+    std::vector< float > noise;
     Statistics& root_node_entropy_stat;
     Statistics& informed_selection_stats;
 };

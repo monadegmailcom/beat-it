@@ -250,10 +250,11 @@ if __name__ == '__main__':
                 print(f"Warning: Checkpoint file not found at "
                       f"{args.resume_from}. Starting a new run.")
 
-        # Optimizer
-        optimizer = optim.Adam(
+        # Optimizer (AlphaZero paper uses SGD with momentum=0.9)
+        optimizer = optim.SGD(
             model.parameters(),
             lr=training_hyperparams['learning_rate'],
+            momentum=0.9,
             weight_decay=training_hyperparams['weight_decay'])
 
         # Scheduler
