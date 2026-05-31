@@ -723,9 +723,10 @@ if __name__ == '__main__':
                     model.train()
                     
                     # Re-instantiate optimizer/scheduler
-                    optimizer = optim.Adam(
+                    optimizer = optim.SGD(
                         model.parameters(),
                         lr=training_hyperparams['learning_rate'],
+                        momentum=0.9,
                         weight_decay=training_hyperparams['weight_decay'])
                     
                     scheduler = optim.lr_scheduler.MultiStepLR(
