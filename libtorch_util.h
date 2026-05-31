@@ -91,7 +91,7 @@ class InferenceService : public inference::Service< G, P >
                 worker_device = torch::Device(torch::kCUDA, i);
 
             auto worker = std::make_unique<WorkerState>(worker_device);
-            worker->model = std::make_unique<torch::jit::script::Module>(base_model->clone());
+            worker->model = std::make_unique<torch::jit::script::Module>(base_model->deepcopy());
             worker->model->to(worker_device);
 
             worker->cpu_input_tensor = torch::empty(
@@ -141,7 +141,7 @@ class InferenceService : public inference::Service< G, P >
         for ( auto& worker : workers )
         {
             std::scoped_lock _( worker->model_update_mutex );
-            worker->model = std::make_unique<torch::jit::script::Module>(new_model->clone());
+            worker->model = std::make_unique<torch::jit::script::Module>(new_model->deepcopy());
             worker->model->to(worker->device);
         }
 
