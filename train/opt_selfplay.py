@@ -138,14 +138,14 @@ def measure_throughput_with_training(
 
         if new_data:
             total_fetched += len(new_data)
-            replay_buffer.push_batch(new_data)
+            replay_buffer.add(new_data)
         
         if stats['inference_batch_size'].mean > 0:
             avg_batch_sizes.append(stats['inference_batch_size'].mean)
 
         batch_size = training_hyperparams.get('batch_size', 1024)
         if len(replay_buffer) >= batch_size:
-            batch_states, batch_target_policies, batch_target_values, batch_player_indices = replay_buffer.sample(batch_size)
+            batch_states, batch_target_policies, batch_target_values = replay_buffer.sample(batch_size)
             batch_states = batch_states.to(device)
             batch_target_policies = batch_target_policies.to(device)
             batch_target_values = batch_target_values.to(device)
