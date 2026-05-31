@@ -90,6 +90,7 @@ class InferenceService : public inference::Service< G, P >
             if ( device.type() == torch::kCUDA )
                 worker_device = torch::Device(torch::kCUDA, i);
 
+            torch::DeviceGuard device_guard(worker_device);
             auto worker = std::make_unique<WorkerState>(worker_device);
             worker->model = load_model(model_buffer, worker_device);
 
@@ -140,6 +141,7 @@ class InferenceService : public inference::Service< G, P >
         for ( auto& worker : workers )
         {
             std::scoped_lock _( worker->model_update_mutex );
+            torch::DeviceGuard device_guard(worker->device);
             worker->model = load_model(model_buffer, worker->device);
         }
 
@@ -216,6 +218,7 @@ class InferenceService : public inference::Service< G, P >
         // Lock the module while running inference to prevent it from being
         // replaced by an update call from another thread mid-operation.
         std::scoped_lock _( worker->model_update_mutex );
+        torch::DeviceGuard device_guard(worker->device);
 
         // serialize inference on mps device to prevent metal command buffer
         // commit errors.
@@ -256,8 +259,8 @@ class InferenceService : public inference::Service< G, P >
 
             cpu_value_view = worker->cpu_value_tensor.narrow( 0, 0, batch_size );
             cpu_policy_view = worker->cpu_policy_tensor.narrow( 0, 0, batch_size );
-            cpu_value_view.copy_( gpu_value_batch, true );
-            cpu_policy_view.copy_( gpu_policy_batch, true );
+            cpu_value_view.copy_( gpu_value_batch, false );
+            cpu_policy_view.copy_( gpu_policy_batch, false );
         }
 
         const auto duration = std::chrono::duration< float, std::micro >(
