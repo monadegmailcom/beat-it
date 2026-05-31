@@ -100,7 +100,9 @@ def measure_throughput_with_training(
     model.train()
     
     optimizer = torch.optim.AdamW(model.parameters(), lr=1e-3)
-    replay_buffer = ReplayBuffer(40000, game_module.G_SIZE, game_module.P_SIZE, device)
+    G_SIZE = game_config['input_channels'] * game_config['board_size'] * game_config['board_size']
+    P_SIZE = game_config['num_actions']
+    replay_buffer = ReplayBuffer(40000, G_SIZE, P_SIZE, device)
 
     # Initialize C++ session
     c_create_session = alphazero_lib.create_session
@@ -128,8 +130,6 @@ def measure_throughput_with_training(
     start_time = time.time()
     
     avg_batch_sizes = []
-    G_SIZE = game_config['input_channels'] * game_config['board_size'] * game_config['board_size']
-    P_SIZE = game_config['num_actions']
     
     while total_fetched < number_of_positions:
         new_data, stats = fetch_selfplay_data_from_cpp(
