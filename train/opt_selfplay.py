@@ -104,11 +104,12 @@ def objective(
     max_threads = int(cpu_count * 1.5)
 
     if mode == "train":
-        # 2. max_batch_size determines the GPU queue capacity. As you correctly noted, 
-        # MCTS threads can push multiple evaluations (via virtual loss) before blocking.
-        # Therefore, we must tune the queue capacity independently!
-        max_batch_size = trial.suggest_int('max_batch_size', max_threads, 4096, log=True)
-        config['max_batch_size'] = max_batch_size
+        # 2. max_batch_size determines the GPU queue capacity.
+        # Tuned in powers of 2.
+        import math
+        min_pow = max(1, int(math.ceil(math.log2(max_threads))))
+        max_batch_size_pow = trial.suggest_int('max_batch_size_pow', min_pow, 12)
+        config['max_batch_size'] = 1 << max_batch_size_pow
 
         # 1. Tune parallel_games around the CPU count (pristine single-thread search per game)
         parallel_games = trial.suggest_int('parallel_games', min_threads, max_threads)
@@ -116,9 +117,11 @@ def objective(
         config['parallel_simulations'] = 1
         
     elif mode == "match":
-        # 2. In match mode, use evaluation_max_batch_size to keep the dashboard and hyperparameter tracking perfectly decoupled.
-        evaluation_max_batch_size = trial.suggest_int('evaluation_max_batch_size', max_threads, 4096, log=True)
-        config['max_batch_size'] = evaluation_max_batch_size
+        # 2. In match mode, use evaluation_max_batch_size_pow to keep the dashboard decoupled.
+        import math
+        min_pow = max(1, int(math.ceil(math.log2(max_threads))))
+        evaluation_max_batch_size_pow = trial.suggest_int('evaluation_max_batch_size_pow', min_pow, 12)
+        config['max_batch_size'] = 1 << evaluation_max_batch_size_pow
 
         # 1. Tune both parallel_games and parallel_simulations for Match mode!
         # To prevent thread explosion (total threads = games * simulations) from 

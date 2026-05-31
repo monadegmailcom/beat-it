@@ -259,8 +259,8 @@ class InferenceService : public inference::Service< G, P >
 
             cpu_value_view = worker->cpu_value_tensor.narrow( 0, 0, batch_size );
             cpu_policy_view = worker->cpu_policy_tensor.narrow( 0, 0, batch_size );
-            cpu_value_view.copy_( gpu_value_batch, false );
-            cpu_policy_view.copy_( gpu_policy_batch, false );
+            cpu_value_view.copy_( gpu_value_batch, true );
+            cpu_policy_view.copy_( gpu_policy_batch, true );
         }
 
         const auto duration = std::chrono::duration< float, std::micro >(
