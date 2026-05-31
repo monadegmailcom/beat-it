@@ -72,7 +72,7 @@ class InferenceService : public inference::Service< G, P >
 {
   public:
     using service_type = inference::Service< G, P >;
-    InferenceService( std::unique_ptr< torch::jit::script::Module >&& base_model,
+    InferenceService( DataBuffer model_buffer,
                       torch::Device device, size_t max_batch_size )
         : service_type( max_batch_size, device.type() == torch::kCUDA ? std::max<size_t>(1, torch::cuda::device_count()) : 1 )
     {
@@ -91,8 +91,7 @@ class InferenceService : public inference::Service< G, P >
                 worker_device = torch::Device(torch::kCUDA, i);
 
             auto worker = std::make_unique<WorkerState>(worker_device);
-            worker->model = std::make_unique<torch::jit::script::Module>(base_model->deepcopy());
-            worker->model->to(worker_device);
+            worker->model = load_model(model_buffer, worker_device);
 
             worker->cpu_input_tensor = torch::empty(
                 { static_cast< long >( max_batch_size ), static_cast< long >( G ) },
@@ -134,15 +133,14 @@ class InferenceService : public inference::Service< G, P >
 
     // threadsafe replacement of model
     void
-    update_model( std::unique_ptr< torch::jit::script::Module >&& new_model,
+    update_model( DataBuffer model_buffer,
                   Statistics& batch_size_stats,
                   Statistics& inference_time_stats )
     {
         for ( auto& worker : workers )
         {
             std::scoped_lock _( worker->model_update_mutex );
-            worker->model = std::make_unique<torch::jit::script::Module>(new_model->deepcopy());
-            worker->model->to(worker->device);
+            worker->model = load_model(model_buffer, worker->device);
         }
 
         batch_size_stats = Statistics();

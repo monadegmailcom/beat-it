@@ -108,11 +108,11 @@ template < typename PlayerT > struct Session
                                        PlayerT::policy_size >;
 
     Session( state_type const& initial_state,
-             std::unique_ptr< torch::jit::script::Module >&& model,
+             libtorch::DataBuffer model_buffer,
              libtorch::Hyperparameters const& hp )
         : queue( hp.parallel_games * 1000 ), hp( hp ), initial_state( initial_state ),
           thread_pool( hp.parallel_games ),
-          inference_service( std::move( model ), libtorch::get_device(),
+          inference_service( model_buffer, libtorch::get_device(),
                              hp.max_batch_size )
     {
         allocators.reserve( hp.parallel_games );
@@ -133,13 +133,12 @@ template < typename PlayerT > struct Session
         if ( cleanup_requested )
             return;
 
-        torch::Device device = libtorch::get_device();
-        auto model = libtorch::load_model( model_buffer, device );
+
 
         Statistics batch_size_stat;
         Statistics inference_time_stat;
 
-        inference_service.update_model( std::move( model ), batch_size_stat,
+        inference_service.update_model( model_buffer, batch_size_stat,
                                         inference_time_stat );
         statistic_to_cpp_stat( batch_size_stat, inference_batch_size );
         statistic_to_cpp_stat( inference_time_stat, inference_time );
@@ -314,15 +313,13 @@ extern "C"
                           uint32_t model_data_len,
                           libtorch::Hyperparameters const& hp )
     {
-        torch::Device device = libtorch::get_device();
-        auto model =
-            libtorch::load_model( { model_data, model_data_len }, device );
+
         if ( game_type == GameType::TTT )
             return new ttt_session_type( // NOSONAR
-                ttt::empty_state, std::move( model ), hp );
+                ttt::empty_state, { model_data, model_data_len }, hp );
         else if ( game_type == GameType::UTTT )
             return new uttt_session_type( // NOSONAR
-                uttt::empty_state, std::move( model ), hp );
+                uttt::empty_state, { model_data, model_data_len }, hp );
         else
             return 0;
     }

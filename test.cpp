@@ -842,8 +842,10 @@ void alphazero_training()
         "runs/models/ttt_alphazero_experiment_6/final_model.pt";
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t parallel_simulations = 10;
+    ifstream file(model_path, ios::binary);
+    string model_str((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
     ttt::alphazero::libtorch::InferenceService inference_service(
-        std::move( model ), device, hp.max_batch_size );
+        { model_str.data(), (uint32_t)model_str.size() }, device, hp.max_batch_size );
 
     vector< future< vector< ttt::alphazero::training::Position > > >
         thread_pool( 8 );
@@ -928,8 +930,10 @@ void uttt_alphazero_training()
     const size_t worker_threads = 1;
     const size_t selfplay_threads = 8;
     const size_t max_batch_size = 64; // 320;
+    ifstream file(model_path, ios::binary);
+    string model_str((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
     uttt::alphazero::libtorch::InferenceService inference_service(
-        std::move( model ), device, max_batch_size );
+        { model_str.data(), (uint32_t)model_str.size() }, device, max_batch_size );
     vector< future< WorkerResult > > thread_pool( worker_threads );
     const size_t number_of_games = 8;
     const size_t runs_per_worker_thread = number_of_games / worker_threads;
@@ -1106,8 +1110,10 @@ void uttt_alphazero_nn_vs_minimax()
     cout << "load model " << model_path << " to device " << device << endl;
     auto [model, hp] = libtorch::load_model( model_path, device );
     const size_t threads = 10;
+    ifstream file(model_path, ios::binary);
+    string model_str((istreambuf_iterator<char>(file)), istreambuf_iterator<char>());
     uttt::alphazero::libtorch::InferenceService inference_service(
-        std::move( model ), device, hp.max_batch_size );
+        { model_str.data(), (uint32_t)model_str.size() }, device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
     const size_t rounds = 20;
@@ -1186,10 +1192,15 @@ void uttt_alphazero_nn_vs_alphazero()
     auto [model, hp] = libtorch::load_model( model_path, device );
     auto [model2, hp2] = libtorch::load_model( model_path2, device );
     const size_t threads = 10;
+    ifstream file1(model_path, ios::binary);
+    string model_str1((istreambuf_iterator<char>(file1)), istreambuf_iterator<char>());
     uttt::alphazero::libtorch::InferenceService inference_service(
-        std::move( model ), device, hp.max_batch_size );
+        { model_str1.data(), (uint32_t)model_str1.size() }, device, hp.max_batch_size );
+        
+    ifstream file2(model_path2, ios::binary);
+    string model_str2((istreambuf_iterator<char>(file2)), istreambuf_iterator<char>());
     uttt::alphazero::libtorch::InferenceService inference_service2(
-        std::move( model2 ), device, hp.max_batch_size );
+        { model_str2.data(), (uint32_t)model_str2.size() }, device, hp.max_batch_size );
 
     uttt::Game game( Player1, uttt::empty_state );
 

@@ -174,16 +174,14 @@ evaluate_matchup( [[maybe_unused]] int32_t game_type_val,
     {
         std::cout << "Loading Player 1 MCTS model..." << std::endl;
         std::string m1( p1.model_data, p1.model_data_len );
-        auto model1 = libtorch::load_model( make_buf( m1 ), device );
-        service1 = make_unique< inference_service >( std::move( model1 ), device, p1.hp.max_batch_size );
+        service1 = make_unique< inference_service >( make_buf( m1 ), device, p1.hp.max_batch_size );
     }
 
     if ( p2.type == 1 )
     {
         std::cout << "Loading Player 2 MCTS model..." << std::endl;
         std::string m2( p2.model_data, p2.model_data_len );
-        auto model2 = libtorch::load_model( make_buf( m2 ), device );
-        service2 = make_unique< inference_service >( std::move( model2 ), device, p2.hp.max_batch_size );
+        service2 = make_unique< inference_service >( make_buf( m2 ), device, p2.hp.max_batch_size );
     }
 
     if ( service1 || service2 )
