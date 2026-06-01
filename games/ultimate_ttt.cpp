@@ -154,7 +154,9 @@ namespace alphazero
 
 size_t Player::move_to_policy_index( Move const& move ) const
 {
-    return size_t( move.big_move * 9 + move.small_move );
+    const size_t row = ( move.big_move / 3 ) * 3 + ( move.small_move / 3 );
+    const size_t col = ( move.big_move % 3 ) * 3 + ( move.small_move % 3 );
+    return row * 9 + col;
 }
 
 array< float, G > Player::serialize_state( Game const& game ) const
@@ -165,21 +167,28 @@ array< float, G > Player::serialize_state( Game const& game ) const
     const PlayerIndex current_player = game.current_player_index();
 
     // Define pointers to the start of each 81-cell plane for clarity
-    float* plane1_x_pieces = game_state_players.data();
-    float* plane2_o_pieces = plane1_x_pieces + 81;
-    float* plane3_valid_sub_board = plane2_o_pieces + 81;
+    float* plane1_my_pieces = game_state_players.data();
+    float* plane2_opponent_pieces = plane1_my_pieces + 81;
+    float* plane3_valid_sub_board = plane2_opponent_pieces + 81;
     float* plane4_player_indicator = plane3_valid_sub_board + 81;
 
-    // --- Plane 1 & 2: 'X' and 'O' pieces (absolute representation) ---
+    const auto current_symbol = (current_player == PlayerIndex::Player1) ? ttt::Symbol::Player1 : ttt::Symbol::Player2;
+    const auto opponent_symbol = (current_player == PlayerIndex::Player1) ? ttt::Symbol::Player2 : ttt::Symbol::Player1;
+
+    // --- Plane 1 & 2: Current Player and Opponent pieces (relative representation) ---
     for ( size_t i = 0; i != 9; ++i )
     {
         auto& small_state = state.small_states[i];
         for ( size_t j = 0; j != 9; ++j )
         {
-            if ( small_state[j] == ttt::Symbol::Player1 ) // 'X'
-                plane1_x_pieces[i * 9 + j] = 1.0f;
-            else if ( small_state[j] == ttt::Symbol::Player2 ) // 'O'
-                plane2_o_pieces[i * 9 + j] = 1.0f;
+            const size_t row = ( i / 3 ) * 3 + ( j / 3 );
+            const size_t col = ( i % 3 ) * 3 + ( j % 3 );
+            const size_t spatial_idx = row * 9 + col;
+
+            if ( small_state[j] == current_symbol )
+                plane1_my_pieces[spatial_idx] = 1.0f;
+            else if ( small_state[j] == opponent_symbol )
+                plane2_opponent_pieces[spatial_idx] = 1.0f;
         }
     }
     // --- Plane 3: Valid Sub-board ---
@@ -187,9 +196,12 @@ array< float, G > Player::serialize_state( Game const& game ) const
         fill( plane3_valid_sub_board, plane3_valid_sub_board + 81, 1.0f );
     else // Constrained to a single sub-board
     {
-        const size_t start_index = state.next_big_move * 9;
-        fill( plane3_valid_sub_board + start_index,
-              plane3_valid_sub_board + start_index + 9, 1.0f );
+        for ( size_t j = 0; j != 9; ++j )
+        {
+            const size_t row = ( state.next_big_move / 3 ) * 3 + ( j / 3 );
+            const size_t col = ( state.next_big_move % 3 ) * 3 + ( j % 3 );
+            plane3_valid_sub_board[row * 9 + col] = 1.0f;
+        }
     }
 
     // --- Plane 4: Player-to-Move Indicator ---

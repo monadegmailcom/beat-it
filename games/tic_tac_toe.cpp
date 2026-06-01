@@ -53,16 +53,19 @@ array< float, G > Player::serialize_state( Game const& game ) const
     array< float, G > game_state_players = { 0.0f };
 
     // Pointers to each 9-cell plane for clarity
-    float* plane1_x_pieces = game_state_players.data();
-    float* plane2_o_pieces = plane1_x_pieces + 9;
-    float* plane3_player_indicator = plane2_o_pieces + 9;
+    float* plane1_my_pieces = game_state_players.data();
+    float* plane2_opponent_pieces = plane1_my_pieces + 9;
+    float* plane3_player_indicator = plane2_opponent_pieces + 9;
 
-    // --- Plane 1 & 2: 'X' and 'O' pieces (absolute representation) ---
+    const auto current_symbol = (game.current_player_index() == PlayerIndex::Player1) ? Symbol::Player1 : Symbol::Player2;
+    const auto opponent_symbol = (game.current_player_index() == PlayerIndex::Player1) ? Symbol::Player2 : Symbol::Player1;
+
+    // --- Plane 1 & 2: Current Player and Opponent pieces (relative representation) ---
     for (size_t i = 0; i < 9; ++i) {
-        if (state[i] == Symbol::Player1) { // Player1 is 'X'
-            plane1_x_pieces[i] = 1.0f;
-        } else if (state[i] == Symbol::Player2) { // Player2 is 'O'
-            plane2_o_pieces[i] = 1.0f;
+        if (state[i] == current_symbol) {
+            plane1_my_pieces[i] = 1.0f;
+        } else if (state[i] == opponent_symbol) {
+            plane2_opponent_pieces[i] = 1.0f;
         }
     }
 

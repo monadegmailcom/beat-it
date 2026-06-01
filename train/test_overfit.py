@@ -6,11 +6,11 @@ import os
 import ctypes
 import json
 from train.utils import fetch_selfplay_data_from_cpp, GameType, Hyperparameters, DataPointers, CppStats
-from train.uttt import create_model
+from train.ttt import create_model
 from train.utils import create_inference_model_bundle
 
 def main():
-    game_type = GameType.UTTT
+    game_type = GameType.TTT
     possible_paths = [
         os.path.join('build', 'libalphazero.dylib'),
         os.path.join('build', 'libalphazero.so'),
@@ -35,38 +35,56 @@ def main():
     ]
 
     # Load config to get dims
-    with open("train/uttt_config.json", 'r') as f:
+    with open("train/ttt_config.json", 'r') as f:
         config = json.load(f)
     game_config = config['game_config']
     
     G_SIZE = game_config['input_channels'] * game_config['board_size'] * game_config['board_size']
-    P_SIZE = game_config['num_actions']
+    self_play_config = config['self_play_config']
+    training_hyperparams = config['training_hyperparams']
+    device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     
     # Init model
-    model = create_model(game_config)
+    model = create_model(game_config).to(device)
+    model.eval()
     optimizer = optim.AdamW(model.parameters(), lr=1e-3)
     value_loss_fn = nn.MSELoss()
     
-    self_play_config = config['self_play_config']
-    hp = Hyperparameters(self_play_config)
+    # 3. Create Model Bundle and start C++ Session
+    print("Creating initial model bundle...")
     model_bytes, _ = create_inference_model_bundle(model, 0, None, game_config, self_play_config, {})
-    session_handle = alphazero_lib.create_session(
-        GameType.UTTT.value, model_bytes, len(model_bytes), ctypes.byref(hp)
-    )
+
+    hp = Hyperparameters(self_play_config)
     
-    # 1. Fetch exactly ONE batch of 128 positions
-    batch_size = 128
-    print(f"Fetching a batch of {batch_size} positions from C++ MCTS engine...")
-    new_data, _ = fetch_selfplay_data_from_cpp(
-        session_handle, c_fetch_data_func, game_type, batch_size, G_SIZE, P_SIZE)
-        
-    if not new_data or len(new_data['game_states']) == 0:
+    print("Starting C++ session (Self-Play threads)...")
+    session_handle = alphazero_lib.create_session(
+        GameType.TTT.value, model_bytes, len(model_bytes), ctypes.byref(hp)
+    )
+
+    G_SIZE = game_config['input_channels'] * game_config['board_size'] * game_config['board_size']
+    P_SIZE = game_config['num_actions']
+
+    print("Fetching 128 positions from C++...")
+    states, policies, values = [], [], []
+    for i in range(128):
+        new_data, _ = fetch_selfplay_data_from_cpp(
+            session_handle, c_fetch_data_func, GameType.TTT,
+            1, G_SIZE, P_SIZE
+        )
+        if new_data and len(new_data['game_states']) > 0:
+            states.append(new_data['game_states'][0])
+            policies.append(new_data['policy_targets'][0])
+            values.append(new_data['value_targets'][0])
+        if (i+1) % 10 == 0:
+            print(f"Fetched {i+1}/128 positions...")
+            
+    if len(states) == 0:
         print("Failed to fetch data. Is the C++ engine generating games?")
         return
         
-    batch_states = torch.tensor(new_data['game_states'], dtype=torch.float32)
-    batch_target_policies = torch.tensor(new_data['policy_targets'], dtype=torch.float32)
-    batch_target_values = torch.tensor(new_data['value_targets'], dtype=torch.float32)
+    batch_states = torch.tensor(states, dtype=torch.float32)
+    batch_target_policies = torch.tensor(policies, dtype=torch.float32)
+    batch_target_values = torch.tensor(values, dtype=torch.float32)
 
     print(f"Loaded batch size: {batch_states.shape[0]}")
     print("Training on this single batch for 200 epochs to check for overfitting...")

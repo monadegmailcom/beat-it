@@ -81,19 +81,19 @@ fi
 
 # --- Handle Persistent Configuration ---
 # Find the baked-in config file and link it to the persistent volume
-CONFIG_PATH=$(find /app -maxdepth 2 -name "uttt_config.json" | head -n 1)
+CONFIG_PATH=$(find /app -maxdepth 2 -name "ttt_config.json" | head -n 1)
 if [ -n "$CONFIG_PATH" ]; then
     # Always save the fresh Git default config to base runs directory as a reference
-    echo "Saving pristine Git configuration reference to $BASE_RUNS_DIR/uttt_config.json.git..."
-    cp "$CONFIG_PATH" "$BASE_RUNS_DIR/uttt_config.json.git"
+    echo "Saving pristine Git configuration reference to $BASE_RUNS_DIR/ttt_config.json.git..."
+    cp "$CONFIG_PATH" "$BASE_RUNS_DIR/ttt_config.json.git"
 
-    if [ ! -f "$BASE_RUNS_DIR/uttt_config.json" ]; then
-        echo "Copying default uttt_config.json to persistent storage ($BASE_RUNS_DIR)..."
-        cp "$CONFIG_PATH" "$BASE_RUNS_DIR/uttt_config.json"
+    if [ ! -f "$BASE_RUNS_DIR/ttt_config.json" ]; then
+        echo "Copying default ttt_config.json to persistent storage ($BASE_RUNS_DIR)..."
+        cp "$CONFIG_PATH" "$BASE_RUNS_DIR/ttt_config.json"
     fi
-    echo "Symlinking persistent uttt_config.json to $CONFIG_PATH..."
+    echo "Symlinking persistent ttt_config.json to $CONFIG_PATH..."
     rm -f "$CONFIG_PATH"
-    ln -s "$BASE_RUNS_DIR/uttt_config.json" "$CONFIG_PATH"
+    ln -s "$BASE_RUNS_DIR/ttt_config.json" "$CONFIG_PATH"
 fi
 
 # --- Start SSH Daemon ---
@@ -180,8 +180,8 @@ elif [ "$RUN_MODE" = "optuna" ]; then
 
     OPTUNA_MODE=${OPTUNA_MODE:-train}
     echo "Starting Optuna Hyperparameter Optimization in mode: $OPTUNA_MODE..."
-    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game uttt --mode $OPTUNA_MODE
+    python -u -m train.opt_selfplay --model_path "$MODEL_PATH" --game ttt --mode $OPTUNA_MODE
 else
     echo "Starting training (RUN_MODE=$RUN_MODE)..."
-    python -u -m train.main --game uttt $RESUME_ARGS
+    python -u -m train.main --game ttt $RESUME_ARGS
 fi

@@ -664,6 +664,9 @@ template < typename MoveT, typename StateT, size_t G, size_t P > class SelfPlay
         const size_t sum_visits =
             payload.visits.load( std::memory_order_relaxed );
 
+        if (sum_visits == 0) std::cout << "WARNING: sum_visits IS 0!" << std::endl;
+
+
         // Initialize all policies to zero.
         position.target_policy.fill( 0.0f );
 
