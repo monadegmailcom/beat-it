@@ -82,7 +82,7 @@ fi
 # --- Handle Persistent Configuration ---
 # Find the baked-in config file and link it to the persistent volume
 CONFIG_PATH=$(find /app -maxdepth 2 -name "uttt_config.json" | head -n 1)
-if [ -n "$CONFIG_PATH" ]; then
+if [ -n "$CONFIG_PATH" ] && [ ! -L "$CONFIG_PATH" ]; then
     # Always save the fresh Git default config to base runs directory as a reference
     echo "Saving pristine Git configuration reference to $BASE_RUNS_DIR/uttt_config.json.git..."
     cp "$CONFIG_PATH" "$BASE_RUNS_DIR/uttt_config.json.git"
