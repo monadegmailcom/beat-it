@@ -105,3 +105,6 @@ target_compile_features(beat-it-test PUBLIC cxx_std_23)
 if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
+
+add_executable(fuzz fuzz.cpp)
+target_link_libraries(fuzz beat_it_lib)

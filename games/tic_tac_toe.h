@@ -1,3 +1,4 @@
+#pragma once
 #include "../alphazero.h"
 #include "../libtorch_util.h"
 #include "../minimax-tree.h"
