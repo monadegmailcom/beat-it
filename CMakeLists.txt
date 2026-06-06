@@ -68,6 +68,7 @@ file(GLOB CORE_SOURCES "*.cpp")
 list(REMOVE_ITEM CORE_SOURCES 
     "${CMAKE_CURRENT_SOURCE_DIR}/main.cpp"
     "${CMAKE_CURRENT_SOURCE_DIR}/test.cpp"
+    "${CMAKE_CURRENT_SOURCE_DIR}/fuzz.cpp"
 )
 
 # Common sources for all targets
@@ -106,5 +107,4 @@ if(NOT CMAKE_BUILD_TYPE)
     set(CMAKE_BUILD_TYPE Release)
 endif()
 
-add_executable(fuzz fuzz.cpp)
-target_link_libraries(fuzz beat_it_lib)
+

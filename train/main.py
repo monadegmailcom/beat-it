@@ -140,6 +140,9 @@ if __name__ == '__main__':
         validation_buffer = ReplayBuffer(
             validation_buffer_size, G_SIZE, P_SIZE, device)
 
+        start_step = 0
+        current_minimax_depth = training_hyperparams.get('minimax_base_depth', 1)
+
         # --- Resume from Checkpoint Logic ---
         if args.resume_from:
             print(f"Attempting to resume training from: {args.resume_from}")
@@ -239,6 +242,7 @@ if __name__ == '__main__':
 
                 # Load metadata for step count
                 start_step = metadata.get('training_steps', 0)
+                current_minimax_depth = metadata.get('current_minimax_depth', current_minimax_depth)
 
                 print(f"Resuming from step {start_step}. "
                       "Optimizer state loaded.")
@@ -333,7 +337,8 @@ if __name__ == '__main__':
             current_loss=None,
             game_config=game_config,
             self_play_config=self_play_config,
-            training_hyperparams=training_hyperparams
+            training_hyperparams=training_hyperparams,
+            current_minimax_depth=current_minimax_depth
         )
 
         c_evaluate_func = alphazero_lib.evaluate_matchup
@@ -409,7 +414,8 @@ if __name__ == '__main__':
                 training_hyperparams=training_hyperparams,
                 path=initial_baseline_path,
                 train_buffer=None,
-                validation_buffer=None
+                validation_buffer=None,
+                current_minimax_depth=current_minimax_depth
              )
              previous_checkpoint_path = initial_baseline_path
 
@@ -561,7 +567,8 @@ if __name__ == '__main__':
                     current_loss=loss,
                     game_config=game_config,
                     self_play_config=self_play_config,
-                    training_hyperparams=training_hyperparams
+                    training_hyperparams=training_hyperparams,
+                    current_minimax_depth=current_minimax_depth
                 )
                 set_model(
                     session_handle, c_set_model_func, game_type, model_bytes)
@@ -603,7 +610,8 @@ if __name__ == '__main__':
                     training_hyperparams=training_hyperparams,
                     path=checkpoint_path,
                     train_buffer=replay_buffer,
-                    validation_buffer=validation_buffer
+                    validation_buffer=validation_buffer,
+                    current_minimax_depth=current_minimax_depth
                 )
 
                 # --- Evaluation Match ---
@@ -665,10 +673,10 @@ if __name__ == '__main__':
                             hp=hp_struct
                         )
                         p2_cfg = MatchupPlayerConfig(
-                            type=1, # MCTS
-                            simulations_or_depth=hp_struct.simulations,
-                            model_data=prev_model_bytes,
-                            model_data_len=len(prev_model_bytes),
+                            type=2, # Minimax
+                            simulations_or_depth=current_minimax_depth,
+                            model_data=b"",
+                            model_data_len=0,
                             hp=hp_struct
                         )
                         
@@ -691,15 +699,22 @@ if __name__ == '__main__':
                             win_rate_p1 = eval_result.wins_p1 / total_games
                             win_rate_p2 = eval_result.wins_p2 / total_games
                             draw_rate = eval_result.draws / total_games
-                            print(f"Evaluation Result (Current vs Previous):")
+                            print(f"Evaluation Result (Current vs Minimax Depth {current_minimax_depth}):")
                             print(f"  Current Wins: {eval_result.wins_p1} ({win_rate_p1:.1%})")
-                            print(f"  Previous Wins: {eval_result.wins_p2} ({win_rate_p2:.1%})")
+                            print(f"  Minimax Wins: {eval_result.wins_p2} ({win_rate_p2:.1%})")
                             print(f"  Draws:        {eval_result.draws} ({draw_rate:.1%})")
                             
                             if writer:
                                 writer.add_scalar('Evaluation/WinRates/Current', win_rate_p1, step+1)
-                                writer.add_scalar('Evaluation/WinRates/Previous', win_rate_p2, step+1)
+                                writer.add_scalar('Evaluation/WinRates/Minimax', win_rate_p2, step+1)
                                 writer.add_scalar('Evaluation/WinRates/Draw', draw_rate, step+1)
+                                writer.add_scalar('Evaluation/Minimax_Depth', current_minimax_depth, step+1)
+                                
+                            promotion_threshold = training_hyperparams.get('minimax_promotion_win_rate', 0.8)
+                            max_depth = training_hyperparams.get('minimax_max_depth', 6)
+                            if win_rate_p1 >= promotion_threshold and current_minimax_depth < max_depth:
+                                print(f"*** Current model beat Minimax at depth {current_minimax_depth} with win rate {win_rate_p1:.1%} >= {promotion_threshold:.1%}! Promoting depth to {current_minimax_depth + 1}. ***")
+                                current_minimax_depth += 1
                         else:
                             print("Evaluation finished with 0 games.")
                             
@@ -780,14 +795,15 @@ if __name__ == '__main__':
                 model,
                 optimizer,
                 scheduler,
-                step=step,
+                step=training_hyperparams['total_training_steps'],
                 current_loss=loss,
                 game_config=game_config,
                 self_play_config=self_play_config,
                 training_hyperparams=training_hyperparams,
                 path=final_model_path,
                 train_buffer=replay_buffer,
-                validation_buffer=validation_buffer
+                validation_buffer=validation_buffer,
+                current_minimax_depth=current_minimax_depth
             )
 
         if writer:

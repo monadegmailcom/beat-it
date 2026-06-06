@@ -12,12 +12,12 @@
     "training_hyperparams": {
         "learning_rate": 0.02,
         "weight_decay": 1e-4,
-        "batch_size": 1024,
+        "batch_size": 2048,
         "log_freq_steps": 100,
-        "total_training_steps": 200000,
+        "total_training_steps": 2000000,
         "model_update_freq_steps": 1000,
         "checkpoint_freq_steps": 1000,
-        "replay_buffer_size": 200000,
+        "replay_buffer_size": 2000000,
         "min_replay_buffer_size": 1000,
         "target_replay_ratio": 4.0,
         "validation_split_percentage": 0.05,
@@ -30,14 +30,14 @@
         "evaluation_max_batch_size": 4096
     },
     "self_play_config": {
-        "parallel_games": 17,
+        "parallel_games": 8,
         "parallel_simulations": 1,
-        "max_batch_size": 4096,
+        "max_batch_size": 2048,
         "c_base": 19652.0,
         "c_init": 1.25,
         "dirichlet_alpha": 0.3,
         "dirichlet_epsilon": 0.25,
         "simulations": 800,
-        "opening_moves": 20 
+        "opening_moves": 5 
     }
 }

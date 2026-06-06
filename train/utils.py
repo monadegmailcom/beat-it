@@ -313,7 +313,7 @@ def get_git_revision_hash() -> str:
 
 def create_inference_model_bundle(
         model, step, current_loss, game_config, self_play_config,
-        training_hyperparams):
+        training_hyperparams, current_minimax_depth):
     """Gathers metadata and saves the scripted model to an in-memory buffer."""
     metadata = {
         "model_architecture": model.__class__.__name__,
@@ -325,6 +325,7 @@ def create_inference_model_bundle(
         "git_revision": get_git_revision_hash(),
         "save_timestamp_utc": time.strftime(
             "%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "current_minimax_depth": current_minimax_depth,
     }
     metadata_json = json.dumps(metadata, indent=4)
     model.eval()
@@ -337,7 +338,7 @@ def create_inference_model_bundle(
 def save_checkpoint(
         model, optimizer, scheduler, step, current_loss, game_config,
         self_play_config, training_hyperparams: TrainingHyperparameters, path,
-        train_buffer, validation_buffer):
+        train_buffer, validation_buffer, current_minimax_depth):
     """Saves a full checkpoint including model, metadata, train buffer,
        validation buffer, and optimizer state to a file.
     """
@@ -345,7 +346,7 @@ def save_checkpoint(
 
     model_bytes, metadata_json = create_inference_model_bundle(
         model, step, current_loss, game_config, self_play_config,
-        training_hyperparams
+        training_hyperparams, current_minimax_depth
     )
     optimizer_state_buffer = io.BytesIO()
     torch.save(optimizer.state_dict(), optimizer_state_buffer)
